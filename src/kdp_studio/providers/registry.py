@@ -10,18 +10,28 @@ import importlib
 from typing import cast
 
 from kdp_studio.config import ConfigError
-from kdp_studio.providers.base import TextProvider
+from kdp_studio.providers.base import ImageProvider, TextProvider
 
 TEXT_PROVIDERS: dict[str, str] = {
     "openai": "kdp_studio.providers.openai_text:OpenAITextProvider",
 }
+IMAGE_PROVIDERS: dict[str, str] = {
+    "openai": "kdp_studio.providers.openai_image:OpenAIImageProvider",
+}
+
+
+def _instantiate(registry: dict[str, str], kind: str, name: str, model: str) -> object:
+    target = registry.get(name)
+    if target is None:
+        allowed = ", ".join(registry)
+        raise ConfigError(f"nieznany dostawca {kind} '{name}'. Dostępni: {allowed}")
+    module_name, class_name = target.split(":")
+    return getattr(importlib.import_module(module_name), class_name)(model=model)
 
 
 def create_text_provider(name: str, model: str) -> TextProvider:
-    target = TEXT_PROVIDERS.get(name)
-    if target is None:
-        allowed = ", ".join(TEXT_PROVIDERS)
-        raise ConfigError(f"nieznany dostawca tekstu '{name}'. Dostępni: {allowed}")
-    module_name, class_name = target.split(":")
-    provider_cls = getattr(importlib.import_module(module_name), class_name)
-    return cast(TextProvider, provider_cls(model=model))
+    return cast(TextProvider, _instantiate(TEXT_PROVIDERS, "tekstu", name, model))
+
+
+def create_image_provider(name: str, model: str) -> ImageProvider:
+    return cast(ImageProvider, _instantiate(IMAGE_PROVIDERS, "obrazów", name, model))

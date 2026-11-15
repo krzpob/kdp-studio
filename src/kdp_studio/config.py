@@ -80,10 +80,16 @@ class ProviderSettings(_Strict):
     """Nazwy implementacji z rejestru `kdp_studio.providers.registry` (spec §8.2)."""
 
     text: str = "openai"
+    image: str = "openai"
 
 
 class ModelSettings(_Strict):
     text: Annotated[str, Field(min_length=1)] = "gpt-6-luna"
+    image: Annotated[str, Field(min_length=1)] = "gpt-image-2.6-flare"
+
+
+ImageQuality = Literal["low", "medium", "high", "auto"]
+MAX_CONCURRENCY = 16
 
 
 class Settings(_Strict):
@@ -92,6 +98,8 @@ class Settings(_Strict):
     metadata_language: Annotated[str, Field(min_length=1)] = "English"
     providers: ProviderSettings = ProviderSettings()
     models: ModelSettings = ModelSettings()
+    image_quality: ImageQuality = "medium"
+    concurrency: Annotated[int, Field(ge=1, le=MAX_CONCURRENCY)] = 4
 
 
 class AppConfig(_Strict):

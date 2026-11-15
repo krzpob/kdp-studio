@@ -1,5 +1,5 @@
 # Ustawienia domyślne (spec §9.2). Flagi CLI nadpisują te wartości.
-# Kolejne klucze (cenniki, concurrency, dostawca obrazów) dochodzą razem z wymaganiami, które ich używają.
+# Kolejne klucze (np. cenniki) dochodzą razem z wymaganiami, które ich używają.
 
 # Strony przed grafikami: strona tytułowa i „This book belongs to…” (FR-02).
 front_matter_pages: 2
@@ -13,8 +13,18 @@ metadata_language: English
 # Implementacje z rejestru src/kdp_studio/providers/registry.py.
 providers:
   text: openai
+  image: openai   # --image-provider nadpisuje
 
 # Spec §8.3 przewidywała „GPT 5.x mini”; w listopadzie 2026 OpenAI oferuje już tylko rodzinę GPT-6.
 # gpt-6-luna to najtańszy model do prostych zadań o dużym wolumenie.
 models:
   text: gpt-6-luna
+  # Spec §8.3: gpt-image-2.5-flare. OpenAI poleca dla nowych integracji GPT-Image-2.6;
+  # Flare to wariant szybki, Sunburst (gpt-image-2.6-sunburst) daje najwyższą jakość.
+  image: gpt-image-2.6-flare
+
+# Jakość grafik: low, medium, high albo auto (spec §14, pytanie 5: ustalić po spike'u).
+image_quality: medium
+
+# Liczba grafik generowanych równolegle (FR-05); --concurrency nadpisuje. Zakres 1–16.
+concurrency: 4
