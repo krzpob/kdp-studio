@@ -90,6 +90,9 @@ Page format: {format_name}. Composition: {composition}
 
 Return exactly {total} page ideas ({pages} pages plus {reserve} reserve ideas used when a page \
 is rejected). All {total} must be different from each other.
+
+The printed book has {pages} coloring pages; reserve ideas are never printed. If the title, \
+subtitle or description mentions a number of pages, pictures or scenes, it must be {pages}.
 """
 
 

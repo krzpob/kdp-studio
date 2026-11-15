@@ -47,6 +47,8 @@ def test_prompt_contains_profiles_and_count(repo_config: AppConfig) -> None:
     assert repo_config.styles["kawaii"].prompt_fragment in user
     assert repo_config.formats["square"].composition_hint in user
     assert "exactly 36 page ideas (30 pages plus 6 reserve" in user
+    assert "The printed book has 30 coloring pages" in user
+    assert "it must be 30" in user
     assert "copyrighted or trademarked characters" in system
     assert "in English" in system
 
