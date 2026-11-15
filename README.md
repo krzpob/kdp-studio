@@ -19,4 +19,4 @@ Na razie `generate` waliduje parametry (FR-01, FR-02) i generuje pomysły na str
 echo 'OPENAI_API_KEY=sk-...' > .env
 ```
 
-Dostępne profile wieku, stylu i formatu są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.
+Dostępne profile wieku, stylu i formatu wypisuje `uv run kdp-studio profiles` (albo `profiles age`, `profiles style`, `profiles format`). Profile są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.

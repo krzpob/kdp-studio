@@ -8,13 +8,14 @@ KDP Studio is a CLI that generates Amazon KDP coloring books: an LLM invents the
 
 The MVP spec, [docs/requirements.md](docs/requirements.md), is the source of truth for scope, decisions (D1–D8), functional requirements (FR-01–FR-13), non-functional requirements (NFR-01–NFR-13), and the planned layout. Read it before implementing anything, and cite requirement IDs in commits and PRs. The spec, README and user-facing CLI messages are in Polish. Profile keys are Polish too (`przedszkole`, `dorosli`, …), while image prompts and scene descriptions are in English.
 
-Implemented so far: config loading (§7), input validation (FR-01, FR-02) and idea generation (FR-03). `generate` validates, calls the text LLM once, writes `ideas.json` and stops; FR-04 onward is not built yet. `uv run kdp-studio generate …` makes a real, paid OpenAI call when `OPENAI_API_KEY` is set.
+Implemented so far: config loading (§7), input validation (FR-01, FR-02) idea generation (FR-03) and the `profiles` command (FR-12). `generate` validates, calls the text LLM once, writes `ideas.json` and stops; FR-04 onward is not built yet. `uv run kdp-studio generate …` makes a real, paid OpenAI call when `OPENAI_API_KEY` is set.
 
 ## Commands
 
 ```bash
 uv sync                                    # create .venv with runtime + dev deps
 uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii --format square
+uv run kdp-studio profiles [age|style|format]   # list profile keys with descriptions (no API call)
 uv run pytest                              # all tests
 uv run pytest tests/test_validation.py::test_pages_out_of_range   # single test
 uv run pytest --cov=kdp_studio --cov-report=term-missing
@@ -40,6 +41,7 @@ Package: `src/kdp_studio/`. Existing modules:
 - `config.py`: Pydantic models for every YAML file (`extra="forbid"`, so typos in config fail loudly) and `load_config()`, which raises `ConfigError`. Cross-file checks live in `AppConfig` (e.g. `allowed_ages` must name existing ages; `page_px` must equal `trim_in × dpi`).
 - `models.py`: `BookSpec`, the validated input, plus `pages_in_book()`.
 - `validation.py`: `validate_book_spec()` collects *all* input errors before raising `InputValidationError`, and returns warnings separately (KDP page minimum, style not meant for the age). Profile keys are checked here, not in `BookSpec`, because that needs the loaded config.
+- `profiles.py` (FR-12): `format_profiles()` renders the `name` and `description` fields from the YAML, plus `allowed_ages` for styles and the default format (`cli.DEFAULT_FORMAT`, shared with `generate`).
 - `cli.py`: typer app with an `ExitCode` enum. Entry point `run()` → `main(argv)`, which runs typer with `standalone_mode=False` so usage errors (bad type, unknown flag) exit with 1 instead of typer's default 2, which §9.3 reserves for partial results. Tests call `main([...])` directly; `tests/test_cli.py` has an autouse fixture that swaps `cli.create_text_provider` for `FakeTextProvider` and `chdir`s to `tmp_path`.
 - `providers/base.py`: `TextProvider` protocol (`complete_json(system, user, schema) -> (parsed, Usage)`), `Usage`, `ProviderError` (exit 4). `providers/registry.py` maps the names in `settings.yaml` (`providers.text`) to lazily imported classes. `providers/openai_text.py` uses `client.responses.parse(..., text_format=schema)`; the SDK retries 429/5xx itself (`max_retries=3`). `providers/fake.py` replays canned responses and records calls.
 - `pipeline/ideas.py` (FR-03): `build_prompts()` assembles the English prompt from the age/style/format profiles. The LLM-facing schema (`_LLMIdeas`) deliberately has no min/max constraints; `IdeaGenerator` enforces them afterwards: it drops empty and verbatim-duplicate ideas, assigns ids `idea_01…` itself, trims to `pages + ceil(pages * reserve_ratio)`, dedupes keywords and caps them at 7. A short reserve is a warning; fewer ideas than pages, or invalid metadata, triggers one retry, then `ProviderError`.

@@ -152,3 +152,50 @@ def test_missing_api_key_exits_1_before_any_call(
 def test_validation_error_skips_llm(fake_text_provider: FakeTextProvider) -> None:
     assert main([*BASE, "--pages", "0"]) == ExitCode.VALIDATION_ERROR
     assert fake_text_provider.calls == []
+
+
+# --- FR-12 ---------------------------------------------------------------------------
+
+
+def test_profiles_lists_everything(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["profiles"]) == ExitCode.OK
+    out = capsys.readouterr().out
+    for header in ("Wiek (--age)", "Styl (--style)", "Format (--format)"):
+        assert header in out
+    assert "  dorosli" in out
+    assert "  fantasy" in out
+    assert 'Letter (8.5" × 11"): Pionowa strona, postać lub scena w pionie. Domyślny.' in out
+
+
+@pytest.mark.parametrize(
+    ("kind", "header", "absent"),
+    [("age", "Wiek (--age)", "kawaii"), ("style", "Styl (--style)", "przedszkole")],
+)
+def test_profiles_single_kind(
+    kind: str, header: str, absent: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["profiles", kind]) == ExitCode.OK
+    out = capsys.readouterr().out
+    assert out.startswith(header)
+    assert absent not in out
+    assert "Format (--format)" not in out
+
+
+def test_profiles_unknown_kind(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["profiles", "colour"]) == ExitCode.VALIDATION_ERROR
+    assert (
+        "Błąd: nieznany rodzaj profili 'colour'. Dozwolone: age, style, format"
+        in capsys.readouterr().err
+    )
+
+
+def test_profiles_config_error(
+    config_dir: ConfigDirFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    directory = config_dir()
+    (directory / "styles.yaml").unlink()
+    monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(directory))
+    assert main(["profiles", "age"]) == ExitCode.VALIDATION_ERROR
+    assert "brak pliku konfiguracji" in capsys.readouterr().err

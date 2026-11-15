@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from kdp_studio.config import ConfigError, load_config
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.output import IDEAS_FILE, book_dir, write_json_atomic
+from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
 from kdp_studio.providers.base import ProviderError
 from kdp_studio.providers.registry import create_text_provider
 from kdp_studio.validation import InputValidationError, plural, validate_book_spec
@@ -28,6 +29,8 @@ class ExitCode(IntEnum):
     BUDGET_EXCEEDED = 3
     PROVIDER_ERROR = 4
 
+
+DEFAULT_FORMAT = "letter"
 
 app = typer.Typer(
     name="kdp-studio",
@@ -62,7 +65,7 @@ def generate(
     style: Annotated[str | None, typer.Option(help="Profil stylu z config/styles.yaml.")] = None,
     format_: Annotated[
         str, typer.Option("--format", help="Profil formatu z config/formats.yaml.")
-    ] = "letter",
+    ] = DEFAULT_FORMAT,
     pages: Annotated[int, typer.Option(help="Liczba grafik (stron kolorowanki), 1–200.")] = 30,
     strict: Annotated[
         bool, typer.Option("--strict", help="Za mało stron dla KDP to błąd, nie ostrzeżenie.")
@@ -132,6 +135,26 @@ def generate(
         f"Zapisano: {target / IDEAS_FILE}"
     )
     typer.echo("Generowanie grafik (FR-04 i dalej) nie jest jeszcze zaimplementowane.")
+
+
+@app.command()
+def profiles(
+    kind: Annotated[
+        str | None,
+        typer.Argument(help="Rodzaj profili: age, style albo format. Domyślnie wszystkie."),
+    ] = None,
+) -> None:
+    """Wypisuje dostępne profile wieku, stylu i formatu z opisami (FR-12)."""
+    if kind is not None and kind not in PROFILE_KINDS:
+        raise _fail([f"nieznany rodzaj profili '{kind}'. Dozwolone: {', '.join(PROFILE_KINDS)}"])
+    try:
+        config = load_config()
+    except ConfigError as e:
+        raise _fail([str(e)]) from e
+
+    kinds: tuple[ProfileKind, ...] = PROFILE_KINDS if kind is None else (kind,)
+    for line in format_profiles(config, kinds, default_format=DEFAULT_FORMAT):
+        typer.echo(line)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
