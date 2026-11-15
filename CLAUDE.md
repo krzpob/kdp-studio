@@ -6,21 +6,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 KDP Studio is a CLI that generates Amazon KDP coloring books: an LLM invents the page scenes and book metadata, an image model draws black-and-white line art (one call per page), and a post-processing pipeline turns each image into a 300 DPI print-ready page.
 
-**There is no code yet.** The repo holds only the MVP spec, [docs/requirements.md](docs/requirements.md). It is the source of truth for scope, decisions (D1–D8), functional requirements (FR-01–FR-13), non-functional requirements (NFR-01–NFR-13), and the planned layout. Read it before implementing anything, and cite requirement IDs in commits and PRs. The spec and README are in Polish. Profile keys are Polish too (`przedszkole`, `dorosli`, …), while image prompts and scene descriptions are in English.
+The MVP spec, [docs/requirements.md](docs/requirements.md), is the source of truth for scope, decisions (D1–D8), functional requirements (FR-01–FR-13), non-functional requirements (NFR-01–NFR-13), and the planned layout. Read it before implementing anything, and cite requirement IDs in commits and PRs. The spec, README and user-facing CLI messages are in Polish. Profile keys are Polish too (`przedszkole`, `dorosli`, …), while image prompts and scene descriptions are in English.
 
-When the first code lands, replace this section with the real build, lint, and test commands.
+Implemented so far: config loading (§7) and input validation (FR-01, FR-02). `generate` validates and stops; FR-03 onward is not built yet.
 
-## Planned tooling (NFR-01, NFR-13)
+## Commands
 
-- Python ≥ 3.12, managed with `uv`; CLI in `typer`; data models in Pydantic v2.
-- Image stack: Pillow, `opencv-python-headless`, potrace bindings (`pypotrace` or `potracer`), SVG rendering with `cairosvg` or `resvg`.
-- `ruff` for lint and format, `mypy --strict` on `pipeline/` and `providers/`, pre-commit, GitHub Actions CI (lint, types, tests).
-- Expected commands once `pyproject.toml` exists: `uv sync`, `uv run pytest`, `uv run pytest tests/path::test_name`, `uv run ruff check .`, `uv run ruff format .`, `uv run mypy src/kdp_studio/pipeline src/kdp_studio/providers`.
+```bash
+uv sync                                    # create .venv with runtime + dev deps
+uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii --format square
+uv run pytest                              # all tests
+uv run pytest tests/test_validation.py::test_pages_out_of_range   # single test
+uv run pytest --cov=kdp_studio --cov-report=term-missing
+uv run ruff check . && uv run ruff format .
+uv run mypy                                # strict, covers src/ and tests/ (configured in pyproject)
+```
+
+`KDP_STUDIO_CONFIG_DIR` overrides the config directory (default: `config/` at the repo root, resolved from the package path, so it assumes an editable install).
+
+## Tooling notes (NFR-01, NFR-13)
+
+- Python ≥ 3.12, `uv`, `typer`, Pydantic v2. Planned image stack: Pillow, `opencv-python-headless`, potrace bindings, `cairosvg` or `resvg`.
+- Typer ≥ 0.29 vendors click privately (`typer._click`); there is no `click` package. Use the public `typer.TyperException`, `typer.Exit` and `typer.Abort`.
+- Ruff allows `–` and `×` (`allowed-confusables`) because Polish messages use them, and `docs/` is excluded from ruff.
+- Still missing from NFR-13: pre-commit and GitHub Actions CI.
 - Secrets come only from env vars or `.env` (gitignored): `OPENAI_API_KEY`, later `GEMINI_API_KEY`. Keys must never reach logs or `manifest.json`.
 
 ## Architecture (spec §8, §12)
 
-Planned package: `src/kdp_studio/` with `cli.py`, `models.py`, `config.py`, `pipeline/`, and `providers/`. YAML profiles live in `config/`.
+Package: `src/kdp_studio/`. Existing modules:
+
+- `config.py`: Pydantic models for every YAML file (`extra="forbid"`, so typos in config fail loudly) and `load_config()`, which raises `ConfigError`. Cross-file checks live in `AppConfig` (e.g. `allowed_ages` must name existing ages; `page_px` must equal `trim_in × dpi`).
+- `models.py`: `BookSpec`, the validated input, plus `pages_in_book()`.
+- `validation.py`: `validate_book_spec()` collects *all* input errors before raising `InputValidationError`, and returns warnings separately (KDP page minimum, style not meant for the age). Profile keys are checked here, not in `BookSpec`, because that needs the loaded config.
+- `cli.py`: typer app with an `ExitCode` enum. Entry point `run()` → `main(argv)`, which runs typer with `standalone_mode=False` so usage errors (bad type, unknown flag) exit with 1 instead of typer's default 2, which §9.3 reserves for partial results. Tests call `main([...])` directly.
+
+Still to come: `pipeline/` and `providers/`.
 
 Flow: `CLI → BookSpec (validation) → IdeaGenerator → PromptBuilder → PageWorker × concurrency (ImageProvider → PostProcessor chain → optional QAChecker) → Manifest`.
 

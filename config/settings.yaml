@@ -1,0 +1,5 @@
+# Ustawienia domyślne (spec §9.2). Flagi CLI nadpisują te wartości.
+# Kolejne klucze (dostawcy, modele, cenniki, reserve_ratio, concurrency) dochodzą razem z wymaganiami, które ich używają.
+
+# Strony przed grafikami: strona tytułowa i „This book belongs to…” (FR-02).
+front_matter_pages: 2
