@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import struct
+import threading
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from kdp_studio.providers.base import SchemaT, Usage
+from kdp_studio.providers.base import (
+    PNG_SIGNATURE,
+    ImageRequest,
+    ImageResult,
+    ProviderError,
+    SchemaT,
+    Usage,
+)
 
 Responder = Callable[[str, str], Any]
 
@@ -36,3 +46,49 @@ class FakeTextProvider:
         response = self.responses[min(len(self.calls), len(self.responses)) - 1]
         data = response(system, user) if callable(response) else response
         return schema.model_validate(data), self.usage_per_call
+
+
+def make_png(width: int, height: int, value: int = 255) -> bytes:
+    """Minimalny poprawny PNG w skali szarości (8 bit), cały w kolorze `value`."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    rows = (b"\x00" + bytes([value]) * width) * height
+    return (
+        PNG_SIGNATURE
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+@dataclass
+class FakeImageProvider:
+    """Zwraca przygotowane PNG bez sieci (NFR-03). Bezpieczny dla wielu wątków.
+
+    `fail(req)` może zwrócić ProviderError, który zostanie rzucony dla danego zapytania.
+    """
+
+    name: str = "fake"
+    model: str = "fake-image"
+    aspects: list[str] = field(default_factory=lambda: ["1:1", "3:4"])
+    size: tuple[int, int] = (48, 64)
+    fail: Callable[[ImageRequest], ProviderError | None] | None = None
+    usage_per_call: Usage = field(default_factory=lambda: Usage(input_tokens=10, output_tokens=100))
+    requests: list[ImageRequest] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def supported_aspects(self) -> list[str]:
+        return list(self.aspects)
+
+    def generate(self, req: ImageRequest) -> ImageResult:
+        with self._lock:
+            self.requests.append(req)
+        error = self.fail(req) if self.fail else None
+        if error is not None:
+            raise error
+        width, height = self.size
+        return ImageResult(make_png(width, height), width, height, self.usage_per_call)

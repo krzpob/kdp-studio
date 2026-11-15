@@ -11,13 +11,20 @@ from typing import Annotated
 import typer
 from dotenv import load_dotenv
 
-from kdp_studio.config import ConfigError, load_config
+from kdp_studio.config import MAX_CONCURRENCY, ConfigError, load_config
 from kdp_studio.pipeline.ideas import IdeaGenerator
-from kdp_studio.pipeline.output import IDEAS_FILE, PROMPTS_FILE, book_dir, write_json_atomic
+from kdp_studio.pipeline.output import (
+    IDEAS_FILE,
+    PROMPTS_FILE,
+    RAW_DIR,
+    book_dir,
+    write_json_atomic,
+)
 from kdp_studio.pipeline.prompts import PromptBuilder
+from kdp_studio.pipeline.worker import PageOutcome, PageWorker, page_jobs
 from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
 from kdp_studio.providers.base import ProviderError
-from kdp_studio.providers.registry import create_text_provider
+from kdp_studio.providers.registry import create_image_provider, create_text_provider
 from kdp_studio.validation import InputValidationError, plural, validate_book_spec
 
 
@@ -74,8 +81,18 @@ def generate(
     output_dir: Annotated[
         Path, typer.Option(help="Katalog, w którym powstaje katalog książki.")
     ] = Path("output"),
+    concurrency: Annotated[
+        int | None,
+        typer.Option(
+            help=f"Grafiki generowane równolegle, 1–{MAX_CONCURRENCY}. Domyślnie z settings.yaml."
+        ),
+    ] = None,
+    image_provider: Annotated[
+        str | None,
+        typer.Option(help="Dostawca grafik z rejestru. Domyślnie z settings.yaml."),
+    ] = None,
 ) -> None:
-    """Generuje kolorowankę. Na razie walidacja, pomysły i prompty obrazu (FR-01–FR-04)."""
+    """Generuje kolorowankę: pomysły, prompty i surowe grafiki (FR-01–FR-05)."""
     try:
         config = load_config()
     except ConfigError as e:
@@ -93,6 +110,10 @@ def generate(
         )
     except InputValidationError as e:
         raise _fail(e.errors) from e
+    settings = config.settings
+    workers = settings.concurrency if concurrency is None else concurrency
+    if not 1 <= workers <= MAX_CONCURRENCY:
+        raise _fail([f"--concurrency: musi być w zakresie 1–{MAX_CONCURRENCY} (podano {workers})"])
 
     _warn(result.warnings)
     spec = result.spec
@@ -111,11 +132,21 @@ def generate(
             ]
         )
 
-    settings = config.settings
+    aspect = config.formats[spec.format].aspect
     try:
         provider = create_text_provider(settings.providers.text, settings.models.text)
+        images = create_image_provider(
+            image_provider or settings.providers.image, settings.models.image
+        )
     except ConfigError as e:
         raise _fail([str(e)]) from e
+    if aspect not in images.supported_aspects():
+        raise _fail(
+            [
+                f"dostawca grafik '{images.name}' nie obsługuje proporcji {aspect} "
+                f"formatu {spec.format}. Obsługiwane: {', '.join(images.supported_aspects())}"
+            ]
+        )
 
     typer.echo(f"Generuję pomysły ({provider.name}, {provider.model})…")
     try:
@@ -139,10 +170,45 @@ def generate(
 
     prompts = PromptBuilder(spec, config).build(ideas)
     write_json_atomic(target / PROMPTS_FILE, prompts)
+    typer.echo(f"Prompty obrazu: {len(prompts.pages)}. Zapisano: {target / PROMPTS_FILE}")
+
+    jobs = page_jobs(prompts, spec.pages)
     typer.echo(
-        f"Prompty obrazu: {len(prompts.pages)}. Zapisano: {target / PROMPTS_FILE}\n"
-        "Generowanie grafik (FR-05 i dalej) nie jest jeszcze zaimplementowane."
+        f"Generuję {plural(len(jobs), 'grafikę', 'grafiki', 'grafik')} ({images.name}, "
+        f"{images.model}, jakość {settings.image_quality}, równolegle {workers})…"
     )
+    done = 0
+
+    def report(outcome: PageOutcome) -> None:
+        nonlocal done
+        done += 1
+        name = f"page_{outcome.page:02d}"
+        if outcome.status == "ok":
+            line = f"{name}: ok, {outcome.width}×{outcome.height} ({outcome.duration_s:.1f} s)"
+        else:
+            line = f"{name}: nieudana: {outcome.error}"
+        typer.echo(f"[{done}/{len(jobs)}] {line}")
+
+    worker = PageWorker(
+        provider=images,
+        book_dir=target,
+        aspect=aspect,
+        quality=settings.image_quality,
+        concurrency=workers,
+    )
+    images_result = worker.run(jobs, on_done=report)
+    image_usage = images_result.usage
+    typer.echo(
+        f"Grafiki: {len(images_result.ok)}/{len(jobs)} ok, tokeny: "
+        f"{image_usage.input_tokens} wejście / {image_usage.output_tokens} wyjście. "
+        f"Surowe pliki: {target / RAW_DIR}"
+    )
+    if images_result.fatal_error is not None:
+        raise _fail([images_result.fatal_error], ExitCode.PROVIDER_ERROR)
+    if images_result.failed:
+        failed = ", ".join(f"page_{o.page:02d}" for o in images_result.failed)
+        raise _fail([f"nieudane strony: {failed}"], ExitCode.PARTIAL)
+    typer.echo("Obróbka do druku (FR-06 i dalej) nie jest jeszcze zaimplementowana.")
 
 
 @app.command()

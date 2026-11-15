@@ -7,8 +7,8 @@ import pytest
 
 from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
-from kdp_studio.providers.base import ProviderError, TextProvider
-from kdp_studio.providers.fake import FakeTextProvider
+from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
+from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
 from tests.conftest import ConfigDirFactory, llm_ideas_response
 
 BASE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
@@ -24,6 +24,7 @@ def fake_text_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeT
         return provider
 
     monkeypatch.setattr(cli, "create_text_provider", create)
+    monkeypatch.setattr(cli, "create_image_provider", lambda name, model: FakeImageProvider())
     monkeypatch.chdir(tmp_path)
     return provider
 
@@ -225,3 +226,95 @@ def test_profiles_config_error(
     monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(directory))
     assert main(["profiles", "age"]) == ExitCode.VALIDATION_ERROR
     assert "brak pliku konfiguracji" in capsys.readouterr().err
+
+
+# --- FR-05 ---------------------------------------------------------------------------
+
+
+def _image_provider(monkeypatch: pytest.MonkeyPatch, provider: FakeImageProvider) -> list[str]:
+    names: list[str] = []
+
+    def create(name: str, model: str) -> FakeImageProvider:
+        names.append(name)
+        return provider
+
+    monkeypatch.setattr(cli, "create_image_provider", create)
+    return names
+
+
+def test_generate_writes_raw_pages(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*BASE, "--pages", "12", "--format", "square"]) == ExitCode.OK
+    book = Path("output/dinozaury_przedszkole_kawaii_square")
+    assert sorted(p.name for p in (book / "raw").iterdir()) == [
+        f"page_{i:02d}.png" for i in range(1, 13)
+    ]
+    out = capsys.readouterr().out
+    assert "Generuję 12 grafik (fake, fake-image, jakość medium, równolegle 4)" in out
+    assert "page_07: ok, 48×64" in out
+    assert "Grafiki: 12/12 ok" in out
+
+
+def test_generate_sends_page_prompts_and_aspect(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = FakeImageProvider()
+    _image_provider(monkeypatch, provider)
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    prompts = json.loads((BOOK_DIR / "prompts.json").read_text(encoding="utf-8"))["pages"]
+    assert sorted(r.prompt for r in provider.requests) == sorted(p["prompt"] for p in prompts[:12])
+    assert {r.aspect for r in provider.requests} == {"3:4"}  # letter
+
+
+def test_page_failure_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(req: ImageRequest) -> ProviderError | None:
+        return ProviderError("moderacja", fatal=False) if "number 2 " in req.prompt else None
+
+    _image_provider(monkeypatch, FakeImageProvider(fail=fail))
+    assert main([*BASE, "--pages", "12"]) == ExitCode.PARTIAL
+    captured = capsys.readouterr()
+    assert "Grafiki: 11/12 ok" in captured.out
+    assert "page_02: nieudana: moderacja" in captured.out
+    assert "Błąd: nieudane strony: page_02" in captured.err
+
+
+def test_fatal_image_error_exits_4(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(req: ImageRequest) -> ProviderError:
+        return ProviderError("brak środków na koncie OpenAI API")
+
+    _image_provider(monkeypatch, FakeImageProvider(fail=fail))
+    assert main([*BASE, "--pages", "12"]) == ExitCode.PROVIDER_ERROR
+    assert "Błąd: brak środków na koncie OpenAI API" in capsys.readouterr().err
+    assert (BOOK_DIR / "ideas.json").is_file()  # pomysły i prompty zostają
+
+
+@pytest.mark.parametrize("value", ["0", "17"])
+def test_concurrency_out_of_range_skips_api(
+    value: str, fake_text_provider: FakeTextProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*BASE, "--concurrency", value]) == ExitCode.VALIDATION_ERROR
+    assert f"--concurrency: musi być w zakresie 1–16 (podano {value})" in capsys.readouterr().err
+    assert fake_text_provider.calls == []
+
+
+def test_concurrency_option(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*BASE, "--pages", "12", "--concurrency", "2"]) == ExitCode.OK
+    assert "równolegle 2" in capsys.readouterr().out
+
+
+def test_image_provider_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    names = _image_provider(monkeypatch, FakeImageProvider())
+    assert main([*BASE, "--pages", "12", "--image-provider", "openai"]) == ExitCode.OK
+    assert names == ["openai"]
+
+
+def test_unsupported_aspect_skips_api(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_text_provider: FakeTextProvider,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _image_provider(monkeypatch, FakeImageProvider(aspects=["1:1"]))
+    assert main(BASE) == ExitCode.VALIDATION_ERROR
+    assert "nie obsługuje proporcji 3:4 formatu letter" in capsys.readouterr().err
+    assert fake_text_provider.calls == []

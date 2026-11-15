@@ -13,7 +13,7 @@ uv sync
 uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30
 ```
 
-Na razie `generate` waliduje parametry (FR-01, FR-02), generuje pomysły na strony oraz metadane książki (FR-03) do `output/<temat>_<wiek>_<styl>_<format>/ideas.json` i buduje z nich prompty obrazu (FR-04) do `prompts.json` w tym samym katalogu. Wymaga klucza API OpenAI (osobnego od abonamentu ChatGPT) w zmiennej `OPENAI_API_KEY` albo w pliku `.env`:
+Na razie `generate` waliduje parametry (FR-01, FR-02), generuje pomysły na strony oraz metadane książki (FR-03) do `output/<temat>_<wiek>_<styl>_<format>/ideas.json`, buduje z nich prompty obrazu (FR-04) do `prompts.json` i generuje surowe grafiki (FR-05) do `raw/page_XX.png` w tym samym katalogu. Uwaga: każda strona to płatne wywołanie modelu obrazu (ok. $0.02 za grafikę w jakości `low`), a limit budżetu (`--max-cost`, FR-10) jeszcze nie działa. Jakość i model ustawisz w `config/settings.yaml`. Wymaga klucza API OpenAI (osobnego od abonamentu ChatGPT) w zmiennej `OPENAI_API_KEY` albo w pliku `.env`:
 
 ```bash
 echo 'OPENAI_API_KEY=sk-...' > .env

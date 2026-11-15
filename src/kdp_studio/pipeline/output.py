@@ -14,6 +14,7 @@ from kdp_studio.models import BookSpec
 
 IDEAS_FILE = "ideas.json"
 PROMPTS_FILE = "prompts.json"
+RAW_DIR = "raw"
 
 # Litery, których NFKD nie rozkłada na literę bazową i znak diakrytyczny.
 _TRANSLITERATE = str.maketrans({"ł": "l", "Ł": "L", "ß": "ss", "ø": "o", "Ø": "O"})
@@ -35,15 +36,23 @@ def book_dir(output_dir: Path, spec: BookSpec) -> Path:
     return output_dir / f"{slugify(spec.theme)}_{spec.age}_{spec.style}_{spec.format}"
 
 
-def write_json_atomic(path: Path, model: BaseModel) -> None:
+def write_bytes_atomic(path: Path, data: bytes) -> None:
     """Zapis przez plik tymczasowy i zmianę nazwy, żeby przerwanie nie zostawiło połowy pliku."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(model.model_dump_json(indent=2))
-            f.write("\n")
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def write_json_atomic(path: Path, model: BaseModel) -> None:
+    write_bytes_atomic(path, (model.model_dump_json(indent=2) + "\n").encode("utf-8"))
+
+
+def raw_page_path(book: Path, page: int) -> Path:
+    """`raw/page_XX.png`: surowy wynik modelu przed obróbką (FR-05)."""
+    return book / RAW_DIR / f"page_{page:02d}.png"
