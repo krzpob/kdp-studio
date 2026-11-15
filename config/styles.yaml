@@ -56,3 +56,33 @@ zentangle:
     zentangle style, shapes filled with dense repeating structured patterns,
     each region a different tangle pattern
   allowed_ages: [nastolatki, dorosli]
+
+basic:
+  name: Basic
+  description: Minimalistyczna kompozycja, mało elementów, niska szczegółowość.
+  prompt_fragment: >-
+    basic minimalist style, simple uncluttered composition, few elements,
+    low detail, generous empty space
+
+chibi:
+  name: Chibi
+  description: >-
+    Uproszczone proporcje ciała (duża głowa, małe ciało), szczegółowość niska do średniej.
+    Trudnością między kawaii a cozy.
+  prompt_fragment: >-
+    chibi style, super-deformed proportions with big head and small body,
+    simplified cute anatomy, low to moderate detail
+
+cozy:
+  name: Cozy
+  description: Pełna scenka z codziennego życia w przytulnym klimacie kawaii, średnia szczegółowość.
+  prompt_fragment: >-
+    cozy style, warm slice-of-life scene from everyday life, cute kawaii characters,
+    homey setting with soft furnishings and small everyday objects, moderate detail
+
+fantasy:
+  name: Fantasy
+  description: Magiczne stworzenia i baśniowe krainy, duża szczegółowość.
+  prompt_fragment: >-
+    fantasy style, magical creatures and enchanted settings, rich intricate details,
+    ornate decorative elements
