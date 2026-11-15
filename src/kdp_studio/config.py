@@ -76,8 +76,22 @@ class FormatProfile(_Strict):
         return self
 
 
+class ProviderSettings(_Strict):
+    """Nazwy implementacji z rejestru `kdp_studio.providers.registry` (spec §8.2)."""
+
+    text: str = "openai"
+
+
+class ModelSettings(_Strict):
+    text: Annotated[str, Field(min_length=1)] = "gpt-6-luna"
+
+
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
+    reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
+    metadata_language: Annotated[str, Field(min_length=1)] = "English"
+    providers: ProviderSettings = ProviderSettings()
+    models: ModelSettings = ModelSettings()
 
 
 class AppConfig(_Strict):

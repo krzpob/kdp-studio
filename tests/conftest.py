@@ -36,3 +36,24 @@ def config_dir(tmp_path: Path) -> ConfigDirFactory:
         return target
 
     return factory
+
+
+def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
+    """Odpowiedź LLM w kształcie schematu `_LLMIdeas` z `count` różnymi pomysłami."""
+    return {
+        "book": {
+            "title": "Dino Friends",
+            "subtitle": "A Coloring Book for Toddlers",
+            "description": "Big, simple dinosaurs to color.",
+            "keywords": ["dinosaur coloring book", "toddler coloring"],
+            **book,
+        },
+        "pages": [
+            {
+                "title": f"Dinosaur {i}",
+                "scene": f"A friendly dinosaur number {i} standing in a meadow",
+                "elements": ["dinosaur", "grass"],
+            }
+            for i in range(1, count + 1)
+        ],
+    }
