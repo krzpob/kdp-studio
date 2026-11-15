@@ -110,6 +110,17 @@ def test_generate_writes_ideas_json(
     assert "1 próba" in out
 
 
+def test_generate_writes_prompts_json(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*BASE, "--pages", "30"]) == ExitCode.OK
+    prompts = json.loads((BOOK_DIR / "prompts.json").read_text(encoding="utf-8"))
+    ideas = json.loads((BOOK_DIR / "ideas.json").read_text(encoding="utf-8"))
+    assert [p["idea_id"] for p in prompts["pages"]] == [i["id"] for i in ideas["pages"]]
+    first = prompts["pages"][0]["prompt"]
+    assert first == f"Scene: {ideas['pages'][0]['scene']}.\n{prompts['style_block']}"
+    assert "no multiple panels" in prompts["style_block"]
+    assert "Prompty obrazu: 36." in capsys.readouterr().out
+
+
 def test_output_dir_option(tmp_path: Path) -> None:
     assert main([*BASE, "--output-dir", str(tmp_path / "books")]) == ExitCode.OK
     assert (tmp_path / "books" / BOOK_DIR.name / "ideas.json").is_file()

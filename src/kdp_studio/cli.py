@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 
 from kdp_studio.config import ConfigError, load_config
 from kdp_studio.pipeline.ideas import IdeaGenerator
-from kdp_studio.pipeline.output import IDEAS_FILE, book_dir, write_json_atomic
+from kdp_studio.pipeline.output import IDEAS_FILE, PROMPTS_FILE, book_dir, write_json_atomic
+from kdp_studio.pipeline.prompts import PromptBuilder
 from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
 from kdp_studio.providers.base import ProviderError
 from kdp_studio.providers.registry import create_text_provider
@@ -74,7 +75,7 @@ def generate(
         Path, typer.Option(help="Katalog, w którym powstaje katalog książki.")
     ] = Path("output"),
 ) -> None:
-    """Generuje kolorowankę. Na razie walidacja (FR-01, FR-02) i pomysły (FR-03)."""
+    """Generuje kolorowankę. Na razie walidacja, pomysły i prompty obrazu (FR-01–FR-04)."""
     try:
         config = load_config()
     except ConfigError as e:
@@ -135,7 +136,13 @@ def generate(
         f"{plural(ideas_result.attempts, 'próba', 'próby', 'prób')}.\n"
         f"Zapisano: {target / IDEAS_FILE}"
     )
-    typer.echo("Generowanie grafik (FR-04 i dalej) nie jest jeszcze zaimplementowane.")
+
+    prompts = PromptBuilder(spec, config).build(ideas)
+    write_json_atomic(target / PROMPTS_FILE, prompts)
+    typer.echo(
+        f"Prompty obrazu: {len(prompts.pages)}. Zapisano: {target / PROMPTS_FILE}\n"
+        "Generowanie grafik (FR-05 i dalej) nie jest jeszcze zaimplementowane."
+    )
 
 
 @app.command()

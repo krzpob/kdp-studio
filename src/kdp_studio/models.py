@@ -67,6 +67,24 @@ class BookIdeas(BaseModel):
     pages: list[PageIdea]
 
 
+class PagePrompt(BaseModel):
+    """Gotowy prompt obrazu dla jednego pomysłu (FR-04)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    idea_id: Annotated[str, Field(pattern=r"^idea_\d{2,}$")]
+    prompt: NonEmptyStr
+
+
+class BookPrompts(BaseModel):
+    """Zawartość `prompts.json`: wspólny blok stylu i prompt każdego pomysłu."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    style_block: NonEmptyStr
+    pages: list[PagePrompt]
+
+
 def pages_in_book(pages: int, front_matter_pages: int) -> int:
     """Strony fizyczne przy druku jednostronnym: grafika + pusta strona (D8, FR-02)."""
     return pages * 2 + front_matter_pages

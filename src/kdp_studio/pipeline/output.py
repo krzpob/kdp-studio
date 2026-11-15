@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from kdp_studio.models import BookSpec
 
 IDEAS_FILE = "ideas.json"
+PROMPTS_FILE = "prompts.json"
 
 # Litery, których NFKD nie rozkłada na literę bazową i znak diakrytyczny.
 _TRANSLITERATE = str.maketrans({"ł": "l", "Ł": "L", "ß": "ss", "ø": "o", "Ø": "O"})
