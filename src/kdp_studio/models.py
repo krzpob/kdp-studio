@@ -58,6 +58,38 @@ class PageIdea(BaseModel):
     elements: list[NonEmptyStr]
 
 
+class RejectedIdea(BaseModel):
+    """Pomysł odrzucony przez weryfikację (FR-03a)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    title: str
+    scene: str
+    reason: str
+
+
+class RevisedIdea(BaseModel):
+    """Pomysł poprawiony przez weryfikację; `id` wskazuje go w `pages`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    original_title: str
+    original_scene: str
+    reason: str
+
+
+class IdeaReview(BaseModel):
+    """Ślad weryfikacji pomysłów zapisany w `ideas.json` (FR-03a)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rejected: list[RejectedIdea] = []
+    revised: list[RevisedIdea] = []
+    added: int = 0  # pomysły dogenerowane w miejsce odrzuconych
+    rounds: int = 1
+
+
 class BookIdeas(BaseModel):
     """Zawartość `ideas.json`: pierwsze `pages` pomysłów to strony, reszta to zapas."""
 
@@ -65,6 +97,7 @@ class BookIdeas(BaseModel):
 
     book: BookMetadata
     pages: list[PageIdea]
+    review: IdeaReview | None = None  # None: weryfikacja wyłączona
 
 
 class PagePrompt(BaseModel):

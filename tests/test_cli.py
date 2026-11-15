@@ -11,7 +11,7 @@ from kdp_studio.cli import ExitCode, main
 from kdp_studio.config import DEFAULT_CONFIG_DIR
 from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
-from tests.conftest import ConfigDirFactory, llm_ideas_response
+from tests.conftest import ConfigDirFactory, approve_all, llm_ideas_response, review_response
 
 BASE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
 BOOK_DIR = Path("output/dinozaury_przedszkole_kawaii_letter")
@@ -35,7 +35,7 @@ def fake_text_provider(
         fmt["dpi"] = TEST_DPI
         fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
     monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats)))
-    provider = FakeTextProvider([llm_ideas_response(300)])
+    provider = FakeTextProvider([llm_ideas_response(300)], routes={"_Review": approve_all})
 
     def create(name: str, model: str) -> TextProvider:
         return provider
@@ -122,9 +122,10 @@ def test_generate_writes_ideas_json(
     assert data["book"]["title"] == "Dino Friends"
     assert len(data["pages"]) == 36  # 30 + ceil(30 * 0.2)
     assert data["pages"][0]["id"] == "idea_01"
-    assert len(fake_text_provider.calls) == 1
+    assert [c.schema.__name__ for c in fake_text_provider.calls] == ["_LLMIdeas", "_Review"]
     out = capsys.readouterr().out
-    assert "Pomysły: 36 (30 stron + 6 zapasowych)" in out
+    assert "Pomysły do książki: 30 stron + 6 zapasowych." in out
+    assert "Weryfikacja: odrzucono 0, poprawiono 0, dogenerowano 0 (1 runda)" in out
     assert "1 próba" in out
 
 
@@ -186,9 +187,9 @@ def test_validation_error_skips_llm(fake_text_provider: FakeTextProvider) -> Non
 @pytest.mark.parametrize(
     ("pages", "summary"),
     [
-        ("12", "Pomysły: 15 (12 stron + 3 zapasowe)"),
-        ("22", "Pomysły: 27 (22 strony + 5 zapasowych)"),
-        ("1", "Pomysły: 2 (1 strona + 1 zapasowy)"),
+        ("12", "Pomysły do książki: 12 stron + 3 zapasowe."),
+        ("22", "Pomysły do książki: 22 strony + 5 zapasowych."),
+        ("1", "Pomysły do książki: 1 strona + 1 zapasowy."),
     ],
 )
 def test_summary_uses_polish_plurals(
@@ -341,3 +342,31 @@ def test_unsupported_aspect_skips_api(
     assert main(BASE) == ExitCode.VALIDATION_ERROR
     assert "nie obsługuje proporcji 3:4 formatu letter" in capsys.readouterr().err
     assert fake_text_provider.calls == []
+
+
+# --- FR-03a --------------------------------------------------------------------------
+
+
+def test_review_rejections_are_reported_and_saved(
+    fake_text_provider: FakeTextProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def reject_second(system: str, user: str) -> dict[str, object]:
+        return review_response(
+            user, idea_02={"verdict": "reject", "reason": "urodzinowy tort, nie święta"}
+        )
+
+    fake_text_provider.routes["_Review"] = reject_second
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    out = capsys.readouterr().out
+    assert "odrzucony: Dinosaur 2 (urodzinowy tort, nie święta)" in out
+    data = json.loads((BOOK_DIR / "ideas.json").read_text(encoding="utf-8"))
+    assert data["review"]["rejected"][0]["reason"] == "urodzinowy tort, nie święta"
+    assert "Dinosaur 2" not in [p["title"] for p in data["pages"]]
+    assert len(data["pages"]) == 15
+
+
+def test_no_review_ideas_flag(fake_text_provider: FakeTextProvider) -> None:
+    assert main([*BASE, "--pages", "12", "--no-review-ideas"]) == ExitCode.OK
+    assert [c.schema.__name__ for c in fake_text_provider.calls] == ["_LLMIdeas"]
+    data = json.loads((BOOK_DIR / "ideas.json").read_text(encoding="utf-8"))
+    assert data["review"] is None

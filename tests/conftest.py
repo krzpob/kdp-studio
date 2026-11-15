@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -57,3 +58,28 @@ def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
             for i in range(1, count + 1)
         ],
     }
+
+
+REVIEW_ID = re.compile(r"^(idea_\d+) \|", re.MULTILINE)
+
+
+def review_response(user: str, **verdicts: dict[str, Any]) -> dict[str, Any]:
+    """Werdykty weryfikacji dla pomysłów z sekcji "Ideas to review"; domyślnie `ok`."""
+    pending = user.split("Ideas to review:", 1)[1]
+    result = []
+    for idea_id in REVIEW_ID.findall(pending):
+        verdict = {
+            "id": idea_id,
+            "verdict": "ok",
+            "reason": "",
+            "revised_title": "",
+            "revised_scene": "",
+            "revised_elements": [],
+        }
+        verdict.update(verdicts.get(idea_id, {}))
+        result.append(verdict)
+    return {"verdicts": result}
+
+
+def approve_all(system: str, user: str) -> dict[str, Any]:
+    return review_response(user)

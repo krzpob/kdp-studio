@@ -139,6 +139,7 @@ class Settings(_Strict):
     image_quality: ImageQuality = "medium"
     concurrency: Annotated[int, Field(ge=1, le=MAX_CONCURRENCY)] = 4
     kdp_margins: KdpMargins = KdpMargins()
+    review_ideas: bool = True
 
 
 class AppConfig(_Strict):

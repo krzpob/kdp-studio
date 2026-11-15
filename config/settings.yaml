@@ -7,6 +7,11 @@ front_matter_pages: 2
 # Zapas pomysłów na strony odrzucone przez QA: pages + ceil(pages * reserve_ratio) (FR-03).
 reserve_ratio: 0.2
 
+# Weryfikacja pomysłów przed generowaniem grafik (FR-03a): osobne wywołanie modelu tekstowego
+# ocenia każdy pomysł, poprawia albo odrzuca te niepasujące do tematu, a zapas je zastępuje.
+# Kosztuje ułamek centa na książkę, mniej niż jedna wyrzucona grafika. --no-review-ideas wyłącza.
+review_ideas: true
+
 # Język metadanych książki (tytuł, opis, słowa kluczowe). Spec §14, pytanie 2: na razie rynek US.
 metadata_language: English
 

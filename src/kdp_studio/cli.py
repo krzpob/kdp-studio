@@ -12,6 +12,8 @@ import typer
 from dotenv import load_dotenv
 
 from kdp_studio.config import MAX_CONCURRENCY, ConfigError, load_config
+from kdp_studio.models import BookIdeas
+from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.output import (
     IDEAS_FILE,
@@ -93,6 +95,13 @@ def generate(
         str | None,
         typer.Option(help="Dostawca grafik z rejestru. Domyślnie z settings.yaml."),
     ] = None,
+    review_ideas: Annotated[
+        bool | None,
+        typer.Option(
+            "--review-ideas/--no-review-ideas",
+            help="Weryfikacja pomysłów przed grafikami (FR-03a). Domyślnie z settings.yaml.",
+        ),
+    ] = None,
 ) -> None:
     """Generuje kolorowankę: pomysły, prompty, grafiki i strony do druku (FR-01–FR-06)."""
     try:
@@ -151,22 +160,35 @@ def generate(
         )
 
     typer.echo(f"Generuję pomysły ({provider.name}, {provider.model})…")
+    generator = IdeaGenerator(provider, config)
     try:
-        ideas_result = IdeaGenerator(provider, config).generate(spec)
+        ideas_result = generator.generate(spec)
     except ProviderError as e:
         raise _fail([str(e)], ExitCode.PROVIDER_ERROR) from e
     _warn(ideas_result.warnings)
-
-    write_json_atomic(target / IDEAS_FILE, ideas_result.ideas)
     ideas = ideas_result.ideas
-    reserve = len(ideas.pages) - spec.pages
     usage = ideas_result.usage
     typer.echo(
         f"Tytuł: {ideas.book.title}\n"
-        f"Pomysły: {len(ideas.pages)} ({plural(spec.pages, 'strona', 'strony', 'stron')} + "
-        f"{plural(reserve, 'zapasowy', 'zapasowe', 'zapasowych')}), "
-        f"tokeny: {usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
-        f"{plural(ideas_result.attempts, 'próba', 'próby', 'prób')}.\n"
+        f"Pomysły: {len(ideas.pages)}, tokeny: {usage.input_tokens} wejście / "
+        f"{usage.output_tokens} wyjście, {plural(ideas_result.attempts, 'próba', 'próby', 'prób')}."
+    )
+
+    if settings.review_ideas if review_ideas is None else review_ideas:
+        typer.echo("Weryfikuję pomysły…")
+        try:
+            reviewed = IdeaReviewer(provider, config).review(spec, ideas, generator)
+        except ProviderError as e:
+            raise _fail([str(e)], ExitCode.PROVIDER_ERROR) from e
+        _warn(reviewed.warnings)
+        ideas = reviewed.ideas
+        _report_review(ideas, reviewed.usage.input_tokens, reviewed.usage.output_tokens)
+
+    write_json_atomic(target / IDEAS_FILE, ideas)
+    reserve = len(ideas.pages) - spec.pages
+    typer.echo(
+        f"Pomysły do książki: {plural(spec.pages, 'strona', 'strony', 'stron')} + "
+        f"{plural(reserve, 'zapasowy', 'zapasowe', 'zapasowych')}. "
         f"Zapisano: {target / IDEAS_FILE}"
     )
 
@@ -225,6 +247,21 @@ def generate(
         failed = ", ".join(o.name for o in images_result.failed)
         raise _fail([f"nieudane strony: {failed}"], ExitCode.PARTIAL)
     typer.echo("Manifest i instrukcja canva.md (FR-08) nie są jeszcze zaimplementowane.")
+
+
+def _report_review(ideas: BookIdeas, input_tokens: int, output_tokens: int) -> None:
+    review = ideas.review
+    if review is None:
+        return
+    typer.echo(
+        f"Weryfikacja: odrzucono {len(review.rejected)}, poprawiono {len(review.revised)}, "
+        f"dogenerowano {review.added} ({plural(review.rounds, 'runda', 'rundy', 'rund')}), "
+        f"tokeny: {input_tokens} wejście / {output_tokens} wyjście."
+    )
+    for rejected in review.rejected:
+        typer.echo(f"  odrzucony: {rejected.title} ({rejected.reason})")
+    for revised in review.revised:
+        typer.echo(f"  poprawiony: {revised.original_title} → {revised.id} ({revised.reason})")
 
 
 @app.command()

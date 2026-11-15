@@ -86,10 +86,21 @@ Parametry techniczne opisuje sekcja 9.
   - `book`: `title`, `subtitle`, `description` (pod listing KDP), `keywords` (do 7);
   - `pages`: lista `pages + ceil(pages * reserve_ratio)` pomysłów (`reserve_ratio` domyślnie 0.2), każdy z polami `id`, `title`, `scene` (opis sceny po angielsku, gotowy do promptu), `elements` (lista obiektów).
 - Pomysły muszą:
+  - wyraźnie pasować do tematu: główny motyw, czynność albo dobrze widoczny przedmiot jest typowy dla tematu i jest na liście `elements`. Motywy zwyczajowo kojarzone z tematem się liczą (dla świąt także bałwan, sanki, śnieg). Ogólne słowa („holiday”, „festive”) nie wystarczą, a scena, która wyglądałaby tak samo w każdy inny dzień (tort urodzinowy z koroną, herbatka, kosz z praniem), potrzebuje konkretnego elementu tematu (dla świąt: pierniczki, choinka, skarpety na prezenty);
   - być unikalne w obrębie książki (różne sceny, nie tylko inne sformułowania);
   - pasować do formatu: `square` to centralny obiekt lub kompozycja koncentryczna, `letter` to postać lub scena w pionie;
   - pasować do wieku: liczba obiektów i złożoność sceny zgodne z profilem wieku.
 - Treści nie mogą zawierać postaci chronionych prawem autorskim ani znaków towarowych. LLM dostaje to jako twarde ograniczenie.
+
+### FR-03a: Weryfikacja pomysłów przed generowaniem grafik
+- Domyślnie włączona (`review_ideas: true` w `settings.yaml`); `--no-review-ideas` wyłącza.
+- Osobne wywołanie LLM (ten sam model tekstowy, inny prompt: rola recenzenta) ocenia każdy pomysł według listy kontrolnej: zgodność z tematem (reguła z FR-03), unikalność, złożoność dla wieku, kompozycja dla formatu, jedna scena do narysowania konturem bez tekstu, brak chronionych postaci i znaków.
+- Recenzent poprawia tylko pomysły, które nie przechodzą listy (większość dobrej listy to `ok`), a przy kilku poprawkach dobiera różne elementy tematu, żeby strony nie wyglądały tak samo.
+- Werdykt dla każdego pomysłu: `ok`, `revise` (drobna poprawka, najczęściej dodanie elementu tematu, np. kotek-piekarz piecze pierniczki; recenzent zwraca poprawiony tytuł, scenę i elementy) albo `reject` (z powodem po polsku).
+- Odrzucone pomysły zastępuje zapas. Gdy po weryfikacji pomysłów jest mniej niż `pages + ceil(pages * reserve_ratio)`, generator dogenerowuje brakujące (różne od przyjętych i odrzuconych), a one też przechodzą weryfikację. Maks. 2 rundy dogenerowania.
+- Mniej przyjętych pomysłów niż `pages` po wszystkich rundach: błąd z kodem 4. Mniejszy zapas niż docelowy: ostrzeżenie.
+- `ideas.json` dostaje ślad weryfikacji w polu `review`: `rejected` (tytuł, scena, powód), `revised` (id, pierwotny tytuł i scena, powód), `added`, `rounds`. Ostateczne id to `idea_01…` po weryfikacji.
+- Uzasadnienie: weryfikacja kosztuje ułamek centa na książkę, a jedna wyrzucona grafika kilka centów. Nie zastępuje QA z wizją (FR-07), które łapie problemy widoczne dopiero na obrazku (tekst, siatka, cieniowanie).
 
 ### FR-04: Budowanie promptów obrazu
 - Prompt dla każdej strony składa się z: opisu sceny z FR-03, **wspólnego bloku stylu** (identycznego dla wszystkich stron książki), fragmentu z profilu wieku i fragmentu z profilu formatu.
@@ -238,7 +249,8 @@ Zasady:
 ```
 CLI (typer)
   └─ BookSpec (walidacja: FR-01, FR-02)
-      ├─ IdeaGenerator ── TextProvider ──► ideas.json            (FR-03)
+      ├─ IdeaGenerator ── TextProvider ──► pomysły               (FR-03)
+      ├─ IdeaReviewer  ── TextProvider ──► ideas.json            (FR-03a)
       ├─ PromptBuilder ◄─ ages/styles/formats.yaml               (FR-04)
       ├─ PageWorker × concurrency                                (FR-05..07)
       │    ├─ ImageProvider.generate() ──► raw/page_XX.png
@@ -306,6 +318,7 @@ kdp-studio generate \
   [--concurrency 4] \
   [--max-cost 5.00] \
   [--qa] \
+  [--no-review-ideas] \
   [--dry-run] \
   [--strict] \
   [--image-provider openai] \
@@ -321,7 +334,7 @@ kdp-studio profiles [age|style|format]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`.
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
 
