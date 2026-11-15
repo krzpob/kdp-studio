@@ -8,7 +8,7 @@ KDP Studio is a CLI that generates Amazon KDP coloring books: an LLM invents the
 
 The MVP spec, [docs/requirements.md](docs/requirements.md), is the source of truth for scope, decisions (D1–D8), functional requirements (FR-01–FR-13), non-functional requirements (NFR-01–NFR-13), and the planned layout. Read it before implementing anything, and cite requirement IDs in commits and PRs. The spec, README and user-facing CLI messages are in Polish. Profile keys are Polish too (`przedszkole`, `dorosli`, …), while image prompts and scene descriptions are in English.
 
-Implemented so far: config loading (§7), input validation (FR-01, FR-02) idea generation (FR-03) and the `profiles` command (FR-12). `generate` validates, calls the text LLM once, writes `ideas.json` and stops; FR-04 onward is not built yet. `uv run kdp-studio generate …` makes a real, paid OpenAI call when `OPENAI_API_KEY` is set.
+Implemented so far: config loading (§7), input validation (FR-01, FR-02), idea generation (FR-03), image prompts (FR-04) and the `profiles` command (FR-12). `generate` validates, calls the text LLM once, writes `ideas.json` and `prompts.json`, and stops; FR-05 onward is not built yet. `uv run kdp-studio generate …` makes a real, paid OpenAI call when `OPENAI_API_KEY` is set.
 
 ## Commands
 
@@ -45,10 +45,11 @@ Package: `src/kdp_studio/`. Existing modules:
 - `cli.py`: typer app with an `ExitCode` enum. Entry point `run()` → `main(argv)`, which runs typer with `standalone_mode=False` so usage errors (bad type, unknown flag) exit with 1 instead of typer's default 2, which §9.3 reserves for partial results. Tests call `main([...])` directly; `tests/test_cli.py` has an autouse fixture that swaps `cli.create_text_provider` for `FakeTextProvider` and `chdir`s to `tmp_path`.
 - `providers/base.py`: `TextProvider` protocol (`complete_json(system, user, schema) -> (parsed, Usage)`), `Usage`, `ProviderError` (exit 4). `providers/registry.py` maps the names in `settings.yaml` (`providers.text`) to lazily imported classes. `providers/openai_text.py` uses `client.responses.parse(..., text_format=schema)` with the SDK's own retries off (`max_retries=0`), because the SDK also retries permanent 429s such as `insufficient_quota`. Retries go through `providers/retry.py` (`call_with_retries`, 3 attempts, exponential backoff or `Retry-After`); each adapter supplies the transient/permanent decision (`openai_retry_decision`). `providers/fake.py` replays canned responses and records calls.
 - `pipeline/ideas.py` (FR-03): `build_prompts()` assembles the English prompt from the age/style/format profiles. The LLM-facing schema (`_LLMIdeas`) deliberately has no min/max constraints; `IdeaGenerator` enforces them afterwards: it drops empty and verbatim-duplicate ideas, assigns ids `idea_01…` itself, trims to `pages + ceil(pages * reserve_ratio)`, dedupes keywords and caps them at 7. A short reserve is a warning; fewer ideas than pages, or invalid metadata, triggers one retry, then `ProviderError`.
+- `pipeline/prompts.py` (FR-04): `PromptBuilder(spec, config)`. Each prompt is `Scene: <scene>.` followed by `style_block`, which is identical for every page of a book: style `prompt_fragment`, age `prompt_fragment`, format `composition_hint` and `FIXED_CONSTRAINTS` (the spec's list, verbatim; a test pins it). Prompts are built for reserve ideas too and saved to `prompts.json` until the manifest (FR-08) exists.
 - `pipeline/output.py`: `book_dir()` (FR-08 naming, Polish letters transliterated by `slugify`) and `write_json_atomic()` (temp file + `os.replace`). `generate` refuses to overwrite an existing `ideas.json` until `--resume` (FR-09) exists.
 - `tests/test_architecture.py` enforces NFR-02 by parsing imports in `pipeline/*.py`, `providers/base.py` and `providers/registry.py`.
 
-Still to come: image providers, prompts (FR-04), post-processing, QA, manifest.
+Still to come: image providers (FR-05), post-processing, QA, manifest.
 
 Flow: `CLI → BookSpec (validation) → IdeaGenerator → PromptBuilder → PageWorker × concurrency (ImageProvider → PostProcessor chain → optional QAChecker) → Manifest`.
 
