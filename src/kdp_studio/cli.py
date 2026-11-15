@@ -13,14 +13,26 @@ from dotenv import load_dotenv
 
 from kdp_studio.config import MAX_CONCURRENCY, ConfigError, load_config
 from kdp_studio.models import BookIdeas
+from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
+from kdp_studio.pipeline.manifest import (
+    AI_DISCLOSURE,
+    ImageProviderInfo,
+    ManifestIdeas,
+    ManifestInput,
+    ManifestLayout,
+    ManifestProviders,
+    ManifestWriter,
+    ProviderInfo,
+)
 from kdp_studio.pipeline.output import (
     IDEAS_FILE,
     PROMPTS_FILE,
     RAW_DIR,
     SVG_DIR,
     book_dir,
+    write_bytes_atomic,
     write_json_atomic,
 )
 from kdp_studio.pipeline.postprocess import PageGeometry, PagePostprocessor, page_margin_in
@@ -103,7 +115,7 @@ def generate(
         ),
     ] = None,
 ) -> None:
-    """Generuje kolorowankę: pomysły, prompty, grafiki i strony do druku (FR-01–FR-06)."""
+    """Generuje kolorowankę: pomysły, prompty, strony do druku, manifest i canva.md."""
     try:
         config = load_config()
     except ConfigError as e:
@@ -174,7 +186,9 @@ def generate(
         f"{usage.output_tokens} wyjście, {plural(ideas_result.attempts, 'próba', 'próby', 'prób')}."
     )
 
-    if settings.review_ideas if review_ideas is None else review_ideas:
+    ideas_usage = usage
+    do_review = settings.review_ideas if review_ideas is None else review_ideas
+    if do_review:
         typer.echo("Weryfikuję pomysły…")
         try:
             reviewed = IdeaReviewer(provider, config).review(spec, ideas, generator)
@@ -182,6 +196,7 @@ def generate(
             raise _fail([str(e)], ExitCode.PROVIDER_ERROR) from e
         _warn(reviewed.warnings)
         ideas = reviewed.ideas
+        ideas_usage += reviewed.usage
         _report_review(ideas, reviewed.usage.input_tokens, reviewed.usage.output_tokens)
 
     write_json_atomic(target / IDEAS_FILE, ideas)
@@ -199,6 +214,7 @@ def generate(
     fmt = config.formats[spec.format]
     margin_in = page_margin_in(fmt, settings.kdp_margins, spec.pages_in_book)
     gutter_in = settings.kdp_margins.gutter_in(spec.pages_in_book)
+    assert gutter_in is not None  # FR-02 odrzuca książki grubsze niż tabela marginesów
     typer.echo(
         f'Strona {fmt.page_px[0]}×{fmt.page_px[1]} px ({fmt.dpi} DPI), margines {margin_in:g}" '
         f'z każdej strony (grzbiet KDP dla {spec.pages_in_book} stron: {gutter_in:g}").'
@@ -210,6 +226,40 @@ def generate(
     )
 
     jobs = page_jobs(prompts, spec.pages)
+    manifest = ManifestWriter.start(
+        target,
+        jobs=jobs,
+        input=ManifestInput(
+            theme=spec.theme,
+            age=spec.age,
+            style=spec.style,
+            format=spec.format,
+            pages=spec.pages,
+            front_matter_pages=spec.front_matter_pages,
+            concurrency=workers,
+            review_ideas=do_review,
+        ),
+        providers=ManifestProviders(
+            text=ProviderInfo(provider=provider.name, model=provider.model),
+            image=ImageProviderInfo(
+                provider=images.name,
+                model=images.model,
+                quality=settings.image_quality,
+                aspect=aspect,
+            ),
+        ),
+        layout=ManifestLayout(
+            trim_in=fmt.trim_in,
+            page_px=fmt.page_px,
+            dpi=fmt.dpi,
+            pages_in_book=spec.pages_in_book,
+            gutter_in=gutter_in,
+            margin_in=margin_in,
+        ),
+        ideas=ManifestIdeas(
+            count=len(ideas.pages), reserve=reserve, reviewed=do_review, usage=ideas_usage
+        ),
+    )
     typer.echo(
         f"Generuję {plural(len(jobs), 'grafikę', 'grafiki', 'grafik')} ({images.name}, "
         f"{images.model}, jakość {settings.image_quality}, równolegle {workers})…"
@@ -224,6 +274,7 @@ def generate(
         else:
             line = f"{outcome.name}: nieudana: {outcome.error}"
         typer.echo(f"[{done}/{len(jobs)}] {line}")
+        manifest.record(outcome)
 
     worker = PageWorker(
         provider=images,
@@ -241,12 +292,18 @@ def generate(
         f"Gotowe strony do Canvy: {target}/page_*.png (wektory: {target / SVG_DIR}, "
         f"surowe: {target / RAW_DIR})"
     )
+    status = manifest.finish(images_result.fatal_error)
+    typer.echo(f"Manifest: {manifest.path} (status: {status})")
     if images_result.fatal_error is not None:
         raise _fail([images_result.fatal_error], ExitCode.PROVIDER_ERROR)
+
+    canva = target / CANVA_FILE
+    write_bytes_atomic(canva, render_canva_md(manifest.manifest, ideas.book.title).encode("utf-8"))
+    typer.echo(f"Instrukcja składania w Canvie: {canva}")
+    typer.echo(f"Pamiętaj: {AI_DISCLOSURE}")
     if images_result.failed:
         failed = ", ".join(o.name for o in images_result.failed)
         raise _fail([f"nieudane strony: {failed}"], ExitCode.PARTIAL)
-    typer.echo("Manifest i instrukcja canva.md (FR-08) nie są jeszcze zaimplementowane.")
 
 
 def _report_review(ideas: BookIdeas, input_tokens: int, output_tokens: int) -> None:
