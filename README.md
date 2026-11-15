@@ -13,4 +13,10 @@ uv sync
 uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30
 ```
 
-Na razie `generate` tylko waliduje parametry (FR-01, FR-02). Dostępne profile wieku, stylu i formatu są w katalogu `config/`.
+Na razie `generate` waliduje parametry (FR-01, FR-02) i generuje pomysły na strony oraz metadane książki (FR-03) do `output/<temat>_<wiek>_<styl>_<format>/ideas.json`. Wymaga klucza API OpenAI (osobnego od abonamentu ChatGPT) w zmiennej `OPENAI_API_KEY` albo w pliku `.env`:
+
+```bash
+echo 'OPENAI_API_KEY=sk-...' > .env
+```
+
+Dostępne profile wieku, stylu i formatu są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.

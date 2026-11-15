@@ -5,11 +5,17 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
+from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from kdp_studio.config import ConfigError, load_config
+from kdp_studio.pipeline.ideas import IdeaGenerator
+from kdp_studio.pipeline.output import IDEAS_FILE, book_dir, write_json_atomic
+from kdp_studio.providers.base import ProviderError
+from kdp_studio.providers.registry import create_text_provider
 from kdp_studio.validation import InputValidationError, plural, validate_book_spec
 
 
@@ -36,10 +42,15 @@ def _root() -> None:
     """Generator kolorowanek pod Amazon KDP."""
 
 
-def _fail(lines: Sequence[str]) -> typer.Exit:
+def _fail(lines: Sequence[str], code: ExitCode = ExitCode.VALIDATION_ERROR) -> typer.Exit:
     for line in lines:
         typer.echo(f"Błąd: {line}", err=True)
-    return typer.Exit(ExitCode.VALIDATION_ERROR)
+    return typer.Exit(code)
+
+
+def _warn(lines: Sequence[str]) -> None:
+    for line in lines:
+        typer.echo(f"Ostrzeżenie: {line}", err=True)
 
 
 @app.command()
@@ -56,8 +67,11 @@ def generate(
     strict: Annotated[
         bool, typer.Option("--strict", help="Za mało stron dla KDP to błąd, nie ostrzeżenie.")
     ] = False,
+    output_dir: Annotated[
+        Path, typer.Option(help="Katalog, w którym powstaje katalog książki.")
+    ] = Path("output"),
 ) -> None:
-    """Generuje kolorowankę. Na razie tylko walidacja wejścia (FR-01, FR-02)."""
+    """Generuje kolorowankę. Na razie walidacja (FR-01, FR-02) i pomysły (FR-03)."""
     try:
         config = load_config()
     except ConfigError as e:
@@ -76,16 +90,48 @@ def generate(
     except InputValidationError as e:
         raise _fail(e.errors) from e
 
-    for warning in result.warnings:
-        typer.echo(f"Ostrzeżenie: {warning}", err=True)
-
+    _warn(result.warnings)
     spec = result.spec
     typer.echo(
         f"Parametry poprawne: '{spec.theme}', wiek {spec.age}, styl {spec.style}, "
         f"format {spec.format}, {plural(spec.pages, 'grafika', 'grafiki', 'grafik')} "
         f"({plural(spec.pages_in_book, 'strona', 'strony', 'stron')} książki)."
     )
-    typer.echo("Generowanie (FR-03 i dalej) nie jest jeszcze zaimplementowane.")
+
+    target = book_dir(output_dir, spec)
+    if (target / IDEAS_FILE).exists():
+        raise _fail(
+            [
+                f"{target / IDEAS_FILE} już istnieje. Usuń katalog albo wybierz inny "
+                "--output-dir (wznawianie --resume to FR-09, jeszcze niezaimplementowane)"
+            ]
+        )
+
+    settings = config.settings
+    try:
+        provider = create_text_provider(settings.providers.text, settings.models.text)
+    except ConfigError as e:
+        raise _fail([str(e)]) from e
+
+    typer.echo(f"Generuję pomysły ({provider.name}, {provider.model})…")
+    try:
+        ideas_result = IdeaGenerator(provider, config).generate(spec)
+    except ProviderError as e:
+        raise _fail([str(e)], ExitCode.PROVIDER_ERROR) from e
+    _warn(ideas_result.warnings)
+
+    write_json_atomic(target / IDEAS_FILE, ideas_result.ideas)
+    ideas = ideas_result.ideas
+    reserve = len(ideas.pages) - spec.pages
+    usage = ideas_result.usage
+    typer.echo(
+        f"Tytuł: {ideas.book.title}\n"
+        f"Pomysły: {len(ideas.pages)} ({spec.pages} stron + {reserve} zapasowych), "
+        f"tokeny: {usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
+        f"{plural(ideas_result.attempts, 'próba', 'próby', 'prób')}.\n"
+        f"Zapisano: {target / IDEAS_FILE}"
+    )
+    typer.echo("Generowanie grafik (FR-04 i dalej) nie jest jeszcze zaimplementowane.")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -111,4 +157,5 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def run() -> None:
+    load_dotenv()  # sekrety z .env (spec §9.2); zmienne środowiskowe mają pierwszeństwo
     sys.exit(main())
