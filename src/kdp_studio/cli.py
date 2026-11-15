@@ -129,7 +129,8 @@ def generate(
     usage = ideas_result.usage
     typer.echo(
         f"Tytuł: {ideas.book.title}\n"
-        f"Pomysły: {len(ideas.pages)} ({spec.pages} stron + {reserve} zapasowych), "
+        f"Pomysły: {len(ideas.pages)} ({plural(spec.pages, 'strona', 'strony', 'stron')} + "
+        f"{plural(reserve, 'zapasowy', 'zapasowe', 'zapasowych')}), "
         f"tokeny: {usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
         f"{plural(ideas_result.attempts, 'próba', 'próby', 'prób')}.\n"
         f"Zapisano: {target / IDEAS_FILE}"

@@ -154,6 +154,21 @@ def test_validation_error_skips_llm(fake_text_provider: FakeTextProvider) -> Non
     assert fake_text_provider.calls == []
 
 
+@pytest.mark.parametrize(
+    ("pages", "summary"),
+    [
+        ("12", "Pomysły: 15 (12 stron + 3 zapasowe)"),
+        ("22", "Pomysły: 27 (22 strony + 5 zapasowych)"),
+        ("1", "Pomysły: 2 (1 strona + 1 zapasowy)"),
+    ],
+)
+def test_summary_uses_polish_plurals(
+    pages: str, summary: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*BASE, "--pages", pages]) == ExitCode.OK
+    assert summary in capsys.readouterr().out
+
+
 # --- FR-12 ---------------------------------------------------------------------------
 
 
