@@ -32,10 +32,13 @@ class TextCall:
 class FakeTextProvider:
     """Zwraca kolejne przygotowane odpowiedzi (dict albo funkcja `(system, user) -> dict`).
 
-    Po wyczerpaniu listy powtarza ostatnią odpowiedź. Każde wywołanie trafia do `calls`.
+    Po wyczerpaniu listy powtarza ostatnią odpowiedź. `routes` (nazwa klasy schematu →
+    odpowiedź) ma pierwszeństwo, np. osobna odpowiedź dla weryfikacji pomysłów.
+    Każde wywołanie trafia do `calls`.
     """
 
     responses: list[Any | Responder]
+    routes: dict[str, Any | Responder] = field(default_factory=dict)
     name: str = "fake"
     model: str = "fake-text"
     usage_per_call: Usage = field(default_factory=lambda: Usage(input_tokens=100, output_tokens=50))
@@ -43,7 +46,11 @@ class FakeTextProvider:
 
     def complete_json(self, system: str, user: str, schema: type[SchemaT]) -> tuple[SchemaT, Usage]:
         self.calls.append(TextCall(system, user, schema))
-        response = self.responses[min(len(self.calls), len(self.responses)) - 1]
+        if schema.__name__ in self.routes:
+            response = self.routes[schema.__name__]
+        else:
+            calls = sum(1 for c in self.calls if c.schema.__name__ not in self.routes)
+            response = self.responses[min(calls, len(self.responses)) - 1]
         data = response(system, user) if callable(response) else response
         return schema.model_validate(data), self.usage_per_call
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, ValidationError
@@ -48,6 +49,10 @@ class _LLMIdeas(BaseModel):
     pages: list[_LLMPage]
 
 
+class _LLMMoreIdeas(BaseModel):
+    pages: list[_LLMPage]
+
+
 # --- Prompt -------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
@@ -58,6 +63,7 @@ Hard constraints (never break them):
 Use only original, generic subjects.
 - Every page is a distinctly different scene: a different subject, action or setting. \
 Rewording another page does not count as a new idea.
+- {theme_rule}
 - Each scene must work as black-and-white line art for coloring: one single scene, no text, \
 letters, numbers, signs or speech bubbles in the picture.
 - Write `scene` and `elements` in English. Describe only what is visible (subject, action, \
@@ -74,7 +80,17 @@ Metadata rules:
 no words already in the title.
 """
 
-USER_PROMPT = """\
+THEME_RULE = (
+    "Every scene clearly belongs to the theme: its main subject, action or a clearly visible "
+    "object is typical of the theme and is listed in `elements`. Motifs commonly used for the "
+    "theme count (for Christmas also snowmen, sleds, mittens or snowy scenes). Generic words "
+    'such as "holiday" or "festive" do not count, and neither does an everyday scene that would '
+    "look the same on any other day (a birthday cake with a party crown, a tea party, a laundry "
+    "basket); such a scene needs a concrete theme element (for Christmas: gingerbread cookies, "
+    "a decorated tree, stockings, ornaments)."
+)
+
+PROFILE_PROMPT = """\
 Theme (may be in any language, interpret it): {theme}
 
 Target audience: {age_name}
@@ -87,7 +103,10 @@ Target audience: {age_name}
 Art style: {style_name} ({style_fragment})
 
 Page format: {format_name}. Composition: {composition}
+"""
 
+USER_PROMPT = """\
+{profile}
 Return exactly {total} page ideas ({pages} pages plus {reserve} reserve ideas used when a page \
 is rejected). All {total} must be different from each other.
 
@@ -101,17 +120,47 @@ def reserve_count(pages: int, reserve_ratio: float) -> int:
 
 
 def build_prompts(spec: BookSpec, config: AppConfig) -> tuple[str, str]:
-    age = config.ages[spec.age]
-    style = config.styles[spec.style]
-    fmt = config.formats[spec.format]
     settings = config.settings
     reserve = reserve_count(spec.pages, settings.reserve_ratio)
     system = SYSTEM_PROMPT.format(
         language=settings.metadata_language,
         max_keywords=KDP_MAX_KEYWORDS,
         keyword_chars=KDP_KEYWORD_MAX_CHARS,
+        theme_rule=THEME_RULE,
     )
     user = USER_PROMPT.format(
+        profile=profile_prompt(spec, config),
+        total=spec.pages + reserve,
+        pages=spec.pages,
+        reserve=reserve,
+    )
+    return system, user
+
+
+MORE_PROMPT = """\
+{profile}
+Return exactly {count} NEW page ideas. Each must be different from every idea below \
+(different subject, action or setting, not a rewording):
+{existing}
+"""
+
+
+def build_more_prompts(
+    spec: BookSpec, config: AppConfig, count: int, existing: Sequence[PageIdea]
+) -> tuple[str, str]:
+    """Prompt dogenerowania pomysłów, gdy weryfikacja odrzuci za dużo (FR-03a)."""
+    system, _ = build_prompts(spec, config)
+    listing = "\n".join(f"- {idea.title}: {idea.scene}" for idea in existing) or "- (none)"
+    user = MORE_PROMPT.format(profile=profile_prompt(spec, config), count=count, existing=listing)
+    return system, user
+
+
+def profile_prompt(spec: BookSpec, config: AppConfig) -> str:
+    """Temat, wiek, styl i format: wspólna część promptów generowania i weryfikacji."""
+    age = config.ages[spec.age]
+    style = config.styles[spec.style]
+    fmt = config.formats[spec.format]
+    return PROFILE_PROMPT.format(
         theme=spec.theme,
         age_name=age.name,
         age_line=age.line,
@@ -123,11 +172,7 @@ def build_prompts(spec: BookSpec, config: AppConfig) -> tuple[str, str]:
         style_fragment=style.prompt_fragment,
         format_name=fmt.name,
         composition=fmt.composition_hint,
-        total=spec.pages + reserve,
-        pages=spec.pages,
-        reserve=reserve,
     )
-    return system, user
 
 
 # --- Normalizacja -------------------------------------------------------------------
@@ -236,3 +281,31 @@ class IdeaGenerator:
         raise ProviderError(
             f"nie udało się wygenerować pomysłów w {self.max_attempts} próbach: {problem}"
         )
+
+    def generate_more(
+        self, spec: BookSpec, count: int, existing: Sequence[PageIdea], first_number: int
+    ) -> tuple[list[PageIdea], Usage]:
+        """Dogenerowuje do `count` nowych pomysłów różnych od `existing` (FR-03a).
+
+        Numeracja od `first_number`; ostateczne id nadaje weryfikacja po scaleniu.
+        """
+        system, user = build_more_prompts(spec, self.config, count, existing)
+        response, usage = self.provider.complete_json(system, user, _LLMMoreIdeas)
+        known = {_fingerprint(i.title) for i in existing} | {
+            _fingerprint(i.scene) for i in existing
+        }
+        fresh = [
+            p
+            for p in _unique_pages(response.pages)
+            if not {_fingerprint(p.title), _fingerprint(p.scene)} & known
+        ]
+        ideas = [
+            PageIdea(
+                id=_page_id(first_number + i),
+                title=p.title,
+                scene=p.scene,
+                elements=_clean_list(p.elements),
+            )
+            for i, p in enumerate(fresh[:count])
+        ]
+        return ideas, usage
