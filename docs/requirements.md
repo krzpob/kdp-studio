@@ -12,7 +12,7 @@ Narzędzie CLI, które na podstawie kilku parametrów (temat, wiek odbiorcy, sty
 2. **Model obrazu** generuje czarno-biały line art, jedno wywołanie na stronę.
 3. **Post-processing** zamienia wynik na grafikę gotową do druku (czysta czerń i biel, 300 DPI, marginesy).
 
-Wynik MVP to **jeden katalog** z grafikami i plikami metadanych.
+Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika to gotowa, pełna strona (z marginesami), którą importuje się do **Canvy**. Tam użytkownik składa PDF wnętrza książki.
 
 ## 2. Zakres
 
@@ -21,12 +21,14 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych.
 - Generowanie pomysłów na strony i metadanych książki (tytuł, opis, słowa kluczowe).
 - Generowanie grafik przez **OpenAI Image API**.
 - Profile wieku, stylu i formatu w plikach konfiguracyjnych (YAML).
-- Post-processing do formatu druku KDP.
+- Post-processing do gotowych stron PNG w wymiarach druku KDP (pełna strona z marginesami), które importuje się do Canvy bez dalszej obróbki (FR-06).
+- Instrukcja składania książki w Canvie, generowana dla każdej książki (FR-08, sekcja 10.1).
 - Opcjonalna automatyczna kontrola jakości (QA) przez model z wizją.
 - Wznawianie przerwanego generowania, śledzenie kosztów i limit budżetu.
 
 ### Poza zakresem MVP (roadmapa, sekcja 13)
-- Składanie PDF wnętrza książki i okładki.
+- Składanie PDF wnętrza książki w skrypcie. W MVP robi to użytkownik w Canvie (D9). Automatyczne składanie to opcjonalny etap 2.
+- Okładka (projektowana ręcznie w Canvie albo w pakiecie Adobe).
 - Adapter Gemini API (Nano Banana). Architektura musi go umożliwiać od początku.
 - Adapter Adobe Firefly.
 - Interfejs graficzny (Streamlit, Gradio albo React).
@@ -44,6 +46,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych.
 | D6 | **Wektoryzacja (potrace), a potem render do 300 DPI** | Modele zwracają ok. 1–1.5k px, a strona potrzebuje 2550+ px. Wektoryzacja daje idealnie ostre linie, czego zwykły upscale nie zapewnia. |
 | D7 | **Formaty: `letter` (8.5"×11", pion) i `square` (8.5"×8.5")** | Dwa najpopularniejsze formaty kolorowanek na KDP. Formatów poziomych KDP nie obsługuje w tym rozmiarze. |
 | D8 | **Druk jednostronny** (grafika, potem pusta strona) | Standard w kolorowankach, bo kredki i flamastry nie przebijają na następną grafikę. Wpływa na liczenie stron (FR-02). |
+| D9 | **PDF wnętrza składany w Canvie**, nie w skrypcie | Canva daje kontrolę nad stroną tytułową i układem bez pisania kodu. Skrypt dostarcza pełne strony PNG, które wystarczy rozciągnąć na całą stronę projektu. Do Canvy trafia PNG, a nie SVG: Canva przyjmuje SVG tylko do 3 MB, 150–200 px szerokości i w profilu SVG 1.1, a gęsty line art z potrace przekracza te limity. |
 
 ## 4. Pojęcia
 
@@ -74,6 +77,7 @@ Parametry techniczne opisuje sekcja 9.
 ### FR-02: Walidacja liczby stron względem KDP
 - Program liczy `pages_in_book = pages * 2 + front_matter_pages` (druk jednostronny, `front_matter_pages` z konfiguracji, domyślnie 2: strona tytułowa i „This book belongs to…”).
 - Jeśli `pages_in_book < 24` (minimum KDP dla paperbacka), program pokazuje ostrzeżenie z minimalną poprawną liczbą grafik. Z flagą `--strict` kończy się błędem.
+- Jeśli `pages_in_book` przekracza ostatni próg tabeli marginesów KDP (sekcja 7.4), program kończy się błędem walidacji.
 
 ### FR-03: Generowanie pomysłów i metadanych książki
 - **Jedno** wywołanie LLM ze strukturyzowanym wyjściem (JSON Schema lub structured outputs).
@@ -99,16 +103,34 @@ Parametry techniczne opisuje sekcja 9.
 - Adapter mapuje proporcje formatu na rozmiar obsługiwany przez model (sekcja 8). Jeśli model obsługuje dowolne wymiary, adapter używa dokładnych proporcji.
 - Surowy wynik zapisuje się do `raw/page_XX.png` przed obróbką.
 
-### FR-06: Post-processing do druku
+### FR-06: Post-processing do druku (strony gotowe do importu w Canvie)
 Kolejne kroki (implementacje `PostProcessor`):
 1. konwersja do skali szarości;
-2. progowanie do 1-bit (próg konfigurowalny, domyślnie Otsu);
+2. progowanie do czerni i bieli (próg konfigurowalny, domyślnie Otsu), jako krok pośredni przed wektoryzacją;
 3. usunięcie drobnego szumu (izolowane piksele i plamki poniżej progu powierzchni);
-4. wektoryzacja przez potrace do SVG (zapis w `svg/page_XX.svg`);
-5. render SVG do rozdzielczości strony (300 DPI), wpasowany w obszar bezpieczny z zachowaniem proporcji, białe tło;
-6. zapis `page_XX.png` (1-bit albo 8-bit grayscale, metadane DPI = 300).
+4. wektoryzacja przez potrace do SVG i zapis w `svg/page_XX.svg`. SVG to **archiwum** (np. do ręcznych poprawek), a nie plik do importu w Canvie (D9);
+5. render SVG do pełnego wymiaru strony `page_px`:
+   - grafika wpasowana z zachowaniem proporcji w obszar treści, czyli stronę pomniejszoną o margines `margin_in` **z każdej strony**, i wyśrodkowana;
+   - `margin_in = max(safe_margin_in, outside_min_in, gutter_in(pages_in_book))`, gdzie `gutter_in(pages_in_book)` to margines przy grzbiecie z tabeli KDP (sekcja 7.4), a `pages_in_book` liczy się jak w FR-02. Margines liczy się raz na książkę, więc wszystkie strony mają identyczne marginesy;
+   - margines symetryczny, bo program nie wie, po której stronie grzbietu grafika wyląduje w Canvie (zależy to od liczby stron wstępnych i od składania). Ten sam plik jest poprawny na stronie lewej i prawej. Kosztem jest nieco mniejsza grafika przy zewnętrznej krawędzi;
+   - nieprzezroczyste białe tło, bez kanału alfa (KDP wymaga spłaszczenia przezroczystości);
+   - po renderze ponowne progowanie, żeby wygładzanie krawędzi (antyaliasing) nie zostawiło szarych pikseli;
+6. zapis `page_XX.png`:
+   - **8-bit grayscale** (tryb `L`), wyłącznie wartości 0 i 255, bez kanału alfa;
+   - metadane DPI = 300;
+   - limity importu Canvy (PNG < 50 MB, ≤ 250 mln pikseli) są spełnione z zapasem: strona letter to ok. 8.4 mln pikseli.
 
-Wymiary i marginesy pochodzą z profilu formatu (sekcja 7.3).
+Wymiary pochodzą z profilu formatu (sekcja 7.3), a marginesy z profilu formatu i tabeli KDP (sekcja 7.4).
+
+Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
+
+| `--pages` | `pages_in_book` | Gutter KDP | `margin_in` |
+|---|---|---|---|
+| 30 | 62 | 0.375" | 0.5" |
+| 100 | 202 | 0.5" | 0.5" |
+| 200 | 402 | 0.625" | 0.625" |
+
+**Kryterium akceptacji:** w Canvie, w projekcie o wymiarach `trim_in` profilu, plik rozciągnięty na całą stronę daje poprawne marginesy bez skalowania ani przycinania.
 
 ### FR-07: Kontrola jakości (QA), opcjonalna
 - Włączana flagą `--qa` (domyślnie wyłączona w MVP).
@@ -120,7 +142,10 @@ Wymiary i marginesy pochodzą z profilu formatu (sekcja 7.3).
 ### FR-08: Struktura wyjścia i manifest
 - Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`).
 - Zawartość: patrz sekcja 10.
-- `manifest.json` zawiera parametry wejściowe, wersję narzędzia, użytych dostawców i modele oraz dla każdej strony: id pomysłu, prompt, status, liczbę prób, koszt, czas, wynik QA.
+- Gotowe strony leżą w katalogu głównym książki jako `page_XX.png`, z numerem dopełnionym zerami do długości największego numeru (min. 2 cyfry, np. `page_01` … `page_30`). Kolejność alfabetyczna = kolejność stron, więc po przeciągnięciu całej paczki do Canvy strony są we właściwej kolejności.
+- W katalogu głównym nie ma innych plików PNG (surowe i odrzucone są w podkatalogach), żeby do Canvy dało się zaznaczyć i przesłać wszystkie pliki naraz.
+- Program zapisuje `canva.md`: instrukcję składania tej konkretnej książki (wymiar projektu, liczba grafik i stron książki, kolejność stron wstępnych i pustych, ustawienia eksportu). Treść według sekcji 10.1.
+- `manifest.json` zawiera parametry wejściowe, wersję narzędzia, użytych dostawców i modele, `pages_in_book` i użyty `margin_in` (FR-06) oraz dla każdej strony: id pomysłu, prompt, status, liczbę prób, koszt, czas, wynik QA.
 - Manifest jest zapisywany przyrostowo po każdej stronie, żeby przerwanie nie gubiło postępu.
 
 ### FR-09: Wznawianie
@@ -170,8 +195,7 @@ letter:            # 8.5" × 11", pion
   dpi: 300
   page_px: [2550, 3300]
   aspect: "3:4"
-  safe_margin_in: 0.5     # min. KDP bez spadu: 0.25" na zewnątrz
-  gutter_in: 0.375        # margines wewnętrzny (grzbiet), 24–150 stron
+  safe_margin_in: 0.5     # nasz minimalny margines (wygoda kolorowania); KDP wymaga ≥ 0.25"
   composition_hint: "vertical composition, subject fills the portrait frame"
 square:            # 8.5" × 8.5"
   trim_in: [8.5, 8.5]
@@ -179,11 +203,33 @@ square:            # 8.5" × 8.5"
   page_px: [2550, 2550]
   aspect: "1:1"
   safe_margin_in: 0.5
-  gutter_in: 0.375
   composition_hint: "centered composition, single focal subject or concentric design"
 ```
 
 Bez spadu (bleed): grafika zawsze mieści się w obszarze bezpiecznym na białym tle.
+
+Profil formatu nie ma pola `gutter_in`: margines przy grzbiecie zależy od liczby stron książki, a nie od formatu (sekcja 7.4).
+
+### 7.4 Marginesy KDP: `config/settings.yaml`
+
+Wartości z tabeli marginesów KDP dla druku bez spadu. Kolumna „z spadem” (≥ 0.375" na zewnątrz) nie dotyczy MVP, bo nie używamy spadu.
+
+```yaml
+kdp_margins:
+  outside_min_in: 0.25          # zewnętrzne marginesy bez spadu: co najmniej 0.25"
+  gutter_by_pages:              # margines przy grzbiecie wg liczby stron książki
+    - {max_pages: 150, gutter_in: 0.375}   # 24–150
+    - {max_pages: 300, gutter_in: 0.5}     # 151–300
+    - {max_pages: 500, gutter_in: 0.625}   # 301–500
+    - {max_pages: 700, gutter_in: 0.75}    # 501–700
+    - {max_pages: 828, gutter_in: 0.875}   # 701–828
+```
+
+Zasady:
+- `gutter_in(pages_in_book)` to wartość z pierwszego wiersza, dla którego `pages_in_book ≤ max_pages`.
+- Walidacja konfiguracji: wiersze rosną według `max_pages` i `gutter_in`, a `safe_margin_in` każdego formatu jest ≥ `outside_min_in`.
+- `pages_in_book` większe niż ostatni `max_pages` to błąd walidacji (FR-02). Przy limicie `--pages` 200 i domyślnych 2 stronach wstępnych książka ma maks. 402 strony, więc ten przypadek wystąpi tylko przy zmienionej konfiguracji.
+- Gdy KDP zmieni tabelę, aktualizuje się tylko YAML.
 
 ## 8. Architektura i API wewnętrzne
 
@@ -293,8 +339,9 @@ kdp-studio profiles [age|style|format]
 output/dinozaury_przedszkole_kawaii_square/
 ├── manifest.json
 ├── ideas.json
-├── page_01.png … page_30.png      # gotowe do druku, 300 DPI
-├── svg/page_01.svg …               # wersje wektorowe
+├── canva.md                        # instrukcja składania w Canvie (sekcja 10.1)
+├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
+├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
 └── rejected/page_07_try1.png …     # odrzucone przez QA (z powodem w manifeście)
 ```
@@ -317,6 +364,18 @@ Przykład wpisu strony w `manifest.json`:
 }
 ```
 
+### 10.1 Składanie książki w Canvie
+
+Treść `canva.md` (wartości w nawiasach wypełnia program):
+
+1. Utwórz projekt o wymiarach własnych `[trim_in]` cali (np. 8.5 × 11 in).
+2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”).
+3. Prześlij wszystkie `page_XX.png` naraz.
+4. Każdą grafikę wstaw na osobną stronę i rozciągnij na całą stronę. Marginesy (`[margin_in]` cala z każdej strony, zgodnie z tabelą KDP dla `[pages_in_book]` stron) są już w pliku, więc niczego nie skaluj ani nie przycinaj.
+5. Po każdej grafice dodaj pustą stronę (druk jednostronny, D8). Razem `[pages_in_book]` stron.
+6. Pobierz jako **PDF Print** z zaznaczonym **Flatten PDF**. Bez spadu (bleed).
+7. Przy publikacji w KDP zaznacz *AI-generated content* dla obrazów (FR-13).
+
 ## 11. Wymagania pozafunkcjonalne
 
 | ID | Obszar | Wymaganie |
@@ -327,7 +386,7 @@ Przykład wpisu strony w `manifest.json`:
 | NFR-04 | Niezawodność | Ponowienia z backoffem, przyrostowy manifest, wznawianie (FR-09). Przerwanie Ctrl+C nie uszkadza manifestu (zapis atomowy: plik tymczasowy, potem zmiana nazwy). |
 | NFR-05 | Wydajność | 30 stron przy `--concurrency 4` w ≤ 15 min (bez QA), zależnie od limitów API. Post-processing jednej strony ≤ 5 s. |
 | NFR-06 | Koszt | Docelowo ≤ 3 USD za 30-stronicową książkę z QA. Twardy limit przez `--max-cost`. |
-| NFR-07 | Jakość druku | Każdy `page_XX.png` ma dokładnie wymiary `page_px` profilu formatu, metadane 300 DPI, wyłącznie czerń i biel po progowaniu, a grafika mieści się w obszarze bezpiecznym. Sprawdzane automatycznie po zapisie. |
+| NFR-07 | Jakość druku | Każdy `page_XX.png` ma dokładnie wymiary `page_px` profilu formatu, metadane 300 DPI, tryb 8-bit grayscale bez kanału alfa, wyłącznie wartości 0 i 255, a czarne piksele mieszczą się w obszarze treści (FR-06). Sprawdzane automatycznie po zapisie. |
 | NFR-08 | Odtwarzalność | Manifest zawiera wszystko, czego potrzeba do ponownego wygenerowania strony (prompt, model, snapshot, seed, jeśli dostępny). |
 | NFR-09 | Obserwowalność | Logi strukturalne (poziomy INFO/DEBUG), pasek postępu w konsoli, podsumowanie kosztów i czasu na końcu. |
 | NFR-10 | Bezpieczeństwo | Klucze API nigdy nie trafiają do logów, manifestu ani repozytorium. |
@@ -369,8 +428,8 @@ kdp-studio/
 | Etap | Zakres | Kryterium wyjścia |
 |---|---|---|
 | 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
-| 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, gotowa do złożenia |
-| 2. PDF | Wnętrze (strony puste po grafikach, marginesy po stronie grzbietu) i okładka z grzbietem liczonym z liczby stron | Pliki przechodzą kreator KDP bez błędów |
+| 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
+| 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
@@ -387,3 +446,5 @@ kdp-studio/
 - OpenAI Image API: https://developers.openai.com/api/docs/guides/image-generation
 - Gemini API (Nano Banana), cennik: https://ai.google.dev/gemini-api/docs/pricing
 - Adobe: kredyty generatywne (zakres użycia): https://helpx.adobe.com/firefly/using/generative-credits-faq.html
+- Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
+- KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
