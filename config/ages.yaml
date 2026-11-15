@@ -1,0 +1,101 @@
+# Profile wieku odbiorcy (spec §7.1).
+#
+# Klucz profilu = wartość parametru --age.
+#   name, description  – wyświetlane przez `kdp-studio profiles age` (FR-12)
+#   line, subjects, background, fill_areas – charakterystyka grafiki (dokumentacja i wejście dla LLM w FR-03)
+#   prompt_fragment    – fragment promptu obrazu (FR-04), po angielsku
+#   postprocess        – parametry obróbki (FR-06); cienkie linie wymagają łagodniejszego
+#                        usuwania szumu niż grube linie dla najmłodszych
+#     threshold        – "otsu" albo liczba 0–255
+#     min_speck_area   – plamki mniejsze niż tyle pikseli (w rozdzielczości surowej grafiki) są usuwane
+#     potrace.turdsize     – potrace: pomija kontury o powierzchni ≤ turdsize px
+#     potrace.alphamax     – potrace: wygładzanie narożników (0 = ostre, 1.334 = brak narożników)
+#     potrace.opttolerance – potrace: tolerancja optymalizacji krzywych
+
+przedszkole:
+  name: Przedszkole (3–5 lat)
+  description: Jeden duży, prosty obiekt, bardzo grube kontury, bez tła.
+  line: very thick
+  subjects: "1 large, simple shapes"
+  background: none
+  fill_areas: large, closed
+  prompt_fragment: >-
+    very thick bold outlines, one large simple subject, minimal details,
+    no background, large closed areas, for toddlers
+  postprocess:
+    threshold: otsu
+    min_speck_area: 64
+    potrace:
+      turdsize: 16
+      alphamax: 1.2
+      opttolerance: 0.4
+
+wczesnoszkolne:
+  name: Wczesnoszkolne (6–8 lat)
+  description: Prosta scena z 1–3 postaciami, grube kontury, proste tło.
+  line: thick
+  subjects: "1-3"
+  background: simple
+  fill_areas: medium
+  prompt_fragment: >-
+    thick clean outlines, simple scene with 1-3 subjects, simple background,
+    for kids 6-8
+  postprocess:
+    threshold: otsu
+    min_speck_area: 40
+    potrace:
+      turdsize: 10
+      alphamax: 1.1
+      opttolerance: 0.3
+
+szkolne:
+  name: Szkolne (9–12 lat)
+  description: Pełna scena z tłem, średnie linie, umiarkowana szczegółowość.
+  line: medium
+  subjects: full scene
+  background: "yes"
+  fill_areas: more detail
+  prompt_fragment: >-
+    medium outlines, full scene, moderate detail, for kids 9-12
+  postprocess:
+    threshold: otsu
+    min_speck_area: 24
+    potrace:
+      turdsize: 6
+      alphamax: 1.0
+      opttolerance: 0.2
+
+nastolatki:
+  name: Nastolatki (13–17 lat)
+  description: Szczegółowa, stylizowana scena z wzorami dekoracyjnymi, cienkie linie.
+  line: thin
+  subjects: stylized scene
+  background: full
+  fill_areas: patterns
+  prompt_fragment: >-
+    fine clean lines, detailed scene, decorative patterns, for teens
+  postprocess:
+    threshold: otsu
+    min_speck_area: 12
+    potrace:
+      turdsize: 3
+      alphamax: 0.9
+      opttolerance: 0.2
+
+dorosli:
+  name: Dorośli
+  description: Gęste wzory, mandale i zentangle, bardzo cienkie linie, wiele drobnych pól.
+  line: very thin
+  subjects: patterns, mandalas, zentangle
+  background: dense
+  fill_areas: small
+  prompt_fragment: >-
+    fine intricate line work, highly detailed patterns, many small areas to color,
+    for adults
+  postprocess:
+    threshold: otsu
+    min_speck_area: 6
+    potrace:
+      turdsize: 2
+      alphamax: 0.8
+      opttolerance: 0.1

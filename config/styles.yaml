@@ -1,0 +1,58 @@
+# Profile stylu (spec §7.2). Lista otwarta: nowy styl = nowy wpis, bez zmian w kodzie.
+#
+# Klucz profilu = wartość parametru --style.
+#   name, description – wyświetlane przez `kdp-studio profiles style` (FR-12)
+#   prompt_fragment   – fragment wspólnego bloku stylu w prompcie obrazu (FR-04), po angielsku.
+#                       Opisuje styl ogólnie: bez nazw autorów, studiów, postaci ani marek (NFR-12).
+#   allowed_ages      – opcjonalnie; brak = styl dozwolony dla każdego wieku.
+#                       Połączenie spoza listy daje ostrzeżenie (nie błąd).
+
+kawaii:
+  name: Kawaii
+  description: Słodkie, zaokrąglone postacie z dużymi oczami i uśmiechami.
+  prompt_fragment: >-
+    cute kawaii style, rounded chubby shapes, big friendly eyes, happy expressions,
+    soft simple forms
+
+cartoon:
+  name: Kreskówka
+  description: Klasyczny styl kreskówkowy, wyraziste sylwetki i lekka przesada w proporcjach.
+  prompt_fragment: >-
+    classic cartoon style, expressive characters, slightly exaggerated proportions,
+    clear readable silhouettes
+
+realistic:
+  name: Realistyczny
+  description: Realistyczne proporcje i anatomia, oddane samym konturem.
+  prompt_fragment: >-
+    realistic illustration style, accurate proportions and anatomy,
+    natural details expressed only with clean contour lines
+
+mandala:
+  name: Mandala
+  description: Symetryczna, koncentryczna kompozycja z powtarzalnych motywów.
+  prompt_fragment: >-
+    mandala style, radially symmetric concentric design, repeating ornamental motifs
+    arranged around a central point
+
+boho:
+  name: Boho
+  description: Motywy roślinne, pióra, księżyce i proste ornamenty w duchu boho.
+  prompt_fragment: >-
+    boho style, flowing botanical motifs, leaves, feathers, moons and simple
+    folk-inspired ornaments
+
+manga:
+  name: Manga
+  description: Styl inspirowany japońskim komiksem, dynamiczne pozy, wyraziste oczy.
+  prompt_fragment: >-
+    manga-inspired style, dynamic poses, large expressive eyes, clean confident
+    ink lines, original characters
+
+zentangle:
+  name: Zentangle
+  description: Kształty wypełnione gęstymi, powtarzalnymi wzorami (tangles).
+  prompt_fragment: >-
+    zentangle style, shapes filled with dense repeating structured patterns,
+    each region a different tangle pattern
+  allowed_ages: [nastolatki, dorosli]
