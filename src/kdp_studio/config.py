@@ -80,15 +80,18 @@ class ProviderSettings(_Strict):
 
     text: str = "openai"
     image: str = "openai"
+    vision: str = "openai"  # QA (FR-07)
 
 
 class ModelSettings(_Strict):
     text: Annotated[str, Field(min_length=1)] = "gpt-6-luna"
     image: Annotated[str, Field(min_length=1)] = "gpt-image-2.6-flare"
+    vision: Annotated[str, Field(min_length=1)] = "gpt-6-luna"  # QA (FR-07)
 
 
 ImageQuality = Literal["low", "medium", "high", "auto"]
 MAX_CONCURRENCY = 16
+MAX_QA_RETRIES = 5
 
 
 class GutterRow(_Strict):
@@ -140,6 +143,8 @@ class Settings(_Strict):
     concurrency: Annotated[int, Field(ge=1, le=MAX_CONCURRENCY)] = 4
     kdp_margins: KdpMargins = KdpMargins()
     review_ideas: bool = True
+    qa: bool = False
+    qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
 
 
 class AppConfig(_Strict):

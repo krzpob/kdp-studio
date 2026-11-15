@@ -16,7 +16,8 @@ from kdp_studio.pipeline.manifest import (
     ManifestWriter,
     ProviderInfo,
 )
-from kdp_studio.pipeline.worker import PageJob, PageOutcome
+from kdp_studio.pipeline.qa import QAIssue, QAResult
+from kdp_studio.pipeline.worker import PageJob, PageOutcome, RejectedAttempt
 from kdp_studio.providers.base import Usage
 
 
@@ -192,3 +193,36 @@ def test_canva_md_warns_about_missing_pages(tmp_path: Path) -> None:
     text = render_canva_md(writer.manifest, "T")
     assert "> **Uwaga:** brakuje 2 stron: `page_02.png`, `page_03.png`." in text
     assert "| 1 | strona wstępna |" in text
+
+
+def test_record_keeps_qa_result_and_rejected_tries(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    issue = QAIssue(criterion="text", detail="napis")
+    outcome = PageOutcome(
+        page=1,
+        name="page_01",
+        idea_id="idea_04",
+        status="ok",
+        duration_s=20.0,
+        page_file=tmp_path / "page_01.png",
+        prompt="Scene: 4.",
+        attempts=2,
+        qa=QAResult(passed=True),
+        qa_usage=Usage(input_tokens=7000, output_tokens=200),
+        rejected=[
+            RejectedAttempt(1, "idea_01", tmp_path / "rejected" / "page_01_try1.png", [issue])
+        ],
+    )
+    writer.record(outcome)
+    page = _read(writer)["pages"][0]  # type: ignore[index]
+    assert (page["idea_id"], page["prompt"], page["attempts"]) == ("idea_04", "Scene: 4.", 2)
+    assert page["qa"] == {"pass": True, "issues": []}
+    assert page["qa_usage"] is None  # manifest bez --qa nie liczy zużycia QA
+    assert page["rejected"] == [
+        {
+            "attempt": 1,
+            "idea_id": "idea_01",
+            "file": "rejected/page_01_try1.png",
+            "issues": [{"criterion": "text", "detail": "napis"}],
+        }
+    ]

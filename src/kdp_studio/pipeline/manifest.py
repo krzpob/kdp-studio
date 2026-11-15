@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from kdp_studio import __version__
 from kdp_studio.pipeline.output import write_json_atomic
+from kdp_studio.pipeline.qa import QAIssue, QAResult
 from kdp_studio.pipeline.worker import PageJob, PageOutcome
 from kdp_studio.providers.base import Usage
 
@@ -47,6 +48,7 @@ class ManifestInput(_Model):
     front_matter_pages: int
     concurrency: int
     review_ideas: bool
+    qa: bool = False
 
 
 class ProviderInfo(_Model):
@@ -62,6 +64,7 @@ class ImageProviderInfo(ProviderInfo):
 class ManifestProviders(_Model):
     text: ProviderInfo
     image: ImageProviderInfo
+    vision: ProviderInfo | None = None  # tylko z QA (FR-07)
 
 
 class ManifestLayout(_Model):
@@ -90,6 +93,15 @@ class PageFilesInfo(_Model):
     raw: str | None = None
 
 
+class ManifestRejected(_Model):
+    """Próba odrzucona przez QA; plik w `rejected/` (spec §10)."""
+
+    attempt: int
+    idea_id: str
+    file: str
+    issues: list[QAIssue]
+
+
 class ManifestPage(_Model):
     page: int
     name: str
@@ -99,12 +111,14 @@ class ManifestPage(_Model):
     provider: str
     model: str
     prompt: str
-    qa: dict[str, Any] | None = None  # FR-07
+    qa: QAResult | None = None  # FR-07, wynik ostatniej próby
     cost_usd: float | None = None  # FR-10
     usage: Usage | None = None
+    qa_usage: Usage | None = None
     duration_s: float | None = None
     error: str | None = None
     files: PageFilesInfo = Field(default_factory=PageFilesInfo)
+    rejected: list[ManifestRejected] = []
 
 
 class Manifest(_Model):
@@ -183,10 +197,24 @@ class ManifestWriter:
     def record(self, outcome: PageOutcome) -> None:
         page = self.manifest.pages[self._index[outcome.page]]
         page.status = outcome.status
-        page.attempts += 1
+        page.idea_id = outcome.idea_id  # po odrzuceniu przez QA: pomysł zapasowy
+        if outcome.prompt is not None:
+            page.prompt = outcome.prompt
+        page.attempts += outcome.attempts
         page.duration_s = round(outcome.duration_s, 2)
         page.usage = outcome.usage
+        page.qa = outcome.qa
+        page.qa_usage = outcome.qa_usage if self.manifest.input.qa else None
         page.error = outcome.error
+        page.rejected += [
+            ManifestRejected(
+                attempt=r.attempt,
+                idea_id=r.idea_id,
+                file=_relative(r.file, self.book_dir) or "",
+                issues=r.issues,
+            )
+            for r in outcome.rejected
+        ]
         page.files = PageFilesInfo(
             png=_relative(outcome.page_file, self.book_dir),
             svg=_relative(outcome.svg_file, self.book_dir),

@@ -149,6 +149,9 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Kryteria odrzucenia: kilka paneli, siatka lub kolaż; cieniowanie lub szarości; tekst lub litery; otwarte kontury uniemożliwiające kolorowanie; poziom szczegółowości niezgodny z profilem wieku; elementy niezgodne z opisem sceny.
 - Odrzucona strona jest generowana ponownie z **zapasowego pomysłu**. Maks. 2 ponowienia na pozycję, potem strona dostaje status `failed` w manifeście.
 - Program kończy się sukcesem, jeśli jest co najmniej `--pages` stron ze statusem `ok`. W przeciwnym razie zwraca kod wyjścia 2 (sekcja 9.3).
+- Zapasowe pomysły to wspólna pula dla całej książki, wydawana po kolei stronom odrzuconym przez QA. Gdy pula się skończy, odrzucona strona dostaje status `failed`.
+- Odrzucona strona trafia do `rejected/page_XX_tryN.png`, a manifest zapisuje dla niej numer próby, id pomysłu, plik i powody (`rejected`). Wpis strony pokazuje pomysł i prompt ostatniej próby.
+- Błąd samej oceny (np. odmowa modelu) oznacza stronę jako `failed`; błąd krytyczny dostawcy (klucz, brak środków) przerywa przebieg jak w FR-05.
 
 ### FR-08: Struktura wyjścia i manifest
 - Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`).
@@ -334,7 +337,7 @@ kdp-studio profiles [age|style|format]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`.
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, `qa`, `qa_max_retries`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
 

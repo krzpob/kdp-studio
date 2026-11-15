@@ -12,6 +12,11 @@ reserve_ratio: 0.2
 # Kosztuje ułamek centa na książkę, mniej niż jedna wyrzucona grafika. --no-review-ideas wyłącza.
 review_ideas: true
 
+# Kontrola jakości grafik modelem z wizją (FR-07): --qa / --no-qa nadpisuje. Strona odrzucona
+# przez QA jest generowana ponownie z zapasowego pomysłu, najwyżej qa_max_retries razy (0–5).
+qa: false
+qa_max_retries: 2
+
 # Język metadanych książki (tytuł, opis, słowa kluczowe). Spec §14, pytanie 2: na razie rynek US.
 metadata_language: English
 
@@ -19,6 +24,7 @@ metadata_language: English
 providers:
   text: openai
   image: openai   # --image-provider nadpisuje
+  vision: openai  # kontrola jakości (FR-07)
 
 # Spec §8.3 przewidywała „GPT 5.x mini”; w listopadzie 2026 OpenAI oferuje już tylko rodzinę GPT-6.
 # gpt-6-luna to najtańszy model do prostych zadań o dużym wolumenie.
@@ -27,6 +33,8 @@ models:
   # Spec §8.3: gpt-image-2.5-flare. OpenAI poleca dla nowych integracji GPT-Image-2.6;
   # Flare to wariant szybki, Sunburst (gpt-image-2.6-sunburst) daje najwyższą jakość.
   image: gpt-image-2.6-flare
+  # Spec §8.3: QA używa tego samego modelu co pomysły.
+  vision: gpt-6-luna
 
 # Jakość grafik: low, medium, high albo auto (spec §14, pytanie 5: ustalić po spike'u).
 image_quality: medium

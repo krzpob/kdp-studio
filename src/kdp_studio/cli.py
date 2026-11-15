@@ -30,6 +30,7 @@ from kdp_studio.pipeline.output import (
     IDEAS_FILE,
     PROMPTS_FILE,
     RAW_DIR,
+    REJECTED_DIR,
     SVG_DIR,
     book_dir,
     write_bytes_atomic,
@@ -37,10 +38,15 @@ from kdp_studio.pipeline.output import (
 )
 from kdp_studio.pipeline.postprocess import PageGeometry, PagePostprocessor, page_margin_in
 from kdp_studio.pipeline.prompts import PromptBuilder
-from kdp_studio.pipeline.worker import PageOutcome, PageWorker, page_jobs
+from kdp_studio.pipeline.qa import QAChecker
+from kdp_studio.pipeline.worker import PageOutcome, PageWorker, ReservePool, page_jobs
 from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
-from kdp_studio.providers.base import ProviderError
-from kdp_studio.providers.registry import create_image_provider, create_text_provider
+from kdp_studio.providers.base import ProviderError, VisionProvider
+from kdp_studio.providers.registry import (
+    create_image_provider,
+    create_text_provider,
+    create_vision_provider,
+)
 from kdp_studio.validation import InputValidationError, plural, validate_book_spec
 
 
@@ -114,6 +120,14 @@ def generate(
             help="Weryfikacja pomysłów przed grafikami (FR-03a). Domyślnie z settings.yaml.",
         ),
     ] = None,
+    qa: Annotated[
+        bool | None,
+        typer.Option(
+            "--qa/--no-qa",
+            help="Kontrola jakości stron modelem z wizją; odrzucone strony są generowane "
+            "ponownie z zapasowych pomysłów (FR-07). Domyślnie z settings.yaml.",
+        ),
+    ] = None,
 ) -> None:
     """Generuje kolorowankę: pomysły, prompty, strony do druku, manifest i canva.md."""
     try:
@@ -156,11 +170,15 @@ def generate(
         )
 
     aspect = config.formats[spec.format].aspect
+    do_qa = settings.qa if qa is None else qa
+    vision: VisionProvider | None = None
     try:
         provider = create_text_provider(settings.providers.text, settings.models.text)
         images = create_image_provider(
             image_provider or settings.providers.image, settings.models.image
         )
+        if do_qa:
+            vision = create_vision_provider(settings.providers.vision, settings.models.vision)
     except ConfigError as e:
         raise _fail([str(e)]) from e
     if aspect not in images.supported_aspects():
@@ -238,6 +256,7 @@ def generate(
             front_matter_pages=spec.front_matter_pages,
             concurrency=workers,
             review_ideas=do_review,
+            qa=do_qa,
         ),
         providers=ManifestProviders(
             text=ProviderInfo(provider=provider.name, model=provider.model),
@@ -247,6 +266,9 @@ def generate(
                 quality=settings.image_quality,
                 aspect=aspect,
             ),
+            vision=None
+            if vision is None
+            else ProviderInfo(provider=vision.name, model=vision.model),
         ),
         layout=ManifestLayout(
             trim_in=fmt.trim_in,
@@ -264,6 +286,15 @@ def generate(
         f"Generuję {plural(len(jobs), 'grafikę', 'grafiki', 'grafik')} ({images.name}, "
         f"{images.model}, jakość {settings.image_quality}, równolegle {workers})…"
     )
+    pool = ReservePool.from_prompts(prompts, spec.pages)
+    checker = None
+    if vision is not None:
+        checker = QAChecker(vision, spec, config, ideas)
+        typer.echo(
+            f"Kontrola jakości: {vision.name}, {vision.model}; najwyżej "
+            f"{plural(settings.qa_max_retries, 'ponowienie', 'ponowienia', 'ponowień')} "
+            f"na stronę, zapasowe pomysły: {pool.remaining}."
+        )
     done = 0
 
     def report(outcome: PageOutcome) -> None:
@@ -271,9 +302,17 @@ def generate(
         done += 1
         if outcome.status == "ok":
             line = f"{outcome.name}: ok ({outcome.duration_s:.1f} s)"
+            if outcome.rejected:
+                line += (
+                    f", {plural(outcome.attempts, 'próba', 'próby', 'prób')}, "
+                    f"użyto {outcome.idea_id}"
+                )
         else:
             line = f"{outcome.name}: nieudana: {outcome.error}"
         typer.echo(f"[{done}/{len(jobs)}] {line}")
+        for rejected in outcome.rejected:
+            issues = "; ".join(f"{i.criterion}: {i.detail}" for i in rejected.issues)
+            typer.echo(f"  QA odrzuciło próbę {rejected.attempt} ({rejected.idea_id}): {issues}")
         manifest.record(outcome)
 
     worker = PageWorker(
@@ -283,6 +322,9 @@ def generate(
         quality=settings.image_quality,
         concurrency=workers,
         postprocessor=postprocessor,
+        qa=checker,
+        reserve=pool,
+        max_retries=settings.qa_max_retries,
     )
     images_result = worker.run(jobs, on_done=report)
     image_usage = images_result.usage
@@ -292,6 +334,14 @@ def generate(
         f"Gotowe strony do Canvy: {target}/page_*.png (wektory: {target / SVG_DIR}, "
         f"surowe: {target / RAW_DIR})"
     )
+    if checker is not None:
+        qa_usage = images_result.qa_usage
+        typer.echo(
+            f"QA: odrzucono {plural(images_result.rejected, 'grafikę', 'grafiki', 'grafik')} "
+            f"(w {target / REJECTED_DIR}), "
+            f"zapasowe pomysły: użyto {pool.used}/{pool.used + pool.remaining}, "
+            f"tokeny: {qa_usage.input_tokens} wejście / {qa_usage.output_tokens} wyjście."
+        )
     status = manifest.finish(images_result.fatal_error)
     typer.echo(f"Manifest: {manifest.path} (status: {status})")
     if images_result.fatal_error is not None:

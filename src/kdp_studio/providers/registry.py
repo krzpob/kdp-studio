@@ -10,13 +10,16 @@ import importlib
 from typing import cast
 
 from kdp_studio.config import ConfigError
-from kdp_studio.providers.base import ImageProvider, TextProvider
+from kdp_studio.providers.base import ImageProvider, TextProvider, VisionProvider
 
 TEXT_PROVIDERS: dict[str, str] = {
     "openai": "kdp_studio.providers.openai_text:OpenAITextProvider",
 }
 IMAGE_PROVIDERS: dict[str, str] = {
     "openai": "kdp_studio.providers.openai_image:OpenAIImageProvider",
+}
+VISION_PROVIDERS: dict[str, str] = {
+    "openai": "kdp_studio.providers.openai_vision:OpenAIVisionProvider",
 }
 
 
@@ -35,3 +38,7 @@ def create_text_provider(name: str, model: str) -> TextProvider:
 
 def create_image_provider(name: str, model: str) -> ImageProvider:
     return cast(ImageProvider, _instantiate(IMAGE_PROVIDERS, "obrazów", name, model))
+
+
+def create_vision_provider(name: str, model: str) -> VisionProvider:
+    return cast(VisionProvider, _instantiate(VISION_PROVIDERS, "wizji", name, model))

@@ -11,7 +11,7 @@ from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
 from kdp_studio.config import DEFAULT_CONFIG_DIR
 from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
-from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
+from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider, FakeVisionProvider
 from tests.conftest import ConfigDirFactory, approve_all, llm_ideas_response, review_response
 
 BASE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
@@ -43,6 +43,11 @@ def fake_text_provider(
 
     monkeypatch.setattr(cli, "create_text_provider", create)
     monkeypatch.setattr(cli, "create_image_provider", lambda name, model: FakeImageProvider())
+
+    def no_vision(name: str, model: str) -> FakeVisionProvider:
+        raise AssertionError("bez --qa model z wizją nie powinien powstać")
+
+    monkeypatch.setattr(cli, "create_vision_provider", no_vision)
     monkeypatch.chdir(tmp_path)
     return provider
 
@@ -445,3 +450,106 @@ def test_root_has_only_page_pngs(capsys: pytest.CaptureFixture[str]) -> None:
         ["canva.md", "ideas.json", "manifest.json", "prompts.json"]
         + [f"page_{i:02d}.png" for i in range(1, 13)]
     )
+
+
+# --- FR-07 ---------------------------------------------------------------------------
+
+
+def _vision(monkeypatch: pytest.MonkeyPatch, *rejected_titles: str) -> FakeVisionProvider:
+    """Model z wizją, który odrzuca strony pomysłów o podanych tytułach."""
+
+    def respond(image_png: bytes, instructions: str) -> dict[str, Any]:
+        if any(f"Page scene: {title}." in instructions for title in rejected_titles):
+            issue = {"criterion": "panels", "detail": "siatka czterech obrazków"}
+            return {"passed": False, "issues": [issue]}
+        return {"passed": True, "issues": []}
+
+    vision = FakeVisionProvider(respond)
+    monkeypatch.setattr(cli, "create_vision_provider", lambda name, model: vision)
+    return vision
+
+
+def test_qa_replaces_rejected_page_with_reserve_idea(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    vision = _vision(monkeypatch, "Dinosaur 2")
+    assert main([*BASE, "--pages", "12", "--qa", "--concurrency", "1"]) == ExitCode.OK
+    assert len(vision.calls) == 13
+
+    manifest = _manifest()
+    assert manifest["status"] == "completed"
+    assert manifest["input"]["qa"] is True
+    assert manifest["providers"]["vision"] == {"provider": "fake", "model": "fake-vision"}
+    page = manifest["pages"][1]
+    assert (page["status"], page["idea_id"], page["attempts"]) == ("ok", "idea_13", 2)
+    assert "number 13 " in page["prompt"]
+    assert page["qa"] == {"pass": True, "issues": []}
+    assert page["qa_usage"] == {"input_tokens": 2000, "output_tokens": 40}
+    assert page["rejected"] == [
+        {
+            "attempt": 1,
+            "idea_id": "idea_02",
+            "file": "rejected/page_02_try1.png",
+            "issues": [{"criterion": "panels", "detail": "siatka czterech obrazków"}],
+        }
+    ]
+    assert manifest["pages"][0]["rejected"] == []
+    assert (BOOK_DIR / "rejected" / "page_02_try1.png").exists()
+    assert (BOOK_DIR / "page_02.png").exists()
+    assert not list(BOOK_DIR.glob("*try*.png"))  # FR-08: w katalogu głównym tylko strony
+
+    out = capsys.readouterr().out
+    assert "Kontrola jakości: fake, fake-vision; najwyżej 2 ponowienia na stronę" in out
+    assert "page_02: ok" in out and "2 próby, użyto idea_13" in out
+    assert "QA odrzuciło próbę 1 (idea_02): panels: siatka czterech obrazków" in out
+    assert "QA: odrzucono 1 grafikę" in out and "zapasowe pomysły: użyto 1/3" in out
+
+
+def test_qa_gives_up_after_two_retries(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _vision(monkeypatch, "Dinosaur 2", "Dinosaur 13", "Dinosaur 14")
+    assert main([*BASE, "--pages", "12", "--qa", "--concurrency", "1"]) == ExitCode.PARTIAL
+    manifest = _manifest()
+    assert manifest["status"] == "partial"
+    page = manifest["pages"][1]
+    assert (page["status"], page["attempts"]) == ("failed", 3)
+    assert page["error"].startswith("QA odrzuciło 3 próby")
+    assert page["qa"]["pass"] is False
+    assert page["files"]["png"] is None
+    assert [r["file"] for r in page["rejected"]] == [
+        f"rejected/page_02_try{i}.png" for i in (1, 2, 3)
+    ]
+    assert not (BOOK_DIR / "page_02.png").exists()
+    canva = (BOOK_DIR / "canva.md").read_text(encoding="utf-8")
+    assert "brakuje 1 strony: `page_02.png`" in canva
+    assert "Błąd: nieudane strony: page_02" in capsys.readouterr().err
+
+
+def test_qa_from_settings_and_no_qa_flag(
+    monkeypatch: pytest.MonkeyPatch, config_dir: ConfigDirFactory
+) -> None:
+    formats = yaml.safe_load((DEFAULT_CONFIG_DIR / "formats.yaml").read_text(encoding="utf-8"))
+    for fmt in formats.values():
+        fmt["dpi"] = TEST_DPI
+        fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
+    monkeypatch.setenv(
+        "KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats, settings={"qa": True}))
+    )
+    vision = _vision(monkeypatch)
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    assert len(vision.calls) == 12
+
+    vision.calls.clear()
+    assert main([*BASE, "--pages", "12", "--no-qa", "--output-dir", "other"]) == ExitCode.OK
+    assert vision.calls == []
+
+
+def test_without_qa_manifest_has_no_qa_results() -> None:
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    manifest = _manifest()
+    assert manifest["input"]["qa"] is False
+    assert manifest["providers"]["vision"] is None
+    page = manifest["pages"][0]
+    assert (page["qa"], page["qa_usage"], page["rejected"], page["attempts"]) == (None, None, [], 1)
+    assert not (BOOK_DIR / "rejected").exists()

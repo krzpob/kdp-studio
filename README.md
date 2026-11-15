@@ -19,4 +19,6 @@ Na razie `generate` waliduje parametry (FR-01, FR-02), generuje pomysły na stro
 echo 'OPENAI_API_KEY=sk-...' > .env
 ```
 
+Z flagą `--qa` (albo `qa: true` w `settings.yaml`) każda gotowa strona przechodzi kontrolę jakości modelem z wizją (FR-07): panele lub kolaż, cieniowanie, tekst, otwarte kontury, poziom szczegółów niezgodny z wiekiem, scena niezgodna z opisem. Odrzucona strona trafia do `rejected/page_XX_tryN.png` (powód jest w `manifest.json`), a jej miejsce zajmuje grafika z zapasowego pomysłu, najwyżej 2 ponowienia na stronę (`qa_max_retries`). Ocena jednej strony to ok. 3,6 tys. tokenów wejścia modelu tekstowego.
+
 Dostępne profile wieku, stylu i formatu wypisuje `uv run kdp-studio profiles` (albo `profiles age`, `profiles style`, `profiles format`). Profile są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.
