@@ -6,9 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=3.51.0",
+    "opencv-python-headless>=5.0.0.93",
+    "pillow>=13.0.0",
+    "potracer>=0.0.4",
     "pydantic>=2.7",
     "python-dotenv>=1.2.4",
     "pyyaml>=6.0",
+    "resvg-py>=0.5.0",
     "typer>=0.29",
 ]
 
@@ -45,6 +49,11 @@ allowed-confusables = ["–", "×"]
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+# potracer nie ma znacznika py.typed ani stubów.
+module = ["potrace", "potrace.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

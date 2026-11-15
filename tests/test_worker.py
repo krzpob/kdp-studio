@@ -14,7 +14,8 @@ from kdp_studio.providers.fake import FakeImageProvider
 
 def _jobs(count: int) -> list[PageJob]:
     return [
-        PageJob(page=i, idea_id=f"idea_{i:02d}", prompt=f"prompt {i}") for i in range(1, count + 1)
+        PageJob(page=i, name=f"page_{i:02d}", idea_id=f"idea_{i:02d}", prompt=f"prompt {i}")
+        for i in range(1, count + 1)
     ]
 
 
@@ -44,11 +45,23 @@ def test_page_jobs_take_first_pages_only() -> None:
         }
     )
     jobs = page_jobs(prompts, 3)
-    assert [(j.page, j.idea_id, j.prompt) for j in jobs] == [
-        (1, "idea_01", "p1"),
-        (2, "idea_02", "p2"),
-        (3, "idea_03", "p3"),
+    assert [(j.page, j.name, j.idea_id, j.prompt) for j in jobs] == [
+        (1, "page_01", "idea_01", "p1"),
+        (2, "page_02", "idea_02", "p2"),
+        (3, "page_03", "idea_03", "p3"),
     ]
+
+
+def test_page_names_are_padded_to_the_largest_number() -> None:
+    prompts = BookPrompts.model_validate(
+        {
+            "style_block": "S",
+            "pages": [{"idea_id": f"idea_{i:03d}", "prompt": f"p{i}"} for i in range(1, 121)],
+        }
+    )
+    names = [j.name for j in page_jobs(prompts, 120)]
+    assert names[0] == "page_001" and names[-1] == "page_120"
+    assert names == sorted(names)
 
 
 def test_all_pages_ok(tmp_path: Path) -> None:

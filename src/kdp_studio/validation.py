@@ -107,6 +107,12 @@ def validate_book_spec(
                 errors.append(f"--pages: {message} (--strict)")
             else:
                 warnings.append(message)
+        max_pages = config.settings.kdp_margins.max_pages
+        if total > max_pages:
+            errors.append(
+                f"--pages: książka miałaby {plural(total, 'stronę', 'strony', 'stron')}, a tabela "
+                f"marginesów KDP (kdp_margins w settings.yaml) kończy się na {max_pages}"
+            )
 
     if errors:
         raise InputValidationError(errors)

@@ -167,3 +167,17 @@ def test_min_pages_for_kdp(front_matter: int, expected: int) -> None:
 )
 def test_plural(n: int, expected: str) -> None:
     assert plural(n, "strona", "strony", "stron") == expected
+
+
+def test_book_above_kdp_margin_table_is_an_error(repo_config: AppConfig) -> None:
+    margins = repo_config.settings.kdp_margins.model_copy(
+        update={"gutter_by_pages": repo_config.settings.kdp_margins.gutter_by_pages[:1]}
+    )
+    settings = repo_config.settings.model_copy(update={"kdp_margins": margins})
+    config = repo_config.model_copy(update={"settings": settings})
+    assert _validate(config, pages=74).spec.pages_in_book == 150
+    [error] = _errors(config, pages=75)
+    assert error == (
+        "--pages: książka miałaby 152 strony, a tabela marginesów KDP "
+        "(kdp_margins w settings.yaml) kończy się na 150"
+    )

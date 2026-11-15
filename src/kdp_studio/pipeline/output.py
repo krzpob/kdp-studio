@@ -15,6 +15,7 @@ from kdp_studio.models import BookSpec
 IDEAS_FILE = "ideas.json"
 PROMPTS_FILE = "prompts.json"
 RAW_DIR = "raw"
+SVG_DIR = "svg"
 
 # Litery, których NFKD nie rozkłada na literę bazową i znak diakrytyczny.
 _TRANSLITERATE = str.maketrans({"ł": "l", "Ł": "L", "ß": "ss", "ø": "o", "Ø": "O"})
@@ -53,6 +54,9 @@ def write_json_atomic(path: Path, model: BaseModel) -> None:
     write_bytes_atomic(path, (model.model_dump_json(indent=2) + "\n").encode("utf-8"))
 
 
-def raw_page_path(book: Path, page: int) -> Path:
-    """`raw/page_XX.png`: surowy wynik modelu przed obróbką (FR-05)."""
-    return book / RAW_DIR / f"page_{page:02d}.png"
+def page_name(page: int, total: int) -> str:
+    """`page_07` albo `page_007`: numer dopełniony do długości największego numeru, min. 2 cyfry.
+
+    Kolejność alfabetyczna = kolejność stron, więc paczka plików trafia do Canvy po kolei (FR-08).
+    """
+    return f"page_{page:0{max(2, len(str(total)))}d}"

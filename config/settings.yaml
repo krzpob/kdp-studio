@@ -28,3 +28,15 @@ image_quality: medium
 
 # Liczba grafik generowanych równolegle (FR-05); --concurrency nadpisuje. Zakres 1–16.
 concurrency: 4
+
+# Marginesy KDP dla druku bez spadu (spec §7.4). Gdy KDP zmieni tabelę, zmienia się tylko ten blok.
+# gutter_in(pages_in_book) to wartość z pierwszego wiersza, dla którego pages_in_book ≤ max_pages.
+# Książka grubsza niż ostatni max_pages to błąd walidacji (FR-02).
+kdp_margins:
+  outside_min_in: 0.25          # zewnętrzne marginesy bez spadu: co najmniej 0.25"
+  gutter_by_pages:              # margines przy grzbiecie wg liczby stron książki
+    - {max_pages: 150, gutter_in: 0.375}   # 24–150
+    - {max_pages: 300, gutter_in: 0.5}     # 151–300
+    - {max_pages: 500, gutter_in: 0.625}   # 301–500
+    - {max_pages: 700, gutter_in: 0.75}    # 501–700
+    - {max_pages: 828, gutter_in: 0.875}   # 701–828

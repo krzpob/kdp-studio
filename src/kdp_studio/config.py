@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -12,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 CONFIG_DIR_ENV = "KDP_STUDIO_CONFIG_DIR"
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 
-KDP_MIN_SAFE_MARGIN_IN = 0.25  # min. margines KDP bez spadu (spec §7.3)
 POTRACE_ALPHAMAX_MAX = 1.3334  # powyżej potrace nie tworzy narożników
 
 
@@ -64,8 +64,7 @@ class FormatProfile(_Strict):
     dpi: Annotated[int, Field(gt=0)]
     page_px: tuple[Annotated[int, Field(gt=0)], Annotated[int, Field(gt=0)]]
     aspect: Annotated[str, Field(pattern=r"^\d+:\d+$")]
-    safe_margin_in: Annotated[float, Field(ge=KDP_MIN_SAFE_MARGIN_IN)]
-    gutter_in: Annotated[float, Field(ge=0)]
+    safe_margin_in: Annotated[float, Field(ge=0)]
     composition_hint: str
 
     @model_validator(mode="after")
@@ -92,6 +91,45 @@ ImageQuality = Literal["low", "medium", "high", "auto"]
 MAX_CONCURRENCY = 16
 
 
+class GutterRow(_Strict):
+    max_pages: Annotated[int, Field(gt=0)]
+    gutter_in: Annotated[float, Field(ge=0)]
+
+
+class KdpMargins(_Strict):
+    """Tabela marginesów KDP bez spadu (spec §7.4)."""
+
+    outside_min_in: Annotated[float, Field(ge=0)] = 0.25
+    gutter_by_pages: Annotated[list[GutterRow], Field(min_length=1)] = [
+        GutterRow(max_pages=150, gutter_in=0.375),
+        GutterRow(max_pages=300, gutter_in=0.5),
+        GutterRow(max_pages=500, gutter_in=0.625),
+        GutterRow(max_pages=700, gutter_in=0.75),
+        GutterRow(max_pages=828, gutter_in=0.875),
+    ]
+
+    @model_validator(mode="after")
+    def _rows_increase(self) -> Self:
+        rows = self.gutter_by_pages
+        for prev, row in pairwise(rows):
+            if row.max_pages <= prev.max_pages or row.gutter_in <= prev.gutter_in:
+                raise ValueError(
+                    "wiersze gutter_by_pages muszą rosnąć według max_pages i gutter_in"
+                )
+        return self
+
+    @property
+    def max_pages(self) -> int:
+        return self.gutter_by_pages[-1].max_pages
+
+    def gutter_in(self, pages_in_book: int) -> float | None:
+        """Margines przy grzbiecie dla książki o `pages_in_book` stronach; None ponad tabelą."""
+        for row in self.gutter_by_pages:
+            if pages_in_book <= row.max_pages:
+                return row.gutter_in
+        return None
+
+
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
@@ -100,6 +138,7 @@ class Settings(_Strict):
     models: ModelSettings = ModelSettings()
     image_quality: ImageQuality = "medium"
     concurrency: Annotated[int, Field(ge=1, le=MAX_CONCURRENCY)] = 4
+    kdp_margins: KdpMargins = KdpMargins()
 
 
 class AppConfig(_Strict):
@@ -117,6 +156,13 @@ class AppConfig(_Strict):
         ):
             if not profiles:
                 raise ValueError(f"brak profili w {kind}.yaml")
+        outside_min = self.settings.kdp_margins.outside_min_in
+        for key, fmt in self.formats.items():
+            if fmt.safe_margin_in < outside_min:
+                raise ValueError(
+                    f"format '{key}': safe_margin_in {fmt.safe_margin_in} < "
+                    f"kdp_margins.outside_min_in {outside_min}"
+                )
         for key, style in self.styles.items():
             unknown = [a for a in style.allowed_ages or [] if a not in self.ages]
             if unknown:
