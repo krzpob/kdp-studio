@@ -17,9 +17,11 @@ from kdp_studio.pipeline.output import (
     IDEAS_FILE,
     PROMPTS_FILE,
     RAW_DIR,
+    SVG_DIR,
     book_dir,
     write_json_atomic,
 )
+from kdp_studio.pipeline.postprocess import PageGeometry, PagePostprocessor, page_margin_in
 from kdp_studio.pipeline.prompts import PromptBuilder
 from kdp_studio.pipeline.worker import PageOutcome, PageWorker, page_jobs
 from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
@@ -92,7 +94,7 @@ def generate(
         typer.Option(help="Dostawca grafik z rejestru. Domyślnie z settings.yaml."),
     ] = None,
 ) -> None:
-    """Generuje kolorowankę: pomysły, prompty i surowe grafiki (FR-01–FR-05)."""
+    """Generuje kolorowankę: pomysły, prompty, grafiki i strony do druku (FR-01–FR-06)."""
     try:
         config = load_config()
     except ConfigError as e:
@@ -172,6 +174,19 @@ def generate(
     write_json_atomic(target / PROMPTS_FILE, prompts)
     typer.echo(f"Prompty obrazu: {len(prompts.pages)}. Zapisano: {target / PROMPTS_FILE}")
 
+    fmt = config.formats[spec.format]
+    margin_in = page_margin_in(fmt, settings.kdp_margins, spec.pages_in_book)
+    gutter_in = settings.kdp_margins.gutter_in(spec.pages_in_book)
+    typer.echo(
+        f'Strona {fmt.page_px[0]}×{fmt.page_px[1]} px ({fmt.dpi} DPI), margines {margin_in:g}" '
+        f'z każdej strony (grzbiet KDP dla {spec.pages_in_book} stron: {gutter_in:g}").'
+    )
+    postprocessor = PagePostprocessor(
+        book_dir=target,
+        geometry=PageGeometry.for_format(fmt, margin_in),
+        params=config.ages[spec.age].postprocess,
+    )
+
     jobs = page_jobs(prompts, spec.pages)
     typer.echo(
         f"Generuję {plural(len(jobs), 'grafikę', 'grafiki', 'grafik')} ({images.name}, "
@@ -182,11 +197,10 @@ def generate(
     def report(outcome: PageOutcome) -> None:
         nonlocal done
         done += 1
-        name = f"page_{outcome.page:02d}"
         if outcome.status == "ok":
-            line = f"{name}: ok, {outcome.width}×{outcome.height} ({outcome.duration_s:.1f} s)"
+            line = f"{outcome.name}: ok ({outcome.duration_s:.1f} s)"
         else:
-            line = f"{name}: nieudana: {outcome.error}"
+            line = f"{outcome.name}: nieudana: {outcome.error}"
         typer.echo(f"[{done}/{len(jobs)}] {line}")
 
     worker = PageWorker(
@@ -195,20 +209,22 @@ def generate(
         aspect=aspect,
         quality=settings.image_quality,
         concurrency=workers,
+        postprocessor=postprocessor,
     )
     images_result = worker.run(jobs, on_done=report)
     image_usage = images_result.usage
     typer.echo(
-        f"Grafiki: {len(images_result.ok)}/{len(jobs)} ok, tokeny: "
-        f"{image_usage.input_tokens} wejście / {image_usage.output_tokens} wyjście. "
-        f"Surowe pliki: {target / RAW_DIR}"
+        f"Strony: {len(images_result.ok)}/{len(jobs)} ok, tokeny: "
+        f"{image_usage.input_tokens} wejście / {image_usage.output_tokens} wyjście.\n"
+        f"Gotowe strony do Canvy: {target}/page_*.png (wektory: {target / SVG_DIR}, "
+        f"surowe: {target / RAW_DIR})"
     )
     if images_result.fatal_error is not None:
         raise _fail([images_result.fatal_error], ExitCode.PROVIDER_ERROR)
     if images_result.failed:
-        failed = ", ".join(f"page_{o.page:02d}" for o in images_result.failed)
+        failed = ", ".join(o.name for o in images_result.failed)
         raise _fail([f"nieudane strony: {failed}"], ExitCode.PARTIAL)
-    typer.echo("Obróbka do druku (FR-06 i dalej) nie jest jeszcze zaimplementowana.")
+    typer.echo("Manifest i instrukcja canva.md (FR-08) nie są jeszcze zaimplementowane.")
 
 
 @app.command()

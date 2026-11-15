@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
+from kdp_studio.config import DEFAULT_CONFIG_DIR
 from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
 from tests.conftest import ConfigDirFactory, llm_ideas_response
@@ -15,9 +17,24 @@ BASE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "
 BOOK_DIR = Path("output/dinozaury_przedszkole_kawaii_letter")
 
 
+TEST_DPI = 30
+
+
 @pytest.fixture(autouse=True)
-def fake_text_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeTextProvider:
-    """Bez sieci i bez zapisu w repo: fałszywy dostawca i katalog roboczy w tmp_path."""
+def fake_text_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config_dir: ConfigDirFactory
+) -> FakeTextProvider:
+    """Bez sieci i bez zapisu w repo: fałszywi dostawcy i katalog roboczy w tmp_path.
+
+    Formaty mają te same wymiary w calach, ale 30 DPI zamiast 300, żeby obróbka
+    setek stron w testach CLI trwała ułamek sekundy. Pełną rozdzielczość sprawdza
+    tests/test_postprocess.py.
+    """
+    formats = yaml.safe_load((DEFAULT_CONFIG_DIR / "formats.yaml").read_text(encoding="utf-8"))
+    for fmt in formats.values():
+        fmt["dpi"] = TEST_DPI
+        fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
+    monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats)))
     provider = FakeTextProvider([llm_ideas_response(300)])
 
     def create(name: str, model: str) -> TextProvider:
@@ -250,8 +267,13 @@ def test_generate_writes_raw_pages(capsys: pytest.CaptureFixture[str]) -> None:
     ]
     out = capsys.readouterr().out
     assert "Generuję 12 grafik (fake, fake-image, jakość medium, równolegle 4)" in out
-    assert "page_07: ok, 48×64" in out
-    assert "Grafiki: 12/12 ok" in out
+    assert "page_07: ok (" in out
+    assert "Strony: 12/12 ok" in out
+    assert sorted(p.name for p in book.glob("*.png")) == [f"page_{i:02d}.png" for i in range(1, 13)]
+    assert sorted(p.name for p in (book / "svg").iterdir()) == [
+        f"page_{i:02d}.svg" for i in range(1, 13)
+    ]
+    assert 'margines 0.5" z każdej strony (grzbiet KDP dla 26 stron: 0.375")' in out
 
 
 def test_generate_sends_page_prompts_and_aspect(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,7 +294,8 @@ def test_page_failure_exits_2(
     _image_provider(monkeypatch, FakeImageProvider(fail=fail))
     assert main([*BASE, "--pages", "12"]) == ExitCode.PARTIAL
     captured = capsys.readouterr()
-    assert "Grafiki: 11/12 ok" in captured.out
+    assert "Strony: 11/12 ok" in captured.out
+    assert not (BOOK_DIR / "page_02.png").exists()
     assert "page_02: nieudana: moderacja" in captured.out
     assert "Błąd: nieudane strony: page_02" in captured.err
 

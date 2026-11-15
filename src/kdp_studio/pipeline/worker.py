@@ -1,4 +1,4 @@
-"""FR-05: generowanie grafik, jedno wywołanie ImageProvider.generate() na stronę.
+"""FR-05/FR-06: grafika na stronę (jedno wywołanie ImageProvider.generate()) i jej obróbka.
 
 Strony są generowane równolegle (`concurrency` wątków). Błąd jednej strony
 (moderacja, przeciążenie po ponowieniach) oznacza ją jako nieudaną, a reszta idzie
@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Literal
 
 from kdp_studio.models import BookPrompts
-from kdp_studio.pipeline.output import raw_page_path, write_bytes_atomic
+from kdp_studio.pipeline.output import RAW_DIR, page_name, write_bytes_atomic
+from kdp_studio.pipeline.postprocess import PagePostprocessor, PostprocessError
 from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError, Usage
 
 PageStatus = Literal["ok", "failed"]
@@ -30,6 +31,7 @@ class _Skipped(Exception):
 @dataclass(frozen=True)
 class PageJob:
     page: int  # numer strony w książce, od 1
+    name: str  # page_07 albo page_007 (FR-08)
     idea_id: str
     prompt: str
 
@@ -37,10 +39,13 @@ class PageJob:
 @dataclass(frozen=True)
 class PageOutcome:
     page: int
+    name: str
     idea_id: str
     status: PageStatus
     duration_s: float
     raw_file: Path | None = None
+    page_file: Path | None = None  # gotowa strona (FR-06); None bez obróbki
+    svg_file: Path | None = None
     width: int | None = None
     height: int | None = None
     error: str | None = None
@@ -71,7 +76,7 @@ class ImagesResult:
 def page_jobs(prompts: BookPrompts, pages: int) -> list[PageJob]:
     """Pierwsze `pages` promptów to strony książki; reszta to zapas dla QA (FR-07)."""
     return [
-        PageJob(page=i, idea_id=p.idea_id, prompt=p.prompt)
+        PageJob(page=i, name=page_name(i, pages), idea_id=p.idea_id, prompt=p.prompt)
         for i, p in enumerate(prompts.pages[:pages], start=1)
     ]
 
@@ -83,6 +88,7 @@ class PageWorker:
     aspect: str
     quality: str
     concurrency: int = 4
+    postprocessor: PagePostprocessor | None = None  # FR-06; None zostawia tylko raw/
     clock: Callable[[], float] = time.monotonic
 
     def generate_page(self, job: PageJob) -> PageOutcome:
@@ -97,21 +103,35 @@ class PageWorker:
                 raise
             return PageOutcome(
                 page=job.page,
+                name=job.name,
                 idea_id=job.idea_id,
                 status="failed",
                 duration_s=self.clock() - started,
                 error=str(e),
             )
-        path = raw_page_path(self.book_dir, job.page)
-        write_bytes_atomic(path, result.png_bytes)
+        raw = self.book_dir / RAW_DIR / f"{job.name}.png"
+        write_bytes_atomic(raw, result.png_bytes)
+
+        page_file = svg_file = None
+        error = None
+        if self.postprocessor is not None:
+            try:
+                files = self.postprocessor.process(raw, job.name)
+                page_file, svg_file = files.page, files.svg
+            except PostprocessError as e:
+                error = f"obróbka: {e}"
         return PageOutcome(
             page=job.page,
+            name=job.name,
             idea_id=job.idea_id,
-            status="ok",
+            status="ok" if error is None else "failed",
             duration_s=self.clock() - started,
-            raw_file=path,
+            raw_file=raw,
+            page_file=page_file,
+            svg_file=svg_file,
             width=result.width,
             height=result.height,
+            error=error,
             usage=result.usage,
         )
 

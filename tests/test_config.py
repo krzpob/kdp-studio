@@ -78,7 +78,9 @@ def test_page_px_must_match_trim_and_dpi(config_dir: ConfigDirFactory) -> None:
 def test_safe_margin_below_kdp_minimum(config_dir: ConfigDirFactory) -> None:
     formats = _raw("formats")
     formats["square"]["safe_margin_in"] = 0.1  # type: ignore[index]
-    with pytest.raises(ConfigError, match=r"formats\.square\.safe_margin_in"):
+    with pytest.raises(
+        ConfigError, match=r"format 'square': safe_margin_in 0\.1 < .*outside_min_in"
+    ):
         load_config(config_dir(formats=formats))
 
 
@@ -101,3 +103,25 @@ def test_empty_profiles_file(config_dir: ConfigDirFactory, tmp_path: Path) -> No
     (directory / "formats.yaml").write_text("", encoding="utf-8")
     with pytest.raises(ConfigError, match=r"brak profili w formats\.yaml"):
         load_config(directory)
+
+
+def test_kdp_margins_rows_must_increase(config_dir: ConfigDirFactory) -> None:
+    settings = _raw("settings")
+    settings["kdp_margins"]["gutter_by_pages"][1]["gutter_in"] = 0.3  # type: ignore[index]
+    with pytest.raises(ConfigError, match="muszą rosnąć"):
+        load_config(config_dir(settings=settings))
+
+
+def test_kdp_margins_from_settings(repo_config: AppConfig) -> None:
+    margins = repo_config.settings.kdp_margins
+    assert margins.outside_min_in == 0.25
+    assert margins.max_pages == 828
+    assert [margins.gutter_in(p) for p in (24, 150, 151, 300, 301, 828, 829)] == [
+        0.375,
+        0.375,
+        0.5,
+        0.5,
+        0.625,
+        0.875,
+        None,
+    ]

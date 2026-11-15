@@ -6,11 +6,14 @@
 #   dpi              – rozdzielczość druku
 #   page_px          – wymiar wyjściowego page_XX.png [szer., wys.] = trim_in × dpi (NFR-07)
 #   aspect           – proporcja przekazywana adapterowi ImageProvider (FR-05)
-#   safe_margin_in   – margines bezpieczny; min. KDP bez spadu to 0.25" na zewnątrz
-#   gutter_in        – margines wewnętrzny (grzbiet) dla 24–150 stron
+#   safe_margin_in   – nasz minimalny margines (wygoda kolorowania); musi być ≥ kdp_margins.outside_min_in
 #   composition_hint – fragment promptu obrazu (FR-04), po angielsku
 #
-# Bez spadu (bleed): grafika zawsze mieści się w obszarze bezpiecznym na białym tle.
+# Margines przy grzbiecie zależy od liczby stron książki, nie od formatu, więc jest w
+# settings.yaml (kdp_margins, spec §7.4). Strona ma margines symetryczny (FR-06):
+#   margin_in = max(safe_margin_in, outside_min_in, gutter_in(pages_in_book))
+#
+# Bez spadu (bleed): grafika zawsze mieści się w obszarze treści na białym tle.
 
 letter:            # 8.5" × 11", pion
   name: Letter (8.5" × 11")
@@ -19,8 +22,7 @@ letter:            # 8.5" × 11", pion
   dpi: 300
   page_px: [2550, 3300]
   aspect: "3:4"
-  safe_margin_in: 0.5     # min. KDP bez spadu: 0.25" na zewnątrz
-  gutter_in: 0.375        # margines wewnętrzny (grzbiet), 24–150 stron
+  safe_margin_in: 0.5     # nasz minimalny margines (wygoda kolorowania); KDP wymaga ≥ 0.25"
   composition_hint: "vertical composition, subject fills the portrait frame"
 
 square:            # 8.5" × 8.5"
@@ -31,5 +33,4 @@ square:            # 8.5" × 8.5"
   page_px: [2550, 2550]
   aspect: "1:1"
   safe_margin_in: 0.5
-  gutter_in: 0.375
   composition_hint: "centered composition, single focal subject or concentric design"
