@@ -86,3 +86,4 @@ fantasy:
   prompt_fragment: >-
     fantasy style, magical creatures and enchanted settings, rich intricate details,
     ornate decorative elements
+  allowed_ages: [szkolne, nastolatki, dorosli]
