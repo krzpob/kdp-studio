@@ -120,3 +120,33 @@ class FakeImageProvider:
             raise error
         width, height = self.size
         return ImageResult(make_png(width, height, frame=True), width, height, self.usage_per_call)
+
+
+VisionResponder = Callable[[bytes, str], Any]
+PASS: dict[str, Any] = {"passed": True, "issues": []}
+
+
+@dataclass
+class FakeVisionProvider:
+    """Ocena stron bez sieci (FR-07). Bezpieczny dla wielu wątków.
+
+    `respond(image_png, instructions)` zwraca odpowiedź w kształcie schematu albo rzuca
+    ProviderError; domyślnie każda strona przechodzi. Instrukcje zawierają scenę strony.
+    """
+
+    respond: VisionResponder | None = None
+    name: str = "fake"
+    model: str = "fake-vision"
+    usage_per_call: Usage = field(
+        default_factory=lambda: Usage(input_tokens=1000, output_tokens=20)
+    )
+    calls: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def assess(
+        self, image_png: bytes, instructions: str, schema: type[SchemaT]
+    ) -> tuple[SchemaT, Usage]:
+        with self._lock:
+            self.calls.append(instructions)
+        data = PASS if self.respond is None else self.respond(image_png, instructions)
+        return schema.model_validate(data), self.usage_per_call

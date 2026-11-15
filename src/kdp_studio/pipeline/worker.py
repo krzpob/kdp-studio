@@ -1,9 +1,13 @@
-"""FR-05/FR-06: grafika na stronę (jedno wywołanie ImageProvider.generate()) i jej obróbka.
+"""FR-05–FR-07: grafika na stronę (jedno wywołanie ImageProvider.generate()), obróbka i QA.
 
 Strony są generowane równolegle (`concurrency` wątków). Błąd jednej strony
 (moderacja, przeciążenie po ponowieniach) oznacza ją jako nieudaną, a reszta idzie
 dalej. Błąd krytyczny (zły klucz, brak środków, nieznany model) przerywa przebieg:
 nowe strony nie startują, a te w toku kończą się normalnie.
+
+Z QA (FR-07) strona odrzucona przez model z wizją trafia do `rejected/`, a jej pozycja
+jest generowana ponownie z kolejnego zapasowego pomysłu (wspólna pula dla wszystkich
+stron), najwyżej `max_retries` razy.
 """
 
 from __future__ import annotations
@@ -16,10 +20,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from kdp_studio.models import BookPrompts
-from kdp_studio.pipeline.output import RAW_DIR, page_name, write_bytes_atomic
+from kdp_studio.models import BookPrompts, PagePrompt
+from kdp_studio.pipeline.output import RAW_DIR, REJECTED_DIR, page_name, write_bytes_atomic
 from kdp_studio.pipeline.postprocess import PagePostprocessor, PostprocessError
+from kdp_studio.pipeline.qa import QAChecker, QAIssue, QAResult
 from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError, Usage
+from kdp_studio.validation import plural
 
 PageStatus = Literal["ok", "failed"]
 
@@ -37,10 +43,20 @@ class PageJob:
 
 
 @dataclass(frozen=True)
+class RejectedAttempt:
+    """Próba odrzucona przez QA (FR-07); plik leży w `rejected/`."""
+
+    attempt: int
+    idea_id: str
+    file: Path
+    issues: list[QAIssue]
+
+
+@dataclass(frozen=True)
 class PageOutcome:
     page: int
     name: str
-    idea_id: str
+    idea_id: str  # pomysł ostatniej próby: po odrzuceniu przez QA to pomysł zapasowy
     status: PageStatus
     duration_s: float
     raw_file: Path | None = None
@@ -49,7 +65,12 @@ class PageOutcome:
     width: int | None = None
     height: int | None = None
     error: str | None = None
-    usage: Usage = field(default_factory=Usage)
+    usage: Usage = field(default_factory=Usage)  # grafiki ze wszystkich prób
+    prompt: str | None = None  # prompt ostatniej próby
+    attempts: int = 1
+    qa: QAResult | None = None  # wynik QA ostatniej próby; None bez QA
+    qa_usage: Usage = field(default_factory=Usage)
+    rejected: list[RejectedAttempt] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -72,6 +93,17 @@ class ImagesResult:
             total += outcome.usage
         return total
 
+    @property
+    def qa_usage(self) -> Usage:
+        total = Usage()
+        for outcome in self.outcomes:
+            total += outcome.qa_usage
+        return total
+
+    @property
+    def rejected(self) -> int:
+        return sum(len(o.rejected) for o in self.outcomes)
+
 
 def page_jobs(prompts: BookPrompts, pages: int) -> list[PageJob]:
     """Pierwsze `pages` promptów to strony książki; reszta to zapas dla QA (FR-07)."""
@@ -79,6 +111,47 @@ def page_jobs(prompts: BookPrompts, pages: int) -> list[PageJob]:
         PageJob(page=i, name=page_name(i, pages), idea_id=p.idea_id, prompt=p.prompt)
         for i, p in enumerate(prompts.pages[:pages], start=1)
     ]
+
+
+class ReservePool:
+    """Zapasowe pomysły (FR-03, FR-07) wydawane po kolei stronom odrzuconym przez QA."""
+
+    def __init__(self, prompts: Sequence[PagePrompt]) -> None:
+        self._prompts = list(prompts)
+        self._next = 0
+        self._lock = threading.Lock()
+
+    @classmethod
+    def from_prompts(cls, prompts: BookPrompts, pages: int) -> ReservePool:
+        return cls(prompts.pages[pages:])
+
+    def take(self) -> PagePrompt | None:
+        with self._lock:
+            if self._next >= len(self._prompts):
+                return None
+            self._next += 1
+            return self._prompts[self._next - 1]
+
+    @property
+    def used(self) -> int:
+        return self._next
+
+    @property
+    def remaining(self) -> int:
+        return len(self._prompts) - self._next
+
+
+@dataclass(frozen=True)
+class _Render:
+    """Wynik jednej próby: grafika i obróbka, bez QA."""
+
+    raw_file: Path | None = None
+    page_file: Path | None = None
+    svg_file: Path | None = None
+    width: int | None = None
+    height: int | None = None
+    usage: Usage = field(default_factory=Usage)
+    error: str | None = None
 
 
 @dataclass
@@ -89,51 +162,114 @@ class PageWorker:
     quality: str
     concurrency: int = 4
     postprocessor: PagePostprocessor | None = None  # FR-06; None zostawia tylko raw/
+    qa: QAChecker | None = None  # FR-07; None: bez kontroli jakości
+    reserve: ReservePool | None = None  # zapasowe pomysły dla stron odrzuconych przez QA
+    max_retries: int = 2  # ponowienia na pozycję po odrzuceniu przez QA
     clock: Callable[[], float] = time.monotonic
+    _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 
-    def generate_page(self, job: PageJob) -> PageOutcome:
-        """Jedna strona. ProviderError z fatal=True przechodzi wyżej i przerywa przebieg."""
-        started = self.clock()
+    def _render(self, name: str, prompt: str) -> _Render:
+        """Grafika i obróbka. ProviderError z fatal=True przechodzi wyżej."""
         try:
             result = self.provider.generate(
-                ImageRequest(prompt=job.prompt, aspect=self.aspect, quality=self.quality)
+                ImageRequest(prompt=prompt, aspect=self.aspect, quality=self.quality)
             )
         except ProviderError as e:
             if e.fatal:
                 raise
-            return PageOutcome(
-                page=job.page,
-                name=job.name,
-                idea_id=job.idea_id,
-                status="failed",
-                duration_s=self.clock() - started,
-                error=str(e),
-            )
-        raw = self.book_dir / RAW_DIR / f"{job.name}.png"
+            return _Render(error=str(e))
+        raw = self.book_dir / RAW_DIR / f"{name}.png"
         write_bytes_atomic(raw, result.png_bytes)
 
         page_file = svg_file = None
         error = None
         if self.postprocessor is not None:
             try:
-                files = self.postprocessor.process(raw, job.name)
+                files = self.postprocessor.process(raw, name)
                 page_file, svg_file = files.page, files.svg
             except PostprocessError as e:
                 error = f"obróbka: {e}"
-        return PageOutcome(
-            page=job.page,
-            name=job.name,
-            idea_id=job.idea_id,
-            status="ok" if error is None else "failed",
-            duration_s=self.clock() - started,
+        return _Render(
             raw_file=raw,
             page_file=page_file,
             svg_file=svg_file,
             width=result.width,
             height=result.height,
-            error=error,
             usage=result.usage,
+            error=error,
         )
+
+    def _reject(self, checked: Path, name: str, attempt: int) -> Path:
+        """Przenosi odrzuconą stronę do `rejected/`, żeby w katalogu książki zostały tylko
+        strony do Canvy (FR-08)."""
+        target = self.book_dir / REJECTED_DIR / f"{name}_try{attempt}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        checked.replace(target)
+        return target
+
+    def generate_page(self, job: PageJob) -> PageOutcome:
+        """Jedna pozycja w książce, z ponowieniami po QA. ProviderError z fatal=True
+        przechodzi wyżej i przerywa przebieg."""
+        started = self.clock()
+        idea_id, prompt = job.idea_id, job.prompt
+        usage = qa_usage = Usage()
+        rejected: list[RejectedAttempt] = []
+        attempt = 0
+
+        def outcome(render: _Render, error: str | None, qa: QAResult | None = None) -> PageOutcome:
+            # Po odrzuceniu przez QA gotowa strona leży już w rejected/.
+            moved = qa is not None and not qa.passed
+            return PageOutcome(
+                page=job.page,
+                name=job.name,
+                idea_id=idea_id,
+                status="ok" if error is None else "failed",
+                duration_s=self.clock() - started,
+                raw_file=render.raw_file,
+                page_file=None if moved else render.page_file,
+                svg_file=render.svg_file,
+                width=render.width,
+                height=render.height,
+                error=error,
+                usage=usage,
+                prompt=prompt,
+                attempts=attempt,
+                qa=qa,
+                qa_usage=qa_usage,
+                rejected=rejected,
+            )
+
+        while True:
+            attempt += 1
+            render = self._render(job.name, prompt)
+            usage += render.usage
+            if render.error is not None or self.qa is None:
+                return outcome(render, render.error)
+
+            checked = render.page_file or render.raw_file
+            assert checked is not None
+            try:
+                verdict, used = self.qa.check(checked.read_bytes(), idea_id)
+            except ProviderError as e:
+                if e.fatal:
+                    raise
+                return outcome(render, f"kontrola jakości: {e}")
+            qa_usage += used
+            if verdict.passed:
+                return outcome(render, None, verdict)
+
+            moved = self._reject(checked, job.name, attempt)
+            rejected.append(RejectedAttempt(attempt, idea_id, moved, verdict.issues))
+            tries = plural(attempt, "próbę", "próby", "prób")
+            reason = f"QA odrzuciło {tries}, ostatnio: {verdict.summary()}"
+            if attempt > self.max_retries:
+                return outcome(render, reason, verdict)
+            replacement = self.reserve.take() if self.reserve is not None else None
+            if replacement is None:
+                return outcome(render, f"{reason} (brak zapasowych pomysłów)", verdict)
+            if self._stop.is_set():
+                return outcome(render, f"{reason} (przerwano po błędzie krytycznym)", verdict)
+            idea_id, prompt = replacement.idea_id, replacement.prompt
 
     def run(
         self,
@@ -144,7 +280,7 @@ class PageWorker:
         fatal_error: str | None = None
         # Ustawiana w wątku roboczym: wolny wątek mógłby wziąć kolejną stronę, zanim
         # główny wątek zdąży anulować kolejkę, i wysłać zbędne zapytanie.
-        stop = threading.Event()
+        stop = self._stop = threading.Event()
 
         def run_job(job: PageJob) -> PageOutcome:
             if stop.is_set():

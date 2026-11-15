@@ -82,6 +82,19 @@ class ImageProvider(Protocol):
         ...
 
 
+class VisionProvider(Protocol):
+    """Model z wizją oceniający gotową stronę (FR-07)."""
+
+    name: str
+    model: str
+
+    def assess(
+        self, image_png: bytes, instructions: str, schema: type[SchemaT]
+    ) -> tuple[SchemaT, Usage]:
+        """Ocena obrazu według `instructions`; odpowiedź zwalidowana schematem `schema`."""
+        ...
+
+
 def png_dimensions(data: bytes) -> tuple[int, int]:
     """Szerokość i wysokość z nagłówka IHDR. ValueError, jeśli to nie PNG."""
     if len(data) < 24 or not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
