@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -370,3 +371,77 @@ def test_no_review_ideas_flag(fake_text_provider: FakeTextProvider) -> None:
     assert [c.schema.__name__ for c in fake_text_provider.calls] == ["_LLMIdeas"]
     data = json.loads((BOOK_DIR / "ideas.json").read_text(encoding="utf-8"))
     assert data["review"] is None
+
+
+# --- FR-08, FR-13 --------------------------------------------------------------------
+
+
+def _manifest() -> dict[str, Any]:
+    data = json.loads((BOOK_DIR / "manifest.json").read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
+def test_generate_writes_manifest_and_canva_md(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    manifest = _manifest()
+    assert manifest["status"] == "completed"
+    assert manifest["input"]["pages"] == 12 and manifest["input"]["review_ideas"] is True
+    assert manifest["layout"]["pages_in_book"] == 26
+    assert manifest["layout"]["margin_in"] == 0.5
+    assert manifest["ideas"]["count"] == 15 and manifest["ideas"]["reserve"] == 3
+    assert manifest["providers"]["image"] == {
+        "provider": "fake",
+        "model": "fake-image",
+        "quality": "medium",
+        "aspect": "3:4",
+    }
+    pages = manifest["pages"]
+    assert [p["name"] for p in pages] == [f"page_{i:02d}" for i in range(1, 13)]
+    assert {p["status"] for p in pages} == {"ok"}
+    prompts = json.loads((BOOK_DIR / "prompts.json").read_text(encoding="utf-8"))["pages"]
+    assert [p["prompt"] for p in pages] == [p["prompt"] for p in prompts[:12]]
+    assert pages[0]["files"]["png"] == "page_01.png"
+
+    canva = (BOOK_DIR / "canva.md").read_text(encoding="utf-8")
+    assert "Razem **26** stron." in canva
+    out = capsys.readouterr().out
+    assert "(status: completed)" in out
+    assert "Pamiętaj: Przy publikacji w KDP zaznacz „AI-generated content”" in out
+
+
+def test_partial_run_is_recorded(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(req: ImageRequest) -> ProviderError | None:
+        return ProviderError("moderacja", fatal=False) if "number 2 " in req.prompt else None
+
+    _image_provider(monkeypatch, FakeImageProvider(fail=fail))
+    assert main([*BASE, "--pages", "12"]) == ExitCode.PARTIAL
+    manifest = _manifest()
+    assert manifest["status"] == "partial"
+    page = manifest["pages"][1]
+    assert (page["status"], page["error"], page["files"]["png"]) == ("failed", "moderacja", None)
+    assert "brakuje 1 strony: `page_02.png`" in (BOOK_DIR / "canva.md").read_text(encoding="utf-8")
+
+
+def test_fatal_error_keeps_manifest_without_canva_md(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(req: ImageRequest) -> ProviderError:
+        return ProviderError("brak środków")
+
+    _image_provider(monkeypatch, FakeImageProvider(fail=fail))
+    assert main([*BASE, "--pages", "12", "--concurrency", "1"]) == ExitCode.PROVIDER_ERROR
+    manifest = _manifest()
+    assert (manifest["status"], manifest["error"]) == ("failed", "brak środków")
+    statuses = [p["status"] for p in manifest["pages"]]
+    assert statuses.count("pending") >= 10  # strony, które nie wystartowały
+    assert not (BOOK_DIR / "canva.md").exists()
+
+
+def test_root_has_only_page_pngs(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*BASE, "--pages", "12"]) == ExitCode.OK
+    names = sorted(p.name for p in BOOK_DIR.iterdir() if p.is_file())
+    assert names == sorted(
+        ["canva.md", "ideas.json", "manifest.json", "prompts.json"]
+        + [f"page_{i:02d}.png" for i in range(1, 13)]
+    )
