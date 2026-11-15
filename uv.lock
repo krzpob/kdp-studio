@@ -240,7 +240,7 @@ dev = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.29" },
 ]
 
 [package.metadata.requires-dev]

@@ -29,7 +29,7 @@ uv run mypy                                # strict, covers src/ and tests/ (con
 - Python ≥ 3.12, `uv`, `typer`, Pydantic v2. Planned image stack: Pillow, `opencv-python-headless`, potrace bindings, `cairosvg` or `resvg`.
 - Typer ≥ 0.29 vendors click privately (`typer._click`); there is no `click` package. Use the public `typer.TyperException`, `typer.Exit` and `typer.Abort`.
 - Ruff allows `–` and `×` (`allowed-confusables`) because Polish messages use them, and `docs/` is excluded from ruff.
-- Still missing from NFR-13: pre-commit and GitHub Actions CI.
+- CI (`.github/workflows/ci.yml`) runs `uv sync --locked`, so after changing dependencies in `pyproject.toml` run `uv lock` and commit `uv.lock`. Lint and mypy run once; tests run on Linux, macOS and Windows with Python 3.12 and 3.14 (NFR-11). Pre-commit (NFR-13) is still missing.
 - Secrets come only from env vars or `.env` (gitignored): `OPENAI_API_KEY`, later `GEMINI_API_KEY`. Keys must never reach logs or `manifest.json`.
 
 ## Architecture (spec §8, §12)
