@@ -28,7 +28,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 
 ### Poza zakresem MVP (roadmapa, sekcja 13)
 - Składanie PDF wnętrza książki w skrypcie. W MVP robi to użytkownik w Canvie (D9). Automatyczne składanie to opcjonalny etap 2.
-- Okładka (projektowana ręcznie w Canvie albo w pakiecie Adobe).
+- Okładka: komenda `kdp-studio cover` tworzy gotowy PDF okładki (FR-15). W MVP okładkę projektuje się ręcznie w Canvie albo w pakiecie Adobe.
 - Strona „This book belongs to…” dopasowana do motywu kolorowanki, włączana przełącznikiem (FR-14). W MVP użytkownik robi ją ręcznie w Canvie.
 - Adapter Gemini API (Nano Banana). Architektura musi go umożliwiać od początku.
 - Adapter Adobe Firefly.
@@ -48,6 +48,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 | D7 | **Formaty: `letter` (8.5"×11", pion) i `square` (8.5"×8.5")** | Dwa najpopularniejsze formaty kolorowanek na KDP. Formatów poziomych KDP nie obsługuje w tym rozmiarze. |
 | D8 | **Druk jednostronny** (grafika, potem pusta strona) | Standard w kolorowankach, bo kredki i flamastry nie przebijają na następną grafikę. Wpływa na liczenie stron (FR-02). |
 | D9 | **PDF wnętrza składany w Canvie**, nie w skrypcie | Canva daje kontrolę nad stroną tytułową i układem bez pisania kodu. Skrypt dostarcza pełne strony PNG, które wystarczy rozciągnąć na całą stronę projektu. Do Canvy trafia PNG, a nie SVG: Canva przyjmuje SVG tylko do 3 MB, 150–200 px szerokości i w profilu SVG 1.1, a gęsty line art z potrace przekracza te limity. |
+| D10 | **Geometria okładki liczona wzorami KDP**, nie odczytywana z szablonu przez LLM (FR-15) | Wymiary wynikają jednoznacznie z formatu, liczby stron i rodzaju papieru, a pomyłka w jednej cyfrze odrzuca plik. Szablon KDP służy tylko do kontroli i podglądu, odczytywany deterministycznie po kolorach pikseli. Tekst na okładce wpisuje program, model obrazu rysuje tylko ilustracje. |
 
 ## 4. Pojęcia
 
@@ -247,6 +248,120 @@ przedszkole:
     outline_text: true
 ```
 
+### FR-15: Okładka (poza MVP)
+
+Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
+
+**Geometria: liczona, nie odczytywana (D10)**
+- Wszystkie wymiary program liczy wzorami KDP z danych w `manifest.json` (format, `pages_in_book`) i konfiguracji (`kdp_cover` w `settings.yaml`):
+  - `spine_in = pages_in_book × paper_factor` (papier biały 0.002252", kremowy 0.0025"; domyślnie biały, `--paper`);
+  - szerokość = spad + tył + grzbiet + przód + spad, przy spadzie 0.125";
+  - wysokość = wysokość formatu + 2 × spad;
+  - piksele przy 300 DPI.
+  - Przykład: letter, 30 grafik, 62 strony → grzbiet 0.1396", okładka 17.3896" × 11.25" (5217 × 3375 px).
+- Strefy wyliczane z tej samej geometrii:
+  - linie cięcia i dwie linie zgięcia (tył/grzbiet, grzbiet/przód);
+  - **strefa bezpieczna:** min. KDP to 0.125" od linii cięcia; tytuł i kluczowe elementy trzymamy dalej, `key_margin_in` (domyślnie 0.375");
+  - **grzbiet:** tekst min. 0.0625" od każdej linii zgięcia;
+  - **pole kodu kreskowego:** 2" × 1.2" na tylnej okładce, 0.25" od grzbietu i 0.25" od dolnej linii cięcia.
+- Wymiary nie pochodzą z modelu ani z OCR: pomyłka w jednej cyfrze odrzuca plik w KDP, a wzór jest jednoznaczny i testowalny.
+
+**Szablon KDP (opcjonalnie, `--template szablon.png`)**
+- Program odczytuje szablon z kalkulatora okładek KDP deterministycznie, po kolorach pikseli, bez LLM:
+  - linie ciągłe to cięcie;
+  - różowy obszar to margines i spad;
+  - żółty prostokąt to pole kodu kreskowego.
+- Tolerancje kolorów ustawia się w konfiguracji; kalibracja na prawdziwym szablonie przed implementacją, a sam szablon staje się plikiem testowym.
+- Program porównuje położenie tych obszarów (we współrzędnych względnych, niezależnie od DPI szablonu) z wyliczoną geometrią. Rozbieżność powyżej tolerancji (np. szablon pobrany dla innej liczby stron) to błąd walidacji z opisem różnic.
+- Szablon nałożony półprzezroczyście trafia do `cover_preview.png`.
+
+**Wybór grafik**
+- `--cover-page 07` wskazuje stronę na przód. Bez parametru program **proponuje ją modelem z wizją**: dostaje on jeden arkusz kontaktowy złożony przez program (miniatury stron `ok` z numerami narysowanymi przez program) i zwraca stronę na przód, 3 strony na miniatury tyłu (różne od przodu i możliwie różnorodne) oraz uzasadnienie. To jedno wywołanie oceny, nie generowania obrazu, więc D4 go nie dotyczy.
+- `--thumbnails 03,12,21` wskazuje miniatury ręcznie.
+- Wybór i uzasadnienie trafiają do manifestu.
+
+**Przód**
+1. Program buduje szkic układu w wymiarach przodu ze spadem: wybrana strona (czarno-biały line art 300 DPI) w dolnej części i pusty pas u góry na tytuł.
+2. Model obrazu koloruje szkic, z obrazem referencyjnym (`reference_image`): żywe kolory w stylu książki dla dzieci, tło dopełnione do krawędzi spadu, kontury na miejscu, pas tytułu jako spokojne tło (niebo, gradient), **bez tekstu**.
+3. Model zwraca ok. 1.5k px, a przód ze spadem wymaga ok. 2588 × 3375 px. Program skaluje warstwę koloru i nakłada na nią ostre kontury z renderu 300 DPI (mnożenie). Przed nałożeniem sprawdza zgodność konturów modelu z oryginałem; przy przesunięciu powyżej progu używa samego powiększonego obrazu i zapisuje to w manifeście.
+4. Program wpisuje tytuł i podtytuł (z metadanych FR-03, np. „Coloring Book for Kids Ages 3–5”) czcionką z repozytorium na licencji OFL, z obrysem lub cieniem dla kontrastu, w strefie `key_margin_in`. Model nigdy nie rysuje tekstu (jak w FR-14).
+5. Czytelność w miniaturze: program zmniejsza przód do szerokości `thumbnail_check_px` (domyślnie 160 px, jak w wynikach Amazon) i sprawdza minimalną wysokość liter tytułu oraz kontrast tytułu z tłem.
+
+**Tył i grzbiet: jeden obraz, dopasowany do przodu**
+- Tył i grzbiet powstają **razem, jednym wywołaniem modelu**, w proporcji (tył + spad + grzbiet) : wysokość. Daje to ok. 0.78 dla letter i ok. 1.0 dla kwadratu, czyli proporcje dobrze obsługiwane przez modele. Między tyłem a grzbietem nie ma więc szwu, a grzbiet to ciąg dalszy tła tyłu.
+- Spójność z przodem:
+  - przód jest obrazem referencyjnym;
+  - program analizuje gotowy przód modelem z wizją: zwraca wysokość **linii horyzontu** jako ułamek wysokości (albo jej brak, np. przy tle-wzorze) i kolory tła w pasach poziomych przy lewej krawędzi przodu. Program uzupełnia to próbkami pikseli z lewej krawędzi;
+  - prompt narzuca horyzont na tej samej wysokości, te kolory tła i styl przodu.
+- Reguły kompozycji w prompcie:
+  - kluczowe elementy co najmniej `key_margin_in` od krawędzi;
+  - prawy pas szerokości grzbietu plus zapas to wyłącznie tło;
+  - dolny róg przy grzbiecie (pole kodu kreskowego) to spokojne tło;
+  - bez tekstu.
+- **Kontrola styku z przodem:** program porównuje kolory w pasach poziomych po obu stronach zgięcia grzbiet/przód (ΔE w przestrzeni Lab) i położenie horyzontu. Przekroczenie progu (`seam_max_delta_e`, `horizon_tolerance`) to ponowienie, maks. `max_retries`.
+- **Wygładzenie styku:** w pasie `seam_band_in` po stronie grzbietu program płynnie przechodzi z tła tyłu w kolory lewej krawędzi przodu. Przód zostaje nienaruszony, a przesunięcie przy oprawie nie odsłania szwu.
+- **Tekst na grzbiecie:** tylko gdy `pages_in_book ≥ spine_text_min_pages` (domyślnie 100; twarde minimum KDP to 79). Tytuł czytany z góry na dół, min. 0.0625" od linii zgięcia, rozmiar dopasowany do szerokości grzbietu, min. 7 pt. Gdy się nie mieści, program pomija tekst z ostrzeżeniem. Poniżej progu grzbiet to samo tło. Przy typowej książce z 30 grafikami (62 strony) grzbietu nie da się podpisać.
+
+**Miniatury na tyle**
+- Co najmniej 3 miniatury (`thumbnails`, 3–4) stron z wnętrza, czarno-białe na białym tle, z pliku `page_XX.png` 300 DPI, więc ostre.
+- Każda w ramce **grubszej niż kontury zmniejszonej grafiki**, żeby było widać, że to ramka:
+  - program mierzy typową grubość linii strony (np. transformata odległości);
+  - mnoży ją przez skalę miniatury i ustawia ramkę na `thumbnail_frame_ratio` × ta wartość (domyślnie 2×), nie cieńszą niż `thumbnail_frame_min_pt`.
+- Układ liczy program: wszystkie miniatury w strefie bezpiecznej tyłu (`key_margin_in`), z dala od linii zgięcia i **poza polem kodu kreskowego**. Pod polem kodu może biec tylko tło.
+- Opcjonalnie krótki opis z metadanych (`back_text`, domyślnie wyłączony), z tymi samymi ograniczeniami.
+
+**Kontrole przed zapisem**
+- **Wymiary:** obraz ma dokładnie wyliczone piksele, 300 DPI. Rozmiar strony PDF to wyliczone cale (dokładność 0.001").
+- **Rozmieszczenie:** tytuł, podtytuł, miniatury i tekst grzbietu leżą w swoich strefach, nic z tego nie wchodzi w pole kodu kreskowego. Te elementy rozmieszcza program, więc kontrola to asercja, a nie heurystyka.
+- **Tekst na grzbiecie** tylko przy spełnionym progu stron.
+- **QA (z `--qa`):** model z wizją sprawdza, że model obrazu nie dorysował tekstu, że przód pokazuje wybraną stronę i że tył pasuje stylem do przodu.
+
+**Wynik (`cover/` w katalogu książki)**
+- **`cover.pdf`**: jedna strona w dokładnym rozmiarze, obraz osadzony bez stratnej kompresji, RGB. KDP przyjmuje RGB i konwertuje je przy druku; konwersja do CMYK to możliwe rozszerzenie. Napisy są w obrazie, więc nie ma problemu z osadzaniem czcionek.
+- **`cover.png`**: cała okładka.
+- **`front.png`**: sam przód, np. jako miniatura do reklam.
+- **`cover_preview.png`**: okładka z naniesionymi liniami cięcia i zgięcia, strefami bezpiecznymi, polem kodu i opcjonalnie szablonem KDP.
+- **`raw/`**: surowe wyniki modelu.
+- **Manifest:** `manifest.json` dostaje sekcję `cover` z geometrią (`pages_in_book`, `spine_in`, wymiary), wyborem stron, promptami, wynikami kontroli styku, kosztem i statusem.
+- **Nieaktualna okładka:** jeśli później zmieni się `pages_in_book` książki, `cover` i `generate --resume` ostrzegają, że okładka jest nieaktualna.
+- **Koszt:** 2 grafiki (przód, tył z grzbietem) plus 1–3 wywołania oceny (wybór stron, horyzont, QA) i ponowienia; liczy się do `--max-cost` (FR-10).
+- **Kody wyjścia** jak w §9.3: brak okładki po wyczerpaniu ponowień to 2, błąd walidacji lub szablonu to 1.
+
+**Wymagania wobec dostawców**
+- Adapter obrazu musi obsługiwać `reference_image` (OpenAI: endpoint edycji obrazu). Kontrakt już to przewiduje (§8.2).
+- Maska (dorysowanie tyłu na podstawie przodu) nie jest potrzebna w tym podejściu. Zostaje jako możliwe usprawnienie, gdyby kontrola styku zbyt często wymagała ponowień.
+
+Konfiguracja (szkic):
+
+```yaml
+# settings.yaml
+kdp_cover:                      # wartości KDP, zmienia się je tylko gdy KDP zmieni zasady
+  bleed_in: 0.125
+  paper_factor_in: {white: 0.002252, cream: 0.0025}
+  safe_in: 0.125                # min. odległość tekstu od linii cięcia
+  spine_safe_in: 0.0625         # min. odległość tekstu grzbietu od linii zgięcia
+  spine_text_kdp_min_pages: 79
+  barcode: {width_in: 2.0, height_in: 1.2, from_spine_in: 0.25, from_bottom_in: 0.25}
+
+cover:                          # nasze ustawienia
+  paper: white                  # --paper
+  key_margin_in: 0.375
+  spine_text_min_pages: 100
+  thumbnails: 3                 # 3–4
+  thumbnail_frame_ratio: 2.0
+  thumbnail_frame_min_pt: 2
+  thumbnail_check_px: 160
+  seam_band_in: 0.1
+  seam_max_delta_e: 12
+  horizon_tolerance: 0.03       # ułamek wysokości
+  max_retries: 2
+  back_text: false
+  title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
+  template_colors:              # do kalibracji na szablonie KDP
+    margin_bleed: {rgb: [255, 0, 255], tolerance: 40}
+    barcode: {rgb: [255, 255, 0], tolerance: 40}
+```
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -401,6 +516,15 @@ kdp-studio generate --resume ./output/dinozaury_przedszkole_kawaii_square
 
 # Lista dostępnych profili
 kdp-studio profiles [age|style|format]
+
+# Okładka do gotowej książki (FR-15, poza MVP)
+kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
+  [--cover-page 07] \
+  [--thumbnails 03,12,21] \
+  [--paper white|cream] \
+  [--template kdp_template.png] \
+  [--qa] \
+  [--max-cost 1.00]
 ```
 
 ### 9.2 Konfiguracja i sekrety
@@ -428,7 +552,12 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
 ├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
-└── rejected/page_07_try1.png …     # odrzucone przez QA (z powodem w manifeście)
+├── rejected/page_07_try1.png …     # odrzucone przez QA (z powodem w manifeście)
+└── cover/                          # tylko po `kdp-studio cover` (FR-15, poza MVP)
+    ├── cover.pdf                   # gotowy plik okładki do KDP
+    ├── cover.png, front.png
+    ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
+    └── raw/
 ```
 
 Przykład wpisu strony w `manifest.json`:
@@ -515,6 +644,7 @@ kdp-studio/
 | 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
 | 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
 | 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, przełącznik `--belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
+| 1b. Okładka | FR-15: komenda `cover`, geometria z wzorów KDP, przód z pokolorowanej strony z tytułem, tył z grzbietem dopasowany do przodu, miniatury w ramkach, PDF | Na 3 książkach (letter i kwadrat, różna liczba stron) PDF przechodzi kreator KDP bez błędów, a podgląd KDP nie pokazuje szwu na grzbiecie ani elementów w polu kodu |
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
@@ -527,6 +657,7 @@ kdp-studio/
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
+7. FR-15: wybór czcionki tytułowej (OFL) i kalibracja kolorów szablonu KDP na prawdziwym pliku.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
