@@ -256,6 +256,10 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - Kolorowanki mają zawsze miękką okładkę (paperback), wnętrze czarno-białe i zwykły biały papier.
 - Grubość papieru, spad i strefy są więc stałe i siedzą w `kdp_cover` w `settings.yaml`, a nie w parametrach CLI.
 - Inna oprawa (hardcover), papier kremowy albo kolorowe wnętrze są poza zakresem. Wymagałyby innych wzorów (hardcover ma zawinięcie na tekturę i zawias) i nowych pól w konfiguracji.
+- Twarda oprawa nie opłaca się w kolorowankach:
+  - KDP oferuje ją tylko w kilku formatach (5.5" × 8.5", 6" × 9", 6.14" × 9.21", 7" × 10", 8.25" × 11"). Nie ma kwadratu, a najbliższy letter jest o 0.25" węższy, więc wnętrze trzeba by renderować osobno;
+  - wymaga min. 75 stron;
+  - koszt druku jest mniej więcej dwukrotnie wyższy, co mocno podnosi cenę kolorowanki.
 
 **Geometria: liczona, nie odczytywana (D10)**
 - Wszystkie wymiary program liczy wzorami KDP z danych w `manifest.json` (format, `pages_in_book`) i konfiguracji (`kdp_cover` w `settings.yaml`):
