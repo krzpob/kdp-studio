@@ -4,6 +4,55 @@ Specyfikacja wymagań na potrzeby implementacji. Dokument zbiera ustalenia z ses
 
 ---
 
+## 0. Stan implementacji
+
+Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastąpione innym wymaganiem. Te same znaczniki stoją przy nagłówkach wymagań w sekcji 6.
+
+**Wymagania funkcjonalne**
+
+| ID | Stan | PR | Uwagi |
+|---|---|---|---|
+| FR-01 | ✅ | #4 | |
+| FR-02 | ✅ | #4 | |
+| FR-03 | ✅ | #5, #6, #20 | |
+| FR-03a | ✅ | #12 | |
+| FR-03b | ✅ | #22, #24 | |
+| FR-04 | ✅ | #8, #15, #20 | |
+| FR-05 | ✅ | #9 | |
+| FR-06 | ✅ | #11 | |
+| FR-07 | ✅ | #14 | |
+| FR-08 | ✅ | #13, #23 | Pole `cost_usd` w manifeście czeka na FR-10. |
+| FR-09 | ↪ FR-17 | #23 | |
+| FR-10 | 🟡 | | Konsola podsumowuje strony ok/failed. Brakuje kosztów, `--max-cost`, statusu `budget_exceeded` i kodu wyjścia 3. |
+| FR-11 | ↪ FR-17 | #23 | |
+| FR-12 | ✅ | #7 | |
+| FR-13 | ✅ | #13 | |
+| FR-14 | ⬜ | | Poza MVP. Specyfikacja: #16. |
+| FR-15 | ⬜ | | Poza MVP. Specyfikacja: #17. |
+| FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
+| FR-17 | ✅ | #23, #24 | |
+| Profile (§7) | ✅ | #3, #15, #22 | |
+
+**Wymagania pozafunkcjonalne**
+
+| ID | Stan | Uwagi |
+|---|---|---|
+| NFR-01 | ✅ | `potracer` i `resvg-py`, bez bibliotek natywnych. |
+| NFR-02 | ✅ | Pilnuje tego test `tests/test_architecture.py`. |
+| NFR-03 | ✅ | Pokrycie modułów `pipeline/` wynosi 91–100%, całego pakietu 98%. Obróbkę testuje plik-wzorzec `tests/fixtures/line_art_bear.png`. |
+| NFR-04 | ✅ | Ponowienia z backoffem, atomowy zapis manifestu, wznawianie przez FR-17. |
+| NFR-05 | 🟡 | Obróbka strony trwa ok. 2,5 s. Czasu całej 30-stronicowej książki nie zmierzono. |
+| NFR-06 | ⬜ | Wymaga FR-10. |
+| NFR-07 | ✅ | `verify_page()` po każdym zapisie strony. |
+| NFR-08 | ✅ | Manifest zapisuje prompt, model i jakość. OpenAI nie obsługuje seeda. |
+| NFR-09 | 🟡 | Jest postęp strona po stronie i podsumowanie w konsoli. Brakuje logów strukturalnych i podsumowania kosztów (FR-10). |
+| NFR-10 | ✅ | |
+| NFR-11 | ✅ | CI na Linux, macOS i Windows (Python 3.12 i 3.14). |
+| NFR-12 | ✅ | |
+| NFR-13 | 🟡 | Są `ruff`, `mypy --strict` i CI. Brakuje pre-commit. |
+
+---
+
 ## 1. Cel
 
 Narzędzie CLI, które na podstawie kilku parametrów (temat, wiek odbiorcy, styl, format, liczba stron) generuje komplet grafik do kolorowanki pod Amazon KDP:
@@ -72,17 +121,17 @@ Parametry techniczne opisuje sekcja 9.
 
 ## 6. Wymagania funkcjonalne
 
-### FR-01: Walidacja wejścia
+### ✅ FR-01: Walidacja wejścia
 - Wszystkie parametry są walidowane przed pierwszym wywołaniem API.
 - Nieznany `--age`, `--style` albo `--format` kończy program błędem z listą dozwolonych wartości.
 - `--pages` musi być w zakresie 1–200.
 
-### FR-02: Walidacja liczby stron względem KDP
+### ✅ FR-02: Walidacja liczby stron względem KDP
 - Program liczy `pages_in_book = pages * 2 + front_matter_pages` (druk jednostronny, `front_matter_pages` z konfiguracji, domyślnie 2: strona tytułowa i „This book belongs to…”).
 - Jeśli `pages_in_book < 24` (minimum KDP dla paperbacka), program pokazuje ostrzeżenie z minimalną poprawną liczbą grafik. Z flagą `--strict` kończy się błędem.
 - Jeśli `pages_in_book` przekracza ostatni próg tabeli marginesów KDP (sekcja 7.4), program kończy się błędem walidacji.
 
-### FR-03: Generowanie pomysłów i metadanych książki
+### ✅ FR-03: Generowanie pomysłów i metadanych książki
 - **Jedno** wywołanie LLM ze strukturyzowanym wyjściem (JSON Schema lub structured outputs).
 - Wejście promptu: temat, profil wieku, profil stylu, format, liczba stron.
 - Wyjście (`ideas.json`):
@@ -95,7 +144,7 @@ Parametry techniczne opisuje sekcja 9.
   - pasować do wieku: liczba obiektów i złożoność sceny zgodne z profilem wieku.
 - Treści nie mogą zawierać postaci chronionych prawem autorskim ani znaków towarowych. LLM dostaje to jako twarde ograniczenie.
 
-### FR-03a: Weryfikacja pomysłów przed generowaniem grafik
+### ✅ FR-03a: Weryfikacja pomysłów przed generowaniem grafik
 - Domyślnie włączona (`review_ideas: true` w `settings.yaml`); `--no-review-ideas` wyłącza.
 - Osobne wywołanie LLM (ten sam model tekstowy, inny prompt: rola recenzenta) ocenia każdy pomysł według listy kontrolnej: zgodność z tematem (reguła z FR-03), unikalność, złożoność dla wieku, kompozycja dla formatu, jedna scena do narysowania konturem bez tekstu, brak chronionych postaci i znaków.
 - Recenzent poprawia tylko pomysły, które nie przechodzą listy (większość dobrej listy to `ok`), a przy kilku poprawkach dobiera różne elementy tematu, żeby strony nie wyglądały tak samo.
@@ -105,7 +154,7 @@ Parametry techniczne opisuje sekcja 9.
 - `ideas.json` dostaje ślad weryfikacji w polu `review`: `rejected` (tytuł, scena, powód), `revised` (id, pierwotny tytuł i scena, powód), `added`, `rounds`. Ostateczne id to `idea_01…` po weryfikacji.
 - Uzasadnienie: weryfikacja kosztuje ułamek centa na książkę, a jedna wyrzucona grafika kilka centów. Nie zastępuje QA z wizją (FR-07), które łapie problemy widoczne dopiero na obrazku (tekst, siatka, cieniowanie).
 
-### FR-03b: Różnorodność pomysłów w skali książki
+### ✅ FR-03b: Różnorodność pomysłów w skali książki
 Weryfikacja z FR-03a ocenia każdy pomysł osobno, a powtarzalność to cecha całej książki: w pierwszych książkach na prawie każdej stronie był jeden kotek siedzący obok przedmiotu, a choinka pojawiała się w co drugiej scenie.
 
 - **Cechy sceny.** Model przy każdym pomyśle (generowanie, dogenerowanie, poprawka weryfikacji) podaje: `subject` (rodzaj głównej postaci, np. `kitten`), `characters` (liczba postaci), `action` (główna czynność, czasownik w formie podstawowej) i `setting` (miejsce akcji, 1–3 słowa). Wszystko po angielsku, małymi literami. Pole `elements` już istnieje.
@@ -123,19 +172,19 @@ Weryfikacja z FR-03a ocenia każdy pomysł osobno, a powtarzalność to cecha ca
 - Pomysły bez cech (starsze pliki, ręczna edycja w FR-17) pomiar pomija w danym wymiarze.
 - Ograniczenie: synonimy liczą się osobno (`tree` i `evergreen`, `living room` i `lounge`), więc limity są raczej łagodne niż surowe.
 
-### FR-04: Budowanie promptów obrazu
+### ✅ FR-04: Budowanie promptów obrazu
 - Prompt dla każdej strony składa się z: opisu sceny z FR-03, **wspólnego bloku stylu** (identycznego dla wszystkich stron książki), fragmentu z profilu wieku i fragmentu z profilu formatu.
 - Każdy prompt zawiera stałe ograniczenia: `black and white line art, coloring book page, single illustration, one scene, pure white background, closed outlines, no shading, no grayscale, no text, no grid, no multiple panels, no collage, no frame`.
 - Gotowy prompt zapisuje się w manifeście (FR-08), żeby dało się odtworzyć i debugować wynik.
 
-### FR-05: Generowanie grafik
+### ✅ FR-05: Generowanie grafik
 - Jedno wywołanie `ImageProvider.generate()` na stronę.
 - Równoległość konfigurowalna (`--concurrency`, domyślnie 4).
 - Ponawianie z wykładniczym odczekiwaniem (backoff) przy błędach 429 i 5xx, maks. 3 próby na wywołanie.
 - Adapter mapuje proporcje formatu na rozmiar obsługiwany przez model (sekcja 8). Jeśli model obsługuje dowolne wymiary, adapter używa dokładnych proporcji.
 - Surowy wynik zapisuje się do `raw/page_XX.png` przed obróbką.
 
-### FR-06: Post-processing do druku (strony gotowe do importu w Canvie)
+### ✅ FR-06: Post-processing do druku (strony gotowe do importu w Canvie)
 Kolejne kroki (implementacje `PostProcessor`):
 1. konwersja do skali szarości;
 2. progowanie do czerni i bieli (próg konfigurowalny, domyślnie Otsu), jako krok pośredni przed wektoryzacją;
@@ -164,7 +213,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 
 **Kryterium akceptacji:** w Canvie, w projekcie o wymiarach `trim_in` profilu, plik rozciągnięty na całą stronę daje poprawne marginesy bez skalowania ani przycinania.
 
-### FR-07: Kontrola jakości (QA), opcjonalna
+### ✅ FR-07: Kontrola jakości (QA), opcjonalna
 - Włączana flagą `--qa` (domyślnie wyłączona w MVP).
 - Model z wizją ocenia każdą grafikę po FR-06 i zwraca JSON: `{pass: bool, issues: [...]}`.
 - Kryteria odrzucenia: kilka paneli, siatka lub kolaż; cieniowanie lub szarości; tekst lub litery; otwarte kontury uniemożliwiające kolorowanie; poziom szczegółowości niezgodny z profilem wieku; elementy niezgodne z opisem sceny.
@@ -174,7 +223,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Odrzucona strona trafia do `rejected/page_XX_tryN.png`, a manifest zapisuje dla niej numer próby, id pomysłu, plik i powody (`rejected`). Wpis strony pokazuje pomysł i prompt ostatniej próby.
 - Błąd samej oceny (np. odmowa modelu) oznacza stronę jako `failed`; błąd krytyczny dostawcy (klucz, brak środków) przerywa przebieg jak w FR-05.
 
-### FR-08: Struktura wyjścia i manifest
+### ✅ FR-08: Struktura wyjścia i manifest
 - Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`).
 - Zawartość: patrz sekcja 10.
 - Gotowe strony leżą w katalogu głównym książki jako `page_XX.png`, z numerem dopełnionym zerami do długości największego numeru (min. 2 cyfry, np. `page_01` … `page_30`). Kolejność alfabetyczna = kolejność stron, więc po przeciągnięciu całej paczki do Canvy strony są we właściwej kolejności.
@@ -183,18 +232,18 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - `manifest.json` zawiera parametry wejściowe, wersję narzędzia, użytych dostawców i modele, `pages_in_book` i użyty `margin_in` (FR-06) oraz dla każdej strony: id pomysłu, prompt, status, liczbę prób, koszt, czas, wynik QA.
 - Manifest jest zapisywany przyrostowo po każdej stronie, żeby przerwanie nie gubiło postępu.
 
-### FR-09: Wznawianie
+### ↪ FR-09: Wznawianie
 Zastąpione przez FR-17. Wznowienie to ponowne uruchomienie przerwanego kroku: `kdp-studio images <katalog>` generuje tylko strony, których brakuje, i nie wywołuje ponownie LLM dla pomysłów (idempotentność).
 
-### FR-10: Koszty i limit budżetu
+### 🟡 FR-10: Koszty i limit budżetu
 - Każde wywołanie API zapisuje szacowany koszt (z cennika w konfiguracji albo z `usage` zwracanego przez API).
 - `--max-cost <USD>` (domyślnie 5.00): po przekroczeniu limitu program kończy bieżące zadania, nie startuje nowych i zapisuje manifest (status `budget_exceeded`).
 - Na końcu program wypisuje podsumowanie: liczbę stron ok/failed, łączny koszt i czas.
 
-### FR-11: Tryb próbny (dry run)
+### ↪ FR-11: Tryb próbny (dry run)
 Zastąpione przez FR-17. Tryb próbny to sam krok 1: `kdp-studio ideas …` zapisuje pomysły i prompty bez generowania grafik, co służy do taniego strojenia profili.
 
-### FR-17: Generowanie krokowe z ręczną weryfikacją
+### ✅ FR-17: Generowanie krokowe z ręczną weryfikacją
 
 Generowanie dzieli się na trzy kroki, każdy jako osobna komenda. Między krokami użytkownik może sam przejrzeć i poprawić wynik, zamiast polegać tylko na weryfikacji modelem. `generate` uruchamia wszystkie trzy po kolei, z tymi samymi parametrami co dotąd.
 
@@ -247,13 +296,13 @@ Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Prog
 - `--image-quality low|medium|high` w `images` i `generate` nadpisuje `image_quality` z `settings.yaml`. Wartość trafia do manifestu dla każdej strony.
 - Porównanie jakości (otwarte pytanie 5): krok 1 raz, potem krok 2 w dwóch kopiach katalogu, z `low` i z `medium`. Ocena po kroku 3: odsetek stron przyjętych przez QA i przegląd ręczny. Wektoryzacja (D6) i tak wygładza linie, więc `low` może wystarczyć.
 
-### FR-12: Podgląd profili
+### ✅ FR-12: Podgląd profili
 - Komenda `profiles` wypisuje dostępne wartości `age`, `style` i `format` z krótkimi opisami z YAML.
 
-### FR-13: Przypomnienie o ujawnieniu AI
+### ✅ FR-13: Przypomnienie o ujawnieniu AI
 - `manifest.json` i podsumowanie w konsoli zawierają informację, że przy publikacji w KDP trzeba zaznaczyć *AI-generated content* (obrazy).
 
-### FR-14: Strona „This book belongs to…” (poza MVP)
+### ⬜ FR-14: Strona „This book belongs to…” (poza MVP)
 
 Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywie i stylu co kolorowanka (np. dinozaury kawaii wokół pustej tabliczki na imię).
 
@@ -319,7 +368,7 @@ przedszkole:
     outline_text: true
 ```
 
-### FR-15: Okładka (poza MVP)
+### ⬜ FR-15: Okładka (poza MVP)
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
 
@@ -455,7 +504,7 @@ cover:                          # nasze ustawienia
   template_tolerance_in: 0.01
 ```
 
-### FR-16: Koszt druku, cena minimalna i tantiemy (poza MVP)
+### ⬜ FR-16: Koszt druku, cena minimalna i tantiemy (poza MVP)
 
 Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada cenę. Pomaga to już przy wyborze liczby grafik, przed generowaniem.
 
@@ -875,6 +924,8 @@ kdp-studio/
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
+
+Stan na 16.11.2026 (sekcja 0): z etapu 1 brakuje FR-10, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etapy 1a–1c mają gotową specyfikację, kod jeszcze nie powstał.
 
 ## 14. Otwarte pytania
 
