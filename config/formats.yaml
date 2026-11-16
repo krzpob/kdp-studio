@@ -23,7 +23,7 @@ letter:            # 8.5" × 11", pion
   page_px: [2550, 3300]
   aspect: "3:4"
   safe_margin_in: 0.5     # nasz minimalny margines (wygoda kolorowania); KDP wymaga ≥ 0.25"
-  composition_hint: "vertical composition, subject fills most of the portrait frame, main subject fully inside the image, not cut off by the edges"
+  composition_hint: "vertical composition, main subjects fill most of the portrait frame, fully inside the image, not cut off by the edges"
 
 square:            # 8.5" × 8.5"
   name: Square (8.5" × 8.5")
@@ -33,4 +33,4 @@ square:            # 8.5" × 8.5"
   page_px: [2550, 2550]
   aspect: "1:1"
   safe_margin_in: 0.5
-  composition_hint: "centered composition, single focal subject or concentric design, main subject fully inside the image, not cut off by the edges"
+  composition_hint: "centered composition, one clear focal point (a character, a small group or a concentric design), main subjects fully inside the image, not cut off by the edges"

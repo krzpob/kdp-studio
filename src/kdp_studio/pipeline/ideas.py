@@ -70,6 +70,9 @@ letters, numbers, signs or speech bubbles in the picture.
 setting, key objects). Do not mention art style, line weight, colors, shading or the words \
 "coloring page"; those are added separately.
 - Match the number of subjects and the scene complexity to the target audience.
+- Vary the cast and staging across the book. When the audience allows several subjects, \
+roughly a third of the scenes show two or three characters doing something together; also \
+vary poses, actions and viewpoints instead of one character sitting beside an object.
 - Match the composition to the page format.
 
 Metadata rules:
