@@ -46,7 +46,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | NFR-06 | ⬜ | Wymaga FR-10. |
 | NFR-07 | ✅ | `verify_page()` po każdym zapisie strony. |
 | NFR-08 | ✅ | Manifest zapisuje prompt, model i jakość. OpenAI nie obsługuje seeda. |
-| NFR-09 | 🟡 | Jest postęp strona po stronie i podsumowanie w konsoli. Brakuje logów strukturalnych i podsumowania kosztów (FR-10). |
+| NFR-09 | 🟡 | Logi JSON w `kdp-studio.log` (`--log-level info\|debug`), pasek postępu w krokach 2 i 3, czas każdego kroku i całości `generate`. Brakuje tylko podsumowania kosztów (FR-10). |
 | NFR-10 | ✅ | |
 | NFR-11 | ✅ | CI na Linux, macOS i Windows (Python 3.12 i 3.14). |
 | NFR-12 | ✅ | |
@@ -901,7 +901,7 @@ kdp-studio generate \
   [--strict] \
   [--image-provider openai|comfyui] \
   [--seed 1234] \
-  [--verbose]
+  [--log-level info|debug]
 
 # Generowanie krokowe (FR-17)
 kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
@@ -910,6 +910,7 @@ kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,ide
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
+# Każdy krok przyjmuje też --log-level info|debug (NFR-09)
 # Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
 
 # Lista dostępnych profili
@@ -930,7 +931,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09)). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
 
@@ -954,6 +955,7 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
 ├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
+├── kdp-studio.log                  # logi strukturalne wszystkich kroków, wiersze JSON (NFR-09)
 ├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
 └── cover/                          # tylko po `kdp-studio cover` (FR-15, poza MVP)
     ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
@@ -1011,7 +1013,7 @@ Treść `canva.md` (wartości w nawiasach wypełnia program):
 | NFR-06 | Koszt | Docelowo ≤ 3 USD za 30-stronicową książkę z QA. Twardy limit przez `--max-cost`. |
 | NFR-07 | Jakość druku | Każdy `page_XX.png` ma dokładnie wymiary `page_px` profilu formatu, metadane 300 DPI, tryb 8-bit grayscale bez kanału alfa, wyłącznie wartości 0 i 255, a czarne piksele mieszczą się w obszarze treści (FR-06). Sprawdzane automatycznie po zapisie. |
 | NFR-08 | Odtwarzalność | Manifest zawiera wszystko, czego potrzeba do ponownego wygenerowania strony (prompt, model, snapshot, seed, jeśli dostępny). |
-| NFR-09 | Obserwowalność | Logi strukturalne (poziomy INFO/DEBUG), pasek postępu w konsoli, podsumowanie kosztów i czasu na końcu. |
+| NFR-09 | Obserwowalność | Logi strukturalne (poziomy INFO/DEBUG), pasek postępu w konsoli, podsumowanie kosztów i czasu na końcu. Logi to wiersze JSON w `kdp-studio.log` w katalogu książki, dopisywane przez każdy krok. `info` zapisuje kroki, strony, ostrzeżenia i błędy z czasami, `debug` dodatkowo każde wywołanie API (czas, tokeny, prompt grafiki). Do pliku trafiają tylko logi programu, nie bibliotek dostawców (NFR-10). Każdy krok podaje w konsoli swój czas, a `generate` na końcu czasy kroków i całości. |
 | NFR-10 | Bezpieczeństwo | Klucze API nigdy nie trafiają do logów, manifestu ani repozytorium. |
 | NFR-11 | Przenośność | Działa na Linux, macOS i Windows. Zależności natywne (cairo, potrace) opisane w README albo zastąpione czysto pythonowymi odpowiednikami. |
 | NFR-12 | Zgodność z KDP | Domyślne profile formatów zgodne ze specyfikacją KDP (trim, 300 DPI, marginesy, min. 24 strony). Przypomnienie o ujawnieniu AI (FR-13). Prompty nie generują postaci ani znaków chronionych prawem autorskim. |

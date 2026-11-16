@@ -464,7 +464,7 @@ def test_root_has_only_page_pngs(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([*BASE, "--pages", "12"]) == ExitCode.OK
     names = sorted(p.name for p in BOOK_DIR.iterdir() if p.is_file())
     assert names == sorted(
-        ["canva.md", "ideas.json", "manifest.json", "prompts.json"]
+        ["canva.md", "ideas.json", "kdp-studio.log", "manifest.json", "prompts.json"]
         + [f"page_{i:02d}.png" for i in range(1, 13)]
     )
 

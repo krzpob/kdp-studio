@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import sys
-from collections.abc import Iterator, Sequence
+import time
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from enum import IntEnum
 from pathlib import Path
@@ -12,8 +14,26 @@ from typing import Annotated, get_args
 import typer
 from dotenv import load_dotenv
 
-from kdp_studio.config import MAX_CONCURRENCY, AppConfig, ConfigError, ImageQuality, load_config
+from kdp_studio.config import (
+    MAX_CONCURRENCY,
+    AppConfig,
+    ConfigError,
+    ImageQuality,
+    LogLevel,
+    load_config,
+)
 from kdp_studio.models import BookIdeas, BookSpec
+from kdp_studio.observability import (
+    LOG_LEVELS,
+    LoggedImageProvider,
+    LoggedTextProvider,
+    LoggedVisionProvider,
+    StepTimer,
+    book_log,
+    format_duration,
+    log_event,
+    progress_bar,
+)
 from kdp_studio.pipeline.book import (
     BookError,
     BookLock,
@@ -39,6 +59,7 @@ from kdp_studio.pipeline.manifest import (
     ManifestIdeas,
     ManifestInput,
     ManifestLayout,
+    ManifestPage,
     ManifestProviders,
     ManifestWriter,
     ProviderInfo,
@@ -84,6 +105,14 @@ class ExitCode(IntEnum):
 
 DEFAULT_FORMAT = "letter"
 IMAGE_QUALITIES: tuple[str, ...] = get_args(ImageQuality)
+STEP_LABELS = {
+    "ideas": "pomysły",
+    "redo": "nowe pomysły",
+    "images": "grafiki",
+    "finalize": "obróbka",
+}
+
+_log = logging.getLogger("kdp_studio.cli")
 
 app = typer.Typer(
     name="kdp-studio",
@@ -99,33 +128,46 @@ def _root() -> None:
 
 
 def _fail(lines: Sequence[str], code: ExitCode = ExitCode.VALIDATION_ERROR) -> typer.Exit:
-    for line in lines:
-        typer.echo(f"Błąd: {line}", err=True)
+    _fail_lines(lines)
     return typer.Exit(code)
 
 
 def _warn(lines: Sequence[str]) -> None:
     for line in lines:
         typer.echo(f"Ostrzeżenie: {line}", err=True)
+        log_event(_log, logging.WARNING, "warning", message=line)
 
 
 def _fail_lines(lines: Sequence[str]) -> None:
     for line in lines:
         typer.echo(f"Błąd: {line}", err=True)
+        log_event(_log, logging.ERROR, "error", message=line)
 
 
 @contextmanager
-def _locked(target: Path) -> Iterator[None]:
-    """Blokada katalogu książki na czas kroku (FR-17); zajęty katalog to kod 1."""
+def _locked(target: Path, log_level: LogLevel) -> Iterator[None]:
+    """Blokada katalogu książki na czas kroku (FR-17); zajęty katalog to kod 1.
+
+    Na ten sam czas logi trafiają do `kdp-studio.log` w katalogu książki (NFR-09).
+    """
     lock = BookLock(target)
     try:
         lock.acquire()
     except BookError as e:
         raise _fail(e.errors) from e
     try:
-        yield
+        with book_log(target, log_level):
+            yield
     finally:
         lock.release()
+
+
+@contextmanager
+def _timed(timer: StepTimer, step: str) -> Iterator[None]:
+    """Krok z pomiarem czasu: zdarzenia step_start/step_end w logu i czas w konsoli."""
+    with timer.step(step, _log):
+        yield
+    typer.echo(f"Czas kroku ({STEP_LABELS[step]}): {format_duration(timer.steps[-1][1])}.")
 
 
 # --- Wspólne opcje ----------------------------------------------------------------------
@@ -171,6 +213,13 @@ QaOpt = Annotated[
     ),
 ]
 BookArg = Annotated[Path, typer.Argument(help="Katalog książki (z kroku kdp-studio ideas).")]
+LogLevelOpt = Annotated[
+    str | None,
+    typer.Option(
+        help=f"Poziom logu kdp-studio.log w katalogu książki: {', '.join(LOG_LEVELS)} "
+        "(debug zapisuje też każde wywołanie API). Domyślnie z settings.yaml.",
+    ),
+]
 
 
 def _config() -> AppConfig:
@@ -239,12 +288,22 @@ def _quality(config: AppConfig, quality: str | None) -> str:
     return value
 
 
+def _log_level(config: AppConfig, level: str | None) -> LogLevel:
+    value = config.settings.log_level if level is None else level
+    if value == "debug":
+        return "debug"
+    if value == "info":
+        return "info"
+    raise _fail([f"--log-level: dozwolone {', '.join(LOG_LEVELS)} (podano '{value}')"])
+
+
 def _text_provider(config: AppConfig) -> TextProvider:
     settings = config.settings
     try:
-        return create_text_provider(settings.providers.text, settings.models.text)
+        provider = create_text_provider(settings.providers.text, settings.models.text)
     except ConfigError as e:
         raise _fail([str(e)]) from e
+    return LoggedTextProvider(provider)
 
 
 def _image_providers(
@@ -269,7 +328,7 @@ def _image_providers(
                 f"formatu {fmt}. Obsługiwane: {', '.join(images.supported_aspects())}"
             ]
         )
-    return images, vision
+    return LoggedImageProvider(images), None if vision is None else LoggedVisionProvider(vision)
 
 
 def _open_book(target: Path) -> ManifestWriter:
@@ -313,6 +372,16 @@ def _step_ideas(
     _warn(ideas_result.warnings)
     ideas = ideas_result.ideas
     usage = ideas_result.usage
+    log_event(
+        _log,
+        logging.INFO,
+        "ideas_generated",
+        title=ideas.book.title,
+        count=len(ideas.pages),
+        attempts=ideas_result.attempts,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+    )
     typer.echo(
         f"Tytuł: {ideas.book.title}\n"
         f"Pomysły: {len(ideas.pages)}, tokeny: {usage.input_tokens} wejście / "
@@ -329,6 +398,18 @@ def _step_ideas(
         _warn(reviewed.warnings)
         ideas = reviewed.ideas
         ideas_usage += reviewed.usage
+        if ideas.review is not None:
+            log_event(
+                _log,
+                logging.INFO,
+                "ideas_reviewed",
+                rejected=len(ideas.review.rejected),
+                revised=len(ideas.review.revised),
+                added=ideas.review.added,
+                rounds=ideas.review.rounds,
+                input_tokens=reviewed.usage.input_tokens,
+                output_tokens=reviewed.usage.output_tokens,
+            )
         _report_review(ideas, reviewed.usage.input_tokens, reviewed.usage.output_tokens)
     else:
         # Bez weryfikacji tylko pomiar: rozkład trafia do ideas.json i do ostrzeżeń (FR-03b).
@@ -382,6 +463,14 @@ def _step_ideas(
         ),
     )
     typer.echo(f"Manifest: {manifest.path} (status: {manifest.manifest.status})")
+    log_event(
+        _log,
+        logging.INFO,
+        "ideas_saved",
+        pages=spec.pages,
+        reserve=reserve,
+        diversity_issues=[] if ideas.diversity is None else ideas.diversity.issues,
+    )
     return ideas
 
 
@@ -420,6 +509,14 @@ def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | N
     write_json_atomic(target / PROMPTS_FILE, prompts)
     writer.manifest.ideas.usage += result.usage
     writer.save()
+    log_event(
+        _log,
+        logging.INFO,
+        "ideas_redone",
+        ids=ids,
+        input_tokens=result.usage.input_tokens,
+        output_tokens=result.usage.output_tokens,
+    )
     pages = [p for p in writer.manifest.pages if p.idea_id in ids]
     usage = result.usage
     typer.echo(
@@ -460,9 +557,12 @@ def ideas(
             "wymaga katalogu książki."
         ),
     ] = None,
+    log_level: LogLevelOpt = None,
 ) -> None:
     """Krok 1: pomysły, prompty i manifest, bez grafik (FR-17). Tani podgląd książki."""
     config = _config()
+    level = _log_level(config, log_level)
+    timer = StepTimer()
     if book is not None:
         if redo is None:
             raise _fail(["z katalogiem książki podaj --redo idea_XX,…"])
@@ -471,7 +571,7 @@ def ideas(
         ids = [i.strip() for i in redo.split(",") if i.strip()]
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
-        with _locked(book):
+        with _locked(book, level), _timed(timer, "redo"):
             _step_redo(config, book, list(dict.fromkeys(ids)), review_ideas)
         return
     if redo is not None:
@@ -481,7 +581,7 @@ def ideas(
     target = _new_book_dir(output_dir, spec)
     provider = _text_provider(config)
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
-    with _locked(target):
+    with _locked(target, level), _timed(timer, "ideas"):
         _step_ideas(config, spec, target, provider, do_review)
     typer.echo(f"Przejrzyj {target / IDEAS_FILE}, a potem: kdp-studio images {target}")
 
@@ -518,6 +618,7 @@ def _step_images(
     for number, digest in plan.edited:
         writer.mark_edited(number, digest)
         typer.echo(f"{writer.page(number).name}: własna wersja surowej grafiki, zostaje.")
+        log_event(_log, logging.INFO, "user_edit", page=number)
 
     aspect = config.formats[spec.format].aspect
     manifest.input.concurrency = workers
@@ -540,6 +641,16 @@ def _step_images(
     reasons: dict[str, int] = {}
     for reason in plan.reasons.values():
         reasons[reason] = reasons.get(reason, 0) + 1
+    log_event(
+        _log,
+        logging.INFO,
+        "images_plan",
+        pages=[job.name for job in jobs],
+        reasons=reasons,
+        quality=quality,
+        concurrency=workers,
+        qa=vision is not None,
+    )
     typer.echo(
         f"Generuję {plural(len(jobs), 'grafikę', 'grafiki', 'grafik')} ({images.name}, "
         f"{images.model}, jakość {quality}, równolegle {workers}): "
@@ -561,9 +672,33 @@ def _step_images(
         )
     done = 0
 
-    def report(outcome: PageOutcome) -> None:
+    def report(outcome: PageOutcome, advance: Callable[[], None]) -> None:
         nonlocal done
         done += 1
+        log_event(
+            _log,
+            logging.INFO,
+            "page_raw",
+            page=outcome.page,
+            name=outcome.name,
+            idea_id=outcome.idea_id,
+            status=outcome.status,
+            duration_s=round(outcome.duration_s, 2),
+            attempts=outcome.attempts,
+            error=outcome.error,
+            input_tokens=outcome.usage.input_tokens,
+            output_tokens=outcome.usage.output_tokens,
+        )
+        for rejected in outcome.rejected:
+            log_event(
+                _log,
+                logging.INFO,
+                "qa_rejected",
+                page=outcome.page,
+                attempt=rejected.attempt,
+                idea_id=rejected.idea_id,
+                issues=[f"{i.criterion}: {i.detail}" for i in rejected.issues],
+            )
         if outcome.status == "ok":
             line = f"{outcome.name}: ok ({outcome.duration_s:.1f} s)"
             if outcome.rejected:
@@ -578,6 +713,7 @@ def _step_images(
             issues = "; ".join(f"{i.criterion}: {i.detail}" for i in rejected.issues)
             typer.echo(f"  QA odrzuciło próbę {rejected.attempt} ({rejected.idea_id}): {issues}")
         writer.record_raw(outcome, provider=images.name, model=images.model, quality=quality)
+        advance()
 
     worker = PageWorker(
         provider=images,
@@ -590,7 +726,8 @@ def _step_images(
         reserve=pool,
         max_retries=settings.qa_max_retries,
     )
-    result = worker.run(jobs, on_done=report)
+    with progress_bar("Grafiki", len(jobs)) as advance:
+        result = worker.run(jobs, on_done=lambda outcome: report(outcome, advance))
     usage = result.usage
     typer.echo(
         f"Surowe grafiki: {len(result.ok)}/{len(jobs)} ok, tokeny: "
@@ -607,6 +744,20 @@ def _step_images(
         )
     status = writer.update_status(result.fatal_error)
     typer.echo(f"Manifest: {writer.path} (status: {status})")
+    log_event(
+        _log,
+        logging.INFO,
+        "images_done",
+        ok=len(result.ok),
+        failed=len(result.failed),
+        rejected=result.rejected,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        qa_input_tokens=result.qa_usage.input_tokens,
+        qa_output_tokens=result.qa_usage.output_tokens,
+        status=status,
+        fatal_error=result.fatal_error,
+    )
     if result.fatal_error is not None:
         _fail_lines([result.fatal_error, f"po usunięciu przyczyny: kdp-studio images {target}"])
         return ExitCode.PROVIDER_ERROR
@@ -624,15 +775,17 @@ def images(
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
     qa: QaOpt = None,
+    log_level: LogLevelOpt = None,
 ) -> None:
     """Krok 2: surowe grafiki stron, których brakuje albo trzeba je odnowić (FR-17)."""
     config = _config()
+    level = _log_level(config, log_level)
     workers = _workers(config, concurrency)
     quality = _quality(config, image_quality)
     writer = _open_book(book)
     do_qa = config.settings.qa if qa is None else qa
     providers = _image_providers(config, writer.manifest.input.format, image_provider, do_qa)
-    with _locked(book):
+    with _locked(book, level), _timed(StepTimer(), "images"):
         code = _step_images(config, book, *providers, workers, quality)
     if code == ExitCode.OK and _open_book(book).manifest.status != "completed":
         typer.echo(f"Przejrzyj {book / RAW_DIR}, a potem: kdp-studio finalize {book}")
@@ -655,6 +808,7 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     for number, digest in user_edits(target, manifest):
         writer.mark_edited(number, digest)
         typer.echo(f"{writer.page(number).name}: własna wersja surowej grafiki.")
+        log_event(_log, logging.INFO, "user_edit", page=number)
 
     spec = spec_from_manifest(manifest)
     layout, geometry = _layout(config, spec)
@@ -670,22 +824,16 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     postprocessor = PagePostprocessor(book_dir=target, geometry=geometry, params=params)
     if todo:
         typer.echo(f"Obrabiam {plural(len(todo), 'stronę', 'strony', 'stron')}…")
-    for i, page in enumerate(todo, start=1):
-        assert page.raw_sha256 is not None
-        final = FinalInfo(raw_sha256=page.raw_sha256, postprocess_sha256=params_sha)
-        try:
-            files = postprocessor.process(target / RAW_DIR / f"{page.name}.png", page.name)
-        except PostprocessError as e:
-            writer.record_final(page.page, png=None, svg=None, final=final, error=f"obróbka: {e}")
-            typer.echo(f"[{i}/{len(todo)}] {page.name}: nieudana: obróbka: {e}")
-            continue
-        writer.record_final(page.page, png=files.page, svg=files.svg, final=final, error=None)
-        typer.echo(f"[{i}/{len(todo)}] {page.name}: ok")
+    with progress_bar("Obróbka", len(todo)) as advance:
+        for i, page in enumerate(todo, start=1):
+            _finalize_page(writer, postprocessor, target, page, params_sha, f"[{i}/{len(todo)}]")
+            advance()
     if not todo:
         typer.echo("Gotowe strony są aktualne, nic do obróbki.")
 
     status = writer.update_status()
     ok = len(manifest.ok_pages)
+    log_event(_log, logging.INFO, "finalize_done", ok=ok, pages=len(manifest.pages), status=status)
     typer.echo(
         f"Gotowe strony: {ok}/{len(manifest.pages)}. Do Canvy: {target}/page_*.png "
         f"(wektory: {target / SVG_DIR}, surowe: {target / RAW_DIR})"
@@ -702,11 +850,48 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     return ExitCode.OK
 
 
+def _finalize_page(
+    writer: ManifestWriter,
+    postprocessor: PagePostprocessor,
+    target: Path,
+    page: ManifestPage,
+    params_sha: str,
+    counter: str,
+) -> None:
+    """Obróbka jednej strony z wpisem w manifeście, konsoli i logu."""
+    assert page.raw_sha256 is not None
+    final = FinalInfo(raw_sha256=page.raw_sha256, postprocess_sha256=params_sha)
+    started = time.monotonic()
+    error = None
+    try:
+        files = postprocessor.process(target / RAW_DIR / f"{page.name}.png", page.name)
+    except PostprocessError as e:
+        error = f"obróbka: {e}"
+        writer.record_final(page.page, png=None, svg=None, final=final, error=error)
+    else:
+        writer.record_final(page.page, png=files.page, svg=files.svg, final=final, error=None)
+    duration = time.monotonic() - started
+    status = "ok" if error is None else "failed"
+    log_event(
+        _log,
+        logging.INFO,
+        "page_final",
+        page=page.page,
+        name=page.name,
+        status=status,
+        duration_s=round(duration, 2),
+        error=error,
+    )
+    result = "ok" if error is None else f"nieudana: {error}"
+    typer.echo(f"{counter} {page.name}: {result} ({format_duration(duration)})")
+
+
 @app.command()
-def finalize(book: BookArg) -> None:
+def finalize(book: BookArg, log_level: LogLevelOpt = None) -> None:
     """Krok 3: gotowe strony do Canvy, wektory i canva.md, bez wywołań API (FR-17)."""
     config = _config()
-    with _locked(book):
+    level = _log_level(config, log_level)
+    with _locked(book, level), _timed(StepTimer(), "finalize"):
         code = _step_finalize(config, book)
     raise typer.Exit(code)
 
@@ -728,9 +913,12 @@ def generate(
     image_quality: QualityOpt = None,
     review_ideas: ReviewOpt = None,
     qa: QaOpt = None,
+    log_level: LogLevelOpt = None,
 ) -> None:
     """Generuje kolorowankę: kroki ideas, images i finalize po kolei (FR-17)."""
+    timer = StepTimer()
     config = _config()
+    level = _log_level(config, log_level)
     spec = _book_spec(config, theme, age, style, format_, pages, strict)
     workers = _workers(config, concurrency)
     quality = _quality(config, image_quality)
@@ -741,13 +929,33 @@ def generate(
     provider = _text_provider(config)
     images_provider, vision = _image_providers(config, spec.format, image_provider, do_qa)
 
-    with _locked(target):
-        _step_ideas(config, spec, target, provider, do_review)
-        code = _step_images(config, target, images_provider, vision, workers, quality)
-        if code == ExitCode.PROVIDER_ERROR:
-            raise typer.Exit(code)
-        final_code = _step_finalize(config, target)
-    raise typer.Exit(max(code, final_code))
+    with _locked(target, level):
+        log_event(_log, logging.INFO, "run_start", command="generate", book=str(target))
+        with _timed(timer, "ideas"):
+            _step_ideas(config, spec, target, provider, do_review)
+        with _timed(timer, "images"):
+            code = _step_images(config, target, images_provider, vision, workers, quality)
+        if code != ExitCode.PROVIDER_ERROR:
+            with _timed(timer, "finalize"):
+                code = max(code, _step_finalize(config, target))
+        _report_times(timer, ExitCode(code))
+    raise typer.Exit(code)
+
+
+def _report_times(timer: StepTimer, code: ExitCode) -> None:
+    """Podsumowanie czasu `generate`: każdy krok i całość (NFR-09)."""
+    total = timer.total
+    steps = ", ".join(f"{STEP_LABELS[name]} {format_duration(s)}" for name, s in timer.steps)
+    typer.echo(f"Czas: {steps}; razem {format_duration(total)}.")
+    log_event(
+        _log,
+        logging.INFO,
+        "run_end",
+        command="generate",
+        exit_code=int(code),
+        duration_s=round(total, 2),
+        steps={name: round(s, 2) for name, s in timer.steps},
+    )
 
 
 def _counts(values: dict[str, int], suffix: str = " ") -> str:

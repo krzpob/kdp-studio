@@ -17,6 +17,7 @@ PROMPTS_FILE = "prompts.json"
 RAW_DIR = "raw"
 SVG_DIR = "svg"
 REJECTED_DIR = "rejected"  # strony odrzucone przez QA (FR-07)
+LOG_FILE = "kdp-studio.log"  # logi strukturalne (NFR-09)
 
 # Litery, których NFKD nie rozkłada na literę bazową i znak diakrytyczny.
 _TRANSLITERATE = str.maketrans({"ł": "l", "Ł": "L", "ß": "ss", "ø": "o", "Ø": "O"})
