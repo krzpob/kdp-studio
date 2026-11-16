@@ -28,7 +28,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
-| FR-15 | 🟡 | #31 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. |
+| FR-15 | 🟡 | #31, #32 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
