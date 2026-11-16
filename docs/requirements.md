@@ -259,20 +259,24 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
   - wysokość = wysokość formatu + 2 × spad;
   - piksele przy 300 DPI.
   - Przykład: letter, 30 grafik, 62 strony → grzbiet 0.1396", okładka 17.3896" × 11.25" (5217 × 3375 px).
+  - Przykład sprawdzony na szablonie KDP: kwadrat 8.5", 104 strony, papier biały → grzbiet 0.234", okładka 17.484" × 8.75". Szablon podaje te same wartości, a zmierzone na nim położenie linii cięcia, zgięć, stref i pola kodu zgadza się z wyliczeniami z dokładnością do 0.003" (`tests/fixtures/kdp_templates/`).
 - Strefy wyliczane z tej samej geometrii:
   - linie cięcia i dwie linie zgięcia (tył/grzbiet, grzbiet/przód);
-  - **strefa bezpieczna:** min. KDP to 0.125" od linii cięcia; tytuł i kluczowe elementy trzymamy dalej, `key_margin_in` (domyślnie 0.375");
-  - **grzbiet:** tekst min. 0.0625" od każdej linii zgięcia;
+  - **strefa bezpieczna** („live area” w szablonie KDP): min. 0.125" od linii cięcia **i od obu linii zgięcia** na przodzie i tyle. Tytuł i kluczowe elementy trzymamy dalej, `key_margin_in` (domyślnie 0.375");
+  - **grzbiet:** tekst min. 0.0625" od każdej linii zgięcia (strefa bezpieczna grzbietu w szablonie KDP);
   - **pole kodu kreskowego:** 2" × 1.2" na tylnej okładce, 0.25" od grzbietu i 0.25" od dolnej linii cięcia.
 - Wymiary nie pochodzą z modelu ani z OCR: pomyłka w jednej cyfrze odrzuca plik w KDP, a wzór jest jednoznaczny i testowalny.
 
 **Szablon KDP (opcjonalnie, `--template szablon.png`)**
 - Program odczytuje szablon z kalkulatora okładek KDP deterministycznie, po kolorach pikseli, bez LLM:
-  - linie ciągłe to cięcie;
-  - różowy obszar to margines i spad;
+  - czarna ciągła linia to cięcie;
+  - niebieskie przerywane linie to zgięcia grzbietu;
+  - różowy obszar to spad i margines poza strefą bezpieczną, a biały to strefa bezpieczna;
   - żółty prostokąt to pole kodu kreskowego.
-- Tolerancje kolorów ustawia się w konfiguracji; kalibracja na prawdziwym szablonie przed implementacją, a sam szablon staje się plikiem testowym.
-- Program porównuje położenie tych obszarów (we współrzędnych względnych, niezależnie od DPI szablonu) z wyliczoną geometrią. Rozbieżność powyżej tolerancji (np. szablon pobrany dla innej liczby stron) to błąd walidacji z opisem różnic.
+- Kolory skalibrowane na prawdziwym szablonie (`template_colors` niżej). Napisy objaśniające w szablonie pomija się: pole kodu to obrys żółtych pikseli, a linie to kolumny i wiersze z długimi ciągami pikseli danego koloru.
+- Szablon nie ma 300 DPI (przykładowy: 8000 × 4003 px, ok. 457.5 px/cal), a przy przesyłaniu bywa konwertowany do JPEG. Program przelicza piksele na cale przez `szerokość_px / szerokość_okładki_in`, przyjmuje PNG i JPEG, a tolerancje kolorów pokrywają artefakty kompresji.
+- Program porównuje położenie linii, stref i pola kodu z wyliczoną geometrią (tolerancja 0.01"). Rozbieżność, np. szablon pobrany dla innej liczby stron, to błąd walidacji z opisem różnic.
+- Nazwa pliku KDP koduje parametry (`PAPERBACK_8.500x8.500_104_BW_WHITE_en_US.png`: oprawa, format, liczba stron, atrament, papier). Jeśli nazwa pasuje do tego wzoru, program porównuje te wartości z manifestem i `--paper` i przy niezgodności kończy się błędem.
 - Szablon nałożony półprzezroczyście trafia do `cover_preview.png`.
 
 **Wybór grafik**
@@ -357,9 +361,12 @@ cover:                          # nasze ustawienia
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
-  template_colors:              # do kalibracji na szablonie KDP
-    margin_bleed: {rgb: [255, 0, 255], tolerance: 40}
-    barcode: {rgb: [255, 255, 0], tolerance: 40}
+  template_colors:              # skalibrowane na szablonie KDP (tests/fixtures/kdp_templates/)
+    live_bleed_pink: {rgb: [255, 175, 176], tolerance: 40}
+    barcode_yellow: {rgb: [255, 255, 0], tolerance: 60}
+    fold_blue: {rgb: [18, 6, 220], tolerance: 60}
+    trim_black: {rgb: [0, 0, 0], tolerance: 80}
+  template_tolerance_in: 0.01
 ```
 
 ## 7. Profile (konfiguracja YAML)
@@ -657,7 +664,7 @@ kdp-studio/
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
-7. FR-15: wybór czcionki tytułowej (OFL) i kalibracja kolorów szablonu KDP na prawdziwym pliku.
+7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane; przydałby się jeszcze szablon letter (8.5" × 11") jako drugi plik testowy.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
