@@ -259,7 +259,7 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
   - wysokość = wysokość formatu + 2 × spad;
   - piksele przy 300 DPI.
   - Przykład: letter, 30 grafik, 62 strony → grzbiet 0.1396", okładka 17.3896" × 11.25" (5217 × 3375 px).
-  - Przykład sprawdzony na szablonie KDP: kwadrat 8.5", 104 strony, papier biały → grzbiet 0.234", okładka 17.484" × 8.75". Szablon podaje te same wartości, a zmierzone na nim położenie linii cięcia, zgięć, stref i pola kodu zgadza się z wyliczeniami z dokładnością do 0.003" (`tests/fixtures/kdp_templates/`).
+  - Przykład sprawdzony na szablonie KDP: kwadrat 8.5", 104 strony, papier biały → grzbiet 0.234", okładka 17.484" × 8.75". Szablon podaje te same wartości, a zmierzone na nim położenie linii cięcia, zgięć, stref i pola kodu zgadza się z wyliczeniami z dokładnością do 0.003". To samo dla letter 8.5" × 11" i 104 stron: okładka 17.484" × 11.25" (`tests/fixtures/kdp_templates/`).
 - Strefy wyliczane z tej samej geometrii:
   - linie cięcia i dwie linie zgięcia (tył/grzbiet, grzbiet/przód);
   - **strefa bezpieczna** („live area” w szablonie KDP): min. 0.125" od linii cięcia **i od obu linii zgięcia** na przodzie i tyle. Tytuł i kluczowe elementy trzymamy dalej, `key_margin_in` (domyślnie 0.375");
@@ -664,7 +664,7 @@ kdp-studio/
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
-7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane; przydałby się jeszcze szablon letter (8.5" × 11") jako drugi plik testowy.
+7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
