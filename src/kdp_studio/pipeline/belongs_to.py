@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from kdp_studio.config import AppConfig, BelongsToAge, BelongsToSettings, PostprocessParams
 from kdp_studio.models import BookIdeas, BookSpec
+from kdp_studio.pipeline.fonts import FontError, load_font
 from kdp_studio.pipeline.output import RAW_DIR, REJECTED_DIR, write_bytes_atomic
 from kdp_studio.pipeline.postprocess import (
     BLACK,
@@ -96,17 +97,9 @@ def ink_ratio(img: Image.Image, rect: Rect) -> float:
 
 def _font(settings: BelongsToSettings, size: int) -> ImageFont.FreeTypeFont:
     try:
-        font = ImageFont.truetype(str(settings.font_path), size)
-    except OSError as e:
-        raise PostprocessError(f"nie można wczytać czcionki {settings.font}: {e}") from e
-    if settings.font_variation:
-        try:
-            font.set_variation_by_name(settings.font_variation)
-        except (OSError, ValueError) as e:
-            raise PostprocessError(
-                f"czcionka {settings.font} nie ma wariantu {settings.font_variation}"
-            ) from e
-    return font
+        return load_font(settings.font_path, size, settings.font_variation)
+    except FontError as e:
+        raise PostprocessError(str(e)) from e
 
 
 def draw_text_block(

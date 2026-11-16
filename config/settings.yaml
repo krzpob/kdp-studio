@@ -104,3 +104,50 @@ kdp_margins:
     - {max_pages: 500, gutter_in: 0.625}   # 301–500
     - {max_pages: 700, gutter_in: 0.75}    # 501–700
     - {max_pages: 828, gutter_in: 0.875}   # 701–828
+
+# Okładka paperback (FR-15, `kdp-studio cover`). Wartości KDP: zmienia się je tylko, gdy KDP zmieni
+# zasady. Oprawa miękka, wnętrze czarno-białe i biały papier to stałe założenia (spec FR-15).
+kdp_cover:
+  bleed_in: 0.125
+  paper_factor_in: 0.002252     # grubość strony: biały papier, wnętrze czarno-białe
+  safe_in: 0.125                # tekst min. tyle od linii cięcia i od linii zgięcia
+  spine_safe_in: 0.0625         # tekst grzbietu min. tyle od linii zgięcia
+  spine_text_kdp_min_pages: 79
+  barcode: {width_in: 2.0, height_in: 1.2, from_spine_in: 0.25, from_bottom_in: 0.25}
+
+# Nasze ustawienia okładki (FR-15).
+cover:
+  key_margin_in: 0.375          # tytuł, miniatury i inne ważne elementy od linii cięcia i zgięcia
+  spine_text_min_pages: 100     # tekst na grzbiecie od tylu stron książki (KDP: min. 79)
+  thumbnails: 3                 # miniatury stron na tyle, 3–4
+  thumbnail_frame_ratio: 2.0    # ramka miniatury = tyle × grubość zmniejszonych konturów
+  thumbnail_frame_min_pt: 2
+  thumbnail_check_px: 160       # szerokość miniatury przodu w wynikach Amazon (kontrola czytelności)
+  title_band: 0.3               # górna część przodu na tytuł i podtytuł
+  subtitle_scale: 0.45
+  title_font_pt: 64             # największy rozmiar tytułu; program go zmniejsza, gdy się nie mieści
+  spine_font_min_pt: 7
+  seam_band_in: 0.1
+  seam_max_delta_e: 12
+  horizon_tolerance: 0.03
+  max_retries: 2
+  back_text: false
+  title_font: assets/fonts/Fredoka-Variable.ttf
+  title_font_variation: Bold
+  cmyk:
+    # Profil ICC do konwersji RGB → CMYK (nie trafia do PDF). KDP żadnego nie wskazuje; poradniki
+    # podają U.S. Web Coated (SWOP) v2, alternatywnie GRACoL 2006 Coated. Plik pobierasz sam
+    # (licencja profilu), np. pakiet „ICC profiles” ze strony pomocy Adobe, i podajesz ścieżkę.
+    # Na macOS jest też /System/Library/ColorSync/Profiles/Generic CMYK Profile.icc (do prób).
+    profile: null
+    rendering_intent: perceptual          # albo relative_colorimetric
+    black_point_compensation: true
+    max_total_ink_pct: 300                # 240 dla drukarni z takim wymaganiem (np. IngramSpark)
+    gamut_warn_delta_e: 10
+    gamut_warn_area_pct: 5
+  template_colors:              # skalibrowane na szablonach KDP (tests/fixtures/kdp_templates/)
+    live_bleed_pink: {rgb: [255, 175, 176], tolerance: 40}
+    barcode_yellow: {rgb: [255, 255, 0], tolerance: 60}
+    fold_blue: {rgb: [18, 6, 220], tolerance: 60}
+    trim_black: {rgb: [0, 0, 0], tolerance: 80}
+  template_tolerance_in: 0.01

@@ -45,6 +45,25 @@ Z flagą `--belongs-to-page` (w `generate`, `ideas` albo później w `images <ka
 
 Jeśli tabliczka z modelu nie jest pusta, program generuje ramkę ponownie, najwyżej 2 razy. Potem przechodzi na układ zapasowy: grafika pierwszej strony książki u góry i napis pod nią. Wynik to `front_belongs_to.png` w katalogu książki, który w Canvie jest pierwszy na liście. `canva.md` mówi, że to druga strona wstępna. Napis, pole na tekst i czcionkę ustawisz w `config/settings.yaml` (`belongs_to_page`), a wielkość liter i miejsca na imię w profilach wieku (`belongs_to`). Strona kosztuje jedną grafikę plus ewentualne ponowienia.
 
+### Okładka (FR-15, etap 1)
+
+```bash
+uv run kdp-studio cover output/<książka> --cover-page 07 --thumbnails 03,12,21 \
+  --template PAPERBACK_8.500x8.500_104_BW_WHITE_en_US.png
+```
+
+`cover` składa okładkę paperback do KDP w `output/<książka>/cover/`. Wymiary (grzbiet z liczby stron, spad, linie zgięcia, strefy bezpieczne, pole kodu kreskowego) liczy wzorami KDP. Opcjonalny szablon z kalkulatora okładek KDP tylko je sprawdza: szablon dla innej liczby stron albo innego formatu to błąd.
+
+Przód to na razie szkic: grafika wybranej strony i tytuł z podtytułem, które wpisuje program czcionką Fredoka. Na tyle są miniatury stron w ramkach, z dala od pola kodu, a na grzbiecie tytuł, gdy książka ma co najmniej 100 stron. Kolor z modelu obrazu dojdzie w kolejnych etapach.
+
+Wynik:
+- `cover.pdf` w CMYK do przesłania do KDP;
+- `cover.png` i `front.png` w RGB;
+- `cover_preview.png` ze strefami i szablonem;
+- `cover_proof.png` (symulacja druku) i `cover_gamut.png` (miejsca, gdzie kolor zmieni się w druku).
+
+Do konwersji CMYK potrzebny jest profil ICC, który wskazujesz w `config/settings.yaml` (`cover.cmyk.profile`). KDP żadnego nie podaje; zwykle używa się U.S. Web Coated (SWOP) v2 z pakietu profili Adobe, który pobierasz sam. Do prób na macOS wystarczy `/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc`. Ostateczną kontrolą kolorów jest egzemplarz próbny z KDP.
+
 ### Koszt i limit (FR-10)
 
 Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i cennika `api_pricing` w `config/settings.yaml` (ceny przepisane ze strony OpenAI, z datą sprawdzenia). Gdy OpenAI zmieni ceny albo przełączysz model, zaktualizuj ten cennik: model bez ceny to błąd przed pierwszym wywołaniem. Koszt każdej strony, pomysłów i całej książki zapisuje się w `manifest.json` (`cost_usd`), a konsola pokazuje koszt stron, kroków i podsumowanie `generate`.

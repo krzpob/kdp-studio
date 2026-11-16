@@ -193,6 +193,55 @@ class FrontMatter(_Model):
     belongs_to: FrontPage | None = None  # tylko z --belongs-to-page
 
 
+class CoverTemplateInfo(_Model):
+    file: str
+    problems: list[str] = []
+
+
+class CoverCmykInfo(_Model):
+    profile: str  # opis profilu ICC
+    profile_file: str | None = None
+    profile_sha256: str | None = None
+    rendering_intent: str
+    black_point_compensation: bool
+    max_total_ink_limit_pct: int
+    max_total_ink_pct: float  # w gotowym pliku
+    ink_limited_pct: float  # odsetek pikseli z ograniczoną sumą farb
+    gamut_warn_delta_e: float
+    gamut_area_pct: float  # powierzchnia ze zmianą koloru > gamut_warn_delta_e
+    title_gamut_warning: bool
+
+
+class CoverFiles(_Model):
+    pdf: str
+    png: str
+    front: str
+    proof: str
+    gamut: str
+    preview: str
+
+
+class CoverInfo(_Model):
+    """Okładka paperback (FR-15, `kdp-studio cover`)."""
+
+    status: Literal["ok", "failed"] = "ok"
+    created_at: str = Field(default_factory=_now)
+    geometry: dict[str, object]
+    front_page: str
+    thumbnails: list[str]
+    selection: Literal["manual", "default"]
+    title: str
+    subtitle: str
+    spine_text: bool
+    placements: dict[str, tuple[int, int, int, int]] = {}  # px, kontrola rozmieszczenia
+    template: CoverTemplateInfo | None = None
+    cmyk: CoverCmykInfo | None = None
+    files: CoverFiles | None = None
+    warnings: list[str] = []
+    cost_usd: float = 0.0
+    error: str | None = None
+
+
 class Manifest(_Model):
     tool: str = "kdp-studio"
     version: str = __version__
@@ -207,6 +256,7 @@ class Manifest(_Model):
     ideas: ManifestIdeas
     pages: list[ManifestPage]
     front_matter: FrontMatter = Field(default_factory=FrontMatter)
+    cover: CoverInfo | None = None  # FR-15
     ai_disclosure: str = AI_DISCLOSURE
 
     @property

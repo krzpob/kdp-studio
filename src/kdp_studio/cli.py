@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from enum import IntEnum
 from pathlib import Path
-from typing import Annotated, get_args
+from typing import Annotated, Literal, get_args
 
 import typer
 from dotenv import load_dotenv
@@ -34,6 +34,7 @@ from kdp_studio.observability import (
     log_event,
     progress_bar,
 )
+from kdp_studio.pipeline import cmyk
 from kdp_studio.pipeline.belongs_to import (
     FRONT_NAME,
     BelongsToMaker,
@@ -60,14 +61,27 @@ from kdp_studio.pipeline.book import (
 )
 from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
 from kdp_studio.pipeline.cost import CostTracker, format_usd, missing_prices
+from kdp_studio.pipeline.cover import CoverError, build_cover, front_crop, preview
+from kdp_studio.pipeline.cover_geometry import (
+    CoverGeometry,
+    check_template_name,
+    compare_template,
+    measure_template,
+)
 from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
+from kdp_studio.pipeline.fonts import FontError
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
+    CoverCmykInfo,
+    CoverFiles,
+    CoverInfo,
+    CoverTemplateInfo,
     FinalInfo,
     FrontPage,
     ImageProviderInfo,
+    Manifest,
     ManifestError,
     ManifestIdeas,
     ManifestInput,
@@ -88,6 +102,7 @@ from kdp_studio.pipeline.output import (
     write_bytes_atomic,
     write_json_atomic,
 )
+from kdp_studio.pipeline.pdf import write_cmyk_pdf
 from kdp_studio.pipeline.postprocess import (
     PageGeometry,
     PagePostprocessor,
@@ -130,6 +145,7 @@ STEP_LABELS = {
     "redo": "nowe pomysły",
     "images": "grafiki",
     "finalize": "obróbka",
+    "cover": "okładka",
 }
 COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA"}
 
@@ -950,6 +966,16 @@ def _step_images(
             ]
         )
         return ExitCode.BUDGET_EXCEEDED
+    cover = manifest.cover
+    if cover is not None:
+        redone = sorted({o.name for o in result.ok} & {cover.front_page, *cover.thumbnails})
+        if redone:
+            _warn(
+                [
+                    f"okładka używa stron wygenerowanych ponownie ({', '.join(redone)}); "
+                    f"odśwież ją: kdp-studio cover {target}"
+                ]
+            )
     if result.failed or front_failed:
         failed = ", ".join([FRONT_NAME] * front_failed + [o.name for o in result.failed])
         _warn([f"nieudane strony: {failed}; ponów: kdp-studio images {target}"])
@@ -1412,6 +1438,302 @@ def _report_review(ideas: BookIdeas, input_tokens: int, output_tokens: int) -> N
         typer.echo(f"  odrzucony: {rejected.title} ({rejected.reason})")
     for revised in review.revised:
         typer.echo(f"  poprawiony: {revised.original_title} → {revised.id} ({revised.reason})")
+
+
+# --- Okładka (FR-15) ---------------------------------------------------------------------------
+
+COVER_DIR = "cover"
+cmyk_converter = cmyk.converter_from  # testy podmieniają na konwerter bez profilu ICC
+
+
+def _page_ref(value: str, manifest: Manifest) -> ManifestPage:
+    """`7`, `07` albo `page_07` → strona książki."""
+    raw = value.strip().removeprefix("page_")
+    if not raw.isdigit():
+        raise _fail([f"nie ma strony {value!r}: podaj numer, np. 07 albo page_07"])
+    number = int(raw)
+    if not 1 <= number <= len(manifest.pages):
+        raise _fail([f"nie ma strony {value!r}: książka ma strony 1–{len(manifest.pages)}"])
+    return manifest.pages[number - 1]
+
+
+def _cover_pages(
+    target: Path,
+    manifest: Manifest,
+    cover_page: str | None,
+    thumbnails: str | None,
+    count: int,
+) -> tuple[ManifestPage, list[ManifestPage], Literal["manual", "default"]]:
+    """Strona na przód i miniatury tyłu; tylko gotowe strony (`ok` z plikiem PNG)."""
+
+    def ready(page: ManifestPage) -> bool:
+        return page.status == "ok" and (target / f"{page.name}.png").is_file()
+
+    available = [p for p in manifest.pages if ready(p)]
+    errors = []
+    if cover_page:
+        front = _page_ref(cover_page, manifest)
+    elif available:
+        front = available[0]
+    else:
+        raise _fail([f"brak gotowych stron: najpierw kdp-studio finalize {target}"])
+    if not ready(front):
+        errors.append(f"{front.name} nie jest gotowa (status {front.status})")
+    if thumbnails:
+        thumbs = [_page_ref(v, manifest) for v in thumbnails.split(",") if v.strip()]
+        if not 3 <= len(thumbs) <= 4:
+            errors.append("--thumbnails: podaj 3 albo 4 strony, np. 03,12,21")
+        names = [p.name for p in thumbs]
+        if len(set(names)) != len(names) or front.name in names:
+            errors.append("--thumbnails: strony muszą być różne i inne niż przód")
+        errors += [f"{p.name} nie jest gotowa (status {p.status})" for p in thumbs if not ready(p)]
+    else:
+        rest = [p for p in available if p.name != front.name]
+        if len(rest) < count:
+            errors.append(f"za mało gotowych stron na {count} miniatury")
+        step = len(rest) / max(count, 1)
+        thumbs = [rest[int(step * i + step / 2)] for i in range(count)] if rest else []
+    if errors:
+        raise _fail(errors)
+    selection: Literal["manual", "default"] = "manual" if cover_page or thumbnails else "default"
+    return front, thumbs, selection
+
+
+def _cover_template(
+    template: Path, geometry: CoverGeometry, config: AppConfig
+) -> CoverTemplateInfo:
+    """Kontrola szablonu KDP; rozbieżność to błąd walidacji (kod 1)."""
+    if not template.is_file():
+        raise _fail([f"brak pliku szablonu {template}"])
+    settings = config.settings.cover
+    problems = check_template_name(template, geometry)
+    if not problems:  # nazwa już mówi, że szablon jest dla innej książki: bez pomiaru
+        try:
+            measure = measure_template(template, geometry, settings.template_colors)
+        except OSError as e:
+            raise _fail([f"nie można odczytać szablonu {template}: {e}"]) from e
+        problems = compare_template(measure, geometry, settings.template_tolerance_in)
+    if problems:
+        raise _fail([f"szablon KDP {template.name} nie pasuje do książki:", *problems])
+    return CoverTemplateInfo(file=str(template))
+
+
+@app.command()
+def cover(
+    book: BookArg,
+    cover_page: Annotated[
+        str | None,
+        typer.Option(help="Strona na przód, np. 07. Domyślnie pierwsza gotowa strona."),
+    ] = None,
+    thumbnails: Annotated[
+        str | None,
+        typer.Option(
+            help="3–4 strony na miniatury tyłu, np. 03,12,21. Domyślnie rozłożone po książce."
+        ),
+    ] = None,
+    template: Annotated[
+        Path | None,
+        typer.Option(help="Szablon z kalkulatora okładek KDP (PNG/JPEG) do kontroli wymiarów."),
+    ] = None,
+    log_level: LogLevelOpt = None,
+) -> None:
+    """Okładka paperback do KDP: cover.pdf w CMYK, podglądy i strefy (FR-15)."""
+    config = _config()
+    level = _log_level(config, log_level)
+    settings = config.settings
+    writer = _open_book(book)
+    manifest = writer.manifest
+    layout = manifest.layout
+    geometry = CoverGeometry(
+        trim_in=layout.trim_in,
+        pages_in_book=layout.pages_in_book,
+        kdp=settings.kdp_cover,
+        key_margin_in=settings.cover.key_margin_in,
+        dpi=layout.dpi,
+    )
+    previous = manifest.cover
+    if previous is not None and previous.geometry.get("pages_in_book") != layout.pages_in_book:
+        _warn(
+            [
+                f"poprzednia okładka była dla {previous.geometry.get('pages_in_book')} stron, "
+                f"a książka ma {layout.pages_in_book}: powstaje nowa"
+            ]
+        )
+    front, thumbs, selection = _cover_pages(
+        book, manifest, cover_page, thumbnails, settings.cover.thumbnails
+    )
+    template_info = _cover_template(template, geometry, config) if template else None
+    if not settings.cover.title_font_path.is_file():
+        raise _fail([f"brak czcionki tytułu {settings.cover.title_font_path} (cover.title_font)"])
+    try:
+        converter = cmyk_converter(settings.cover.cmyk)
+    except cmyk.CmykError as e:
+        raise _fail([str(e)]) from e
+    try:
+        ideas = load_ideas(book)
+    except BookError as e:
+        raise _fail(e.errors) from e
+    if manifest.status != "completed":
+        _warn([f"książka nie jest gotowa (status {manifest.status}); okładka z gotowych stron"])
+
+    with _locked(book, level), _timed(StepTimer(), "cover"):
+        _make_cover(
+            book,
+            writer,
+            geometry,
+            config,
+            converter,
+            front,
+            thumbs,
+            selection,
+            template,
+            template_info,
+            ideas,
+        )
+
+
+def _make_cover(
+    target: Path,
+    writer: ManifestWriter,
+    geometry: CoverGeometry,
+    config: AppConfig,
+    converter: cmyk.CmykConverter,
+    front: ManifestPage,
+    thumbs: list[ManifestPage],
+    selection: Literal["manual", "default"],
+    template: Path | None,
+    template_info: CoverTemplateInfo | None,
+    ideas: BookIdeas,
+) -> None:
+    settings = config.settings.cover
+    title, subtitle = ideas.book.title, ideas.book.subtitle
+    width_in, height_in = geometry.size_in
+    width_px, height_px = geometry.size_px
+    typer.echo(
+        f'Okładka: {width_in:.3f}" × {height_in:.3f}" ({width_px} × {height_px} px, '
+        f'{geometry.dpi} DPI), grzbiet {geometry.spine_in:.4f}" '
+        f"({plural(geometry.pages_in_book, 'strona', 'strony', 'stron')})."
+    )
+    try:
+        build = build_cover(
+            geometry,
+            settings,
+            target / f"{front.name}.png",
+            [target / f"{p.name}.png" for p in thumbs],
+            title,
+            subtitle,
+        )
+    except (CoverError, FontError) as e:
+        raise _fail([f"okładka: {e}"]) from e
+    out = target / COVER_DIR
+    out.mkdir(exist_ok=True)
+    rgb = cmyk.rgb_preview(build.layers.color, build.layers.black, build.layers.paper)
+    result = cmyk.compose_cmyk(
+        build.layers.color,
+        build.layers.black,
+        build.layers.paper,
+        converter,
+        settings.cmyk.max_total_ink_pct,
+    )
+    proof = converter.to_rgb(result.image)
+    gamut, changed = cmyk.gamut_map(rgb, proof, settings.cmyk.gamut_warn_delta_e)
+    area_pct = round(float(changed.mean() * 100), 2)
+    left, top, right, bottom = build.placements["title"]
+    title_changed = float(changed[top:bottom, left:right].mean() * 100) if right > left else 0.0
+    warnings = list(build.warnings)
+    if area_pct > settings.cmyk.gamut_warn_area_pct:
+        warnings.append(
+            f"kolory zmienią się w druku na {area_pct:g}% powierzchni "
+            f"(ΔE > {settings.cmyk.gamut_warn_delta_e:g}); obejrzyj {COVER_DIR}/cover_gamut.png"
+        )
+    if title_changed > 1.0:
+        warnings.append("kolory tytułu zmienią się w druku; obejrzyj cover_gamut.png")
+
+    files = CoverFiles(
+        pdf=f"{COVER_DIR}/cover.pdf",
+        png=f"{COVER_DIR}/cover.png",
+        front=f"{COVER_DIR}/front.png",
+        proof=f"{COVER_DIR}/cover_proof.png",
+        gamut=f"{COVER_DIR}/cover_gamut.png",
+        preview=f"{COVER_DIR}/cover_preview.png",
+    )
+    dpi = (geometry.dpi, geometry.dpi)
+    write_cmyk_pdf(target / files.pdf, result.image, geometry.size_in, geometry.bleed)
+    rgb.save(target / files.png, dpi=dpi)
+    front_crop(rgb, geometry).save(target / files.front, dpi=dpi)
+    proof.save(target / files.proof, dpi=dpi)
+    gamut.save(target / files.gamut, dpi=dpi)
+    preview(rgb, geometry, template).save(target / files.preview, dpi=dpi)
+
+    cmyk_settings = settings.cmyk
+    profile_path = cmyk_settings.profile_path
+    info = CoverInfo(
+        geometry=geometry.summary(),
+        front_page=front.name,
+        thumbnails=[p.name for p in thumbs],
+        selection=selection,
+        title=title,
+        subtitle=subtitle,
+        spine_text=build.spine_text,
+        placements=build.placements,
+        template=template_info,
+        cmyk=CoverCmykInfo(
+            profile=converter.name,
+            profile_file=str(profile_path) if profile_path is not None else None,
+            profile_sha256=converter.sha256,
+            rendering_intent=cmyk_settings.rendering_intent,
+            black_point_compensation=cmyk_settings.black_point_compensation,
+            max_total_ink_limit_pct=cmyk_settings.max_total_ink_pct,
+            max_total_ink_pct=result.max_total_ink_pct,
+            ink_limited_pct=result.ink_limited_pct,
+            gamut_warn_delta_e=cmyk_settings.gamut_warn_delta_e,
+            gamut_area_pct=area_pct,
+            title_gamut_warning=title_changed > 1.0,
+        ),
+        files=files,
+        warnings=warnings,
+    )
+    writer.manifest.cover = info
+    writer.save()
+    log_event(
+        _log,
+        logging.INFO,
+        "cover_done",
+        front_page=front.name,
+        thumbnails=info.thumbnails,
+        spine_text=build.spine_text,
+        geometry=info.geometry,
+        max_total_ink_pct=result.max_total_ink_pct,
+        gamut_area_pct=area_pct,
+        warnings=warnings,
+    )
+
+    how = (
+        "domyślny wybór; inne strony: --cover-page i --thumbnails"
+        if selection == "default"
+        else "wybór ręczny"
+    )
+    typer.echo(f"Przód: {front.name}; miniatury: {', '.join(info.thumbnails)} ({how}).")
+    minimum = max(settings.spine_text_min_pages, geometry.kdp.spine_text_kdp_min_pages)
+    spine = "tak" if build.spine_text else f"nie (od {minimum} stron)"
+    typer.echo(f"Tekst na grzbiecie: {spine}.")
+    if template_info is not None:
+        typer.echo(f"Szablon KDP {template.name if template else ''}: zgodny z geometrią.")
+    typer.echo(
+        f"CMYK: {converter.name} ({cmyk_settings.rendering_intent}), suma farb maks. "
+        f"{result.max_total_ink_pct:g}% (limit {cmyk_settings.max_total_ink_pct}%), "
+        f"zmiana koloru w druku na {area_pct:g}% powierzchni."
+    )
+    _warn(warnings)
+    typer.echo(f"Okładka do KDP: {target / files.pdf}")
+    typer.echo(
+        f"Podglądy: {target / files.preview} (strefy), {target / files.proof} (symulacja druku), "
+        f"{target / files.gamut} (zmiany kolorów), {target / files.front} (przód)."
+    )
+    typer.echo(
+        "Pamiętaj: druk różni się od ekranu, więc ostateczną kontrolą kolorów jest egzemplarz "
+        "próbny zamówiony w KDP."
+    )
 
 
 @app.command()
