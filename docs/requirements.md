@@ -412,8 +412,8 @@ Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada 
 
     | Strony | Koszt dokładny | Koszt wyświetlany | Tantiema dokładna | Tantiema | Rozstrzyga |
     |---|---|---|---|---|---|
-    | 115 | 2.955 | **$2.96** | 8.40 − 2.955 = 5.445 | **$5.45** | połówka przy parzystej drugiej cyfrze tantiemy (5.44|5) idzie w górę, więc nie bankierskie; z zaokrąglonego kosztu wyszłoby $5.44 |
-    | 125 | 3.125 | **$3.13** | 8.40 − 3.125 = 5.275 | **$5.28** | koszt 3.12|5 idzie w górę, więc nie bankierskie ani obcięcie; z zaokrąglonego kosztu wyszłoby $5.27 |
+    | 115 | 2.955 | **$2.96** | 8.40 − 2.955 = 5.445 | **$5.45** | tantiema 5.445 (parzysta druga cyfra) idzie w górę, więc nie bankierskie; z zaokrąglonego kosztu wyszłoby $5.44 |
+    | 125 | 3.125 | **$3.13** | 8.40 − 3.125 = 5.275 | **$5.28** | koszt 3.125 (parzysta druga cyfra) idzie w górę, więc nie bankierskie ani obcięcie; z zaokrąglonego kosztu wyszłoby $5.27 |
   - **Przypadek graniczny** (potwierdzony w kalkulatorze KDP 16.11.2026: letter, 258 stron → cena minimalna $9.99, stawka 60%): gdy `printing_cost / 0.5` przekracza próg 50%, a `printing_cost / 0.6` wypada poniżej ceny progowej 60%, ceną minimalną jest sama cena progowa. Cena niższa wpadłaby w stawkę 50%, przy której tantiema nie pokryłaby kosztu druku. Na Amazon.com dotyczy to kosztów druku od ok. $4.99 do $5.99.
   - Przypadki testowe (letter, Amazon.com), wszystkie potwierdzone w kalkulatorze KDP 16.11.2026:
 
