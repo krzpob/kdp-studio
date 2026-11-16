@@ -329,6 +329,22 @@ def test_redo_replaces_ideas_with_the_same_ids(
     ]
 
 
+def test_redo_before_images_says_pages_are_new(
+    fake_text_provider: FakeTextProvider,  # noqa: F811
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([*IDEAS, "--pages", "3"]) == ExitCode.OK
+    fake_text_provider.routes["_LLMMoreIdeas"] = {
+        "pages": [
+            {"title": "Bike", "scene": "A dinosaur rides a bike", "elements": [], **scene_tags()}
+        ]
+    }
+    assert main(["ideas", ARG, "--redo", "idea_02"]) == ExitCode.OK
+    out = capsys.readouterr().out
+    assert "Nowe pomysły trafią na strony page_02" in out
+    assert "ponownie" not in out
+
+
 def test_redo_unknown_idea(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([*IDEAS, "--pages", "3"]) == ExitCode.OK
     assert main(["ideas", ARG, "--redo", "idea_77"]) == ExitCode.VALIDATION_ERROR

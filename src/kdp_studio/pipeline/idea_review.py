@@ -22,6 +22,7 @@ from kdp_studio.pipeline.diversity import (
     Issue,
     diversity_report,
     measure,
+    redo_hints,
     swap_with_reserve,
     total_excess,
 )
@@ -423,6 +424,11 @@ class IdeaReviewer:
         usage = Usage()
         next_number = max((int(i.id.split("_")[1]) for i in ideas.pages), default=0) + 1
         added = rounds = 0
+        # Nowe pomysły trafiają na miejsce zastępowanych, więc wskazówki liczą się z reszty
+        # stron książki: czego jest już dość i czego brakuje (FR-03b).
+        limits = DiversityLimits.from_config(spec, self.config, ideas.theme_anchors)
+        book_rest = [i for i in ideas.pages[: spec.pages] if i.id not in targets]
+        hints = redo_hints(book_rest, limits, spec.pages, spec.pages - len(book_rest))
 
         while len(fresh) < len(targets) and rounds <= self.max_topups:
             rounds += 1
@@ -435,7 +441,7 @@ class IdeaReviewer:
                 ),
             ]
             pending, call_usage = generator.generate_more(
-                spec, len(targets) - len(fresh), known, next_number
+                spec, len(targets) - len(fresh), known, next_number, hints
             )
             usage += call_usage
             next_number += len(pending)
@@ -471,7 +477,6 @@ class IdeaReviewer:
             added=old.added + added,
             rounds=old.rounds + rounds,
         )
-        limits = DiversityLimits.from_config(spec, self.config, ideas.theme_anchors)
         diversity = diversity_report(pages[: spec.pages], limits)
         result = ideas.model_copy(
             update={"pages": pages, "review": history, "diversity": diversity}

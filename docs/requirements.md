@@ -212,7 +212,7 @@ Generowanie dzieli się na trzy kroki, każdy jako osobna komenda. Między kroka
 
 **Ręczna weryfikacja po kroku 1**
 - Użytkownik edytuje `ideas.json`: poprawia opis sceny (`scene`, `elements`), usuwa pomysły albo zmienia kolejność. Pierwsze `pages` pomysłów to strony, reszta to zapas. Kolejność decyduje o przypisaniu tylko do pierwszej grafiki. Potem przypisanie jest w `manifest.json` (`idea_id`), bo strony mogą mieć już grafiki, a QA mogło podmienić pomysł na zapasowy.
-- `kdp-studio ideas <katalog> --redo idea_07,idea_19`: LLM wymyśla w miejsce wskazanych pomysłów nowe, różne od wszystkich pozostałych (mechanizm dogenerowania z FR-03a). Nowe pomysły przechodzą weryfikację i dostają te same `id`.
+- `kdp-studio ideas <katalog> --redo idea_07,idea_19`: LLM wymyśla w miejsce wskazanych pomysłów nowe, różne od wszystkich pozostałych (mechanizm dogenerowania z FR-03a). Nowe pomysły przechodzą weryfikację i dostają te same `id`. Generator dostaje wskazówki różnorodności z reszty stron książki (FR-03b): czynności, miejsca i przedmioty, które już osiągnęły limit, ma omijać, a brakujące sceny z kilkoma postaciami uzupełniać. Wyrównania (zamiany z zapasem, poprawek LLM) przy `--redo` nie ma, więc wynik to tylko pomiar i ostrzeżenia.
 - Krok 2 sprawdza `ideas.json` (schemat, wystarczająca liczba pomysłów, unikalne `id`) i buduje prompty od nowa. Błąd kończy się kodem 1, zanim powstanie jakakolwiek grafika.
 
 **Ręczna weryfikacja po kroku 2**
