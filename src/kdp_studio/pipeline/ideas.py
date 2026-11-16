@@ -23,6 +23,24 @@ DEFAULT_MAX_ATTEMPTS = 2
 KDP_KEYWORD_MAX_CHARS = 50
 
 
+# Opisy cech sceny (FR-03b), wspólne dla generowania i weryfikacji.
+SUBJECT_HELP = (
+    "Kind of the main character as one lowercase English noun, e.g. kitten, bear, girl; "
+    "none when there are no characters."
+)
+CHARACTERS_HELP = "Number of characters (people or animals) in the scene; 0 for none."
+ACTION_HELP = (
+    "Main action of the characters as one lowercase English verb in base form, "
+    "e.g. sit, decorate, carry, sled."
+)
+SETTING_HELP = "Where the scene happens in 1-3 lowercase English words, e.g. living room, kitchen."
+ANCHORS_HELP = (
+    "Places, objects or actions that the theme itself names, so they belong on most pages, in "
+    "lowercase English, e.g. kitchen for 'cats in the kitchen' or sled for 'sledding'. Usually "
+    "empty: 'Christmas cats' or 'dinosaurs' name no place, object or action."
+)
+
+
 # --- Schemat odpowiedzi LLM ---------------------------------------------------------
 # Celowo bez ograniczeń (min/max): nie każdy model obsługuje je w structured outputs.
 # Ograniczenia egzekwuje `_normalize` przy budowaniu modeli domenowych.
@@ -42,10 +60,16 @@ class _LLMPage(BaseModel):
         "image prompt: subject, action, setting, key objects."
     )
     elements: list[str] = Field(description="Main objects visible in the scene.")
+    # Cechy sceny do kontroli różnorodności (FR-03b); liczy je kod, nie model.
+    subject: str = Field(description=SUBJECT_HELP)
+    characters: int = Field(description=CHARACTERS_HELP)
+    action: str = Field(description=ACTION_HELP)
+    setting: str = Field(description=SETTING_HELP)
 
 
 class _LLMIdeas(BaseModel):
     book: _LLMBook
+    theme_anchors: list[str] = Field(description=ANCHORS_HELP)
     pages: list[_LLMPage]
 
 
@@ -70,9 +94,9 @@ letters, numbers, signs or speech bubbles in the picture.
 setting, key objects). Do not mention art style, line weight, colors, shading or the words \
 "coloring page"; those are added separately.
 - Match the number of subjects and the scene complexity to the target audience.
-- Vary the cast and staging across the book. When the audience allows several subjects, \
-roughly a third of the scenes show two or three characters doing something together; also \
-vary poses, actions and viewpoints instead of one character sitting beside an object.
+- Vary the book as a whole: the number of characters (see the audience), their actions and \
+poses, the settings and the viewpoints. Do not build many scenes around the same object, \
+action or place, and do not show one character sitting beside an object again and again.
 - Match the composition to the page format.
 
 Metadata rules:
@@ -102,6 +126,7 @@ Target audience: {age_name}
 - background: {age_background}
 - areas to color: {age_fill}
 - guidance: {age_fragment}
+- {cast}
 
 Art style: {style_name} ({style_fragment})
 
@@ -158,6 +183,16 @@ def build_more_prompts(
     return system, user
 
 
+def cast_rule(share: float) -> str:
+    """Wymagany udział scen z kilkoma postaciami (FR-03b), z profilu wieku."""
+    if share <= 0:
+        return "scenes with several characters: not required"
+    return (
+        f"scenes with two or three characters doing something together: at least "
+        f"{round(share * 100)}% of the pages"
+    )
+
+
 def profile_prompt(spec: BookSpec, config: AppConfig) -> str:
     """Temat, wiek, styl i format: wspólna część promptów generowania i weryfikacji."""
     age = config.ages[spec.age]
@@ -171,6 +206,7 @@ def profile_prompt(spec: BookSpec, config: AppConfig) -> str:
         age_background=age.background,
         age_fill=age.fill_areas,
         age_fragment=age.prompt_fragment,
+        cast=cast_rule(age.multi_subject_share),
         style_name=style.name,
         style_fragment=style.prompt_fragment,
         format_name=fmt.name,
@@ -223,6 +259,24 @@ def _page_id(index: int) -> str:
     return f"idea_{index:02d}"
 
 
+def tag(text: str) -> str | None:
+    """Cecha sceny małymi literami, bez zbędnych spacji; pusta to None (FR-03b)."""
+    return " ".join(text.casefold().split()) or None
+
+
+def _idea(index: int, page: _LLMPage) -> PageIdea:
+    return PageIdea(
+        id=_page_id(index),
+        title=page.title,
+        scene=page.scene,
+        elements=_clean_list(page.elements),
+        subject=tag(page.subject),
+        characters=max(page.characters, 0),
+        action=tag(page.action),
+        setting=tag(page.setting),
+    )
+
+
 # --- Generator ----------------------------------------------------------------------
 
 
@@ -269,15 +323,8 @@ class IdeaGenerator:
                 )
             ideas = BookIdeas(
                 book=book,
-                pages=[
-                    PageIdea(
-                        id=_page_id(i),
-                        title=page.title,
-                        scene=page.scene,
-                        elements=_clean_list(page.elements),
-                    )
-                    for i, page in enumerate(pages[:expected], start=1)
-                ],
+                theme_anchors=_clean_list([a.casefold() for a in response.theme_anchors]),
+                pages=[_idea(i, page) for i, page in enumerate(pages[:expected], start=1)],
             )
             return IdeasResult(ideas=ideas, usage=usage, attempts=attempt, warnings=warnings)
 
@@ -302,13 +349,5 @@ class IdeaGenerator:
             for p in _unique_pages(response.pages)
             if not {_fingerprint(p.title), _fingerprint(p.scene)} & known
         ]
-        ideas = [
-            PageIdea(
-                id=_page_id(first_number + i),
-                title=p.title,
-                scene=p.scene,
-                elements=_clean_list(p.elements),
-            )
-            for i, p in enumerate(fresh[:count])
-        ]
+        ideas = [_idea(first_number + i, p) for i, p in enumerate(fresh[:count])]
         return ideas, usage

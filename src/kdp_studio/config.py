@@ -44,6 +44,8 @@ class AgeProfile(_Strict):
     background: str
     fill_areas: str
     prompt_fragment: str
+    # FR-03b: minimalny udział stron z 2+ postaciami; 0 wyłącza (np. jeden obiekt dla maluchów)
+    multi_subject_share: Annotated[float, Field(ge=0, le=1)] = 0.0
     postprocess: PostprocessParams
 
 
@@ -133,6 +135,17 @@ class KdpMargins(_Strict):
         return None
 
 
+Share = Annotated[float, Field(gt=0, le=1)]
+
+
+class DiversitySettings(_Strict):
+    """Limity różnorodności pomysłów (FR-03b): najwyższy udział stron z tą samą wartością."""
+
+    max_action_share: Share = 0.3
+    max_setting_share: Share = 0.3
+    max_element_share: Share = 0.35
+
+
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
@@ -143,6 +156,7 @@ class Settings(_Strict):
     concurrency: Annotated[int, Field(ge=1, le=MAX_CONCURRENCY)] = 4
     kdp_margins: KdpMargins = KdpMargins()
     review_ideas: bool = True
+    diversity: DiversitySettings = DiversitySettings()
     qa: bool = False
     qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
 

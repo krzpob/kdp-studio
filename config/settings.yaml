@@ -12,6 +12,15 @@ reserve_ratio: 0.2
 # Kosztuje ułamek centa na książkę, mniej niż jedna wyrzucona grafika. --no-review-ideas wyłącza.
 review_ideas: true
 
+# Różnorodność pomysłów (FR-03b): najwyższy udział stron książki z tą samą czynnością postaci,
+# tym samym miejscem akcji i tym samym przedmiotem w scenie (0–1]. Minimalny udział scen z kilkoma
+# postaciami jest w profilu wieku (multi_subject_share). Przy weryfikacji pomysłów program
+# wyrównuje rozkład zamianą z zapasem, a potem poprawkami LLM; reszta problemów to ostrzeżenia.
+diversity:
+  max_action_share: 0.3
+  max_setting_share: 0.3
+  max_element_share: 0.35
+
 # Kontrola jakości grafik modelem z wizją (FR-07): --qa / --no-qa nadpisuje. Strona odrzucona
 # przez QA jest generowana ponownie z zapasowego pomysłu, najwyżej qa_max_retries razy (0–5).
 qa: false

@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from kdp_studio.config import MAX_CONCURRENCY, ConfigError, load_config
 from kdp_studio.models import BookIdeas
 from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
+from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.manifest import (
@@ -216,6 +217,15 @@ def generate(
         ideas = reviewed.ideas
         ideas_usage += reviewed.usage
         _report_review(ideas, reviewed.usage.input_tokens, reviewed.usage.output_tokens)
+    else:
+        # Bez weryfikacji tylko pomiar: rozkład trafia do ideas.json i do ostrzeżeń (FR-03b).
+        diversity = diversity_report(
+            ideas.pages[: spec.pages],
+            DiversityLimits.from_config(spec, config, ideas.theme_anchors),
+        )
+        ideas = ideas.model_copy(update={"diversity": diversity})
+        _warn([f"różnorodność: {issue}" for issue in diversity.issues])
+    _report_diversity(ideas)
 
     write_json_atomic(target / IDEAS_FILE, ideas)
     reserve = len(ideas.pages) - spec.pages
@@ -354,6 +364,30 @@ def generate(
     if images_result.failed:
         failed = ", ".join(o.name for o in images_result.failed)
         raise _fail([f"nieudane strony: {failed}"], ExitCode.PARTIAL)
+
+
+def _counts(values: dict[str, int], suffix: str = " ") -> str:
+    return ", ".join(f"{value}{suffix}{count}" for value, count in values.items()) or "-"
+
+
+def _report_diversity(ideas: BookIdeas) -> None:
+    report = ideas.diversity
+    if report is None:
+        return
+    fixes = ""
+    if report.moved_from_reserve or report.revised:
+        fixes = (
+            f" Wyrównanie: zamieniono z zapasem {report.moved_from_reserve}, "
+            f"poprawiono {report.revised}."
+        )
+    typer.echo(
+        f"Różnorodność ({plural(report.pages, 'strona', 'strony', 'stron')}): "
+        f"postacie {_counts(report.characters, '×')}; "
+        f"czynności {_counts(report.actions)}; miejsca {_counts(report.settings)}; "
+        f"przedmioty {_counts(report.elements)}.{fixes}"
+    )
+    if ideas.theme_anchors:
+        typer.echo(f"  motywy tematu bez limitu: {', '.join(ideas.theme_anchors)}")
 
 
 def _report_review(ideas: BookIdeas, input_tokens: int, output_tokens: int) -> None:

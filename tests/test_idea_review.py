@@ -10,7 +10,7 @@ from kdp_studio.pipeline.idea_review import IdeaReviewer, build_review_prompts
 from kdp_studio.pipeline.ideas import THEME_RULE, IdeaGenerator, build_prompts
 from kdp_studio.providers.base import ProviderError, Usage
 from kdp_studio.providers.fake import FakeTextProvider
-from tests.conftest import approve_all, llm_ideas_response, review_response
+from tests.conftest import approve_all, llm_ideas_response, review_response, scene_tags
 
 
 def _spec(pages: int = 10) -> BookSpec:
@@ -36,6 +36,7 @@ def _more(start: int, count: int) -> dict[str, Any]:
                 "title": f"New idea {i}",
                 "scene": f"A kitten hanging ornament {i}",
                 "elements": ["kitten"],
+                **scene_tags(subject="kitten", characters=2),
             }
             for i in range(start, start + count)
         ]

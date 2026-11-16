@@ -39,8 +39,19 @@ def config_dir(tmp_path: Path) -> ConfigDirFactory:
     return factory
 
 
+def scene_tags(
+    subject: str = "dinosaur", characters: int = 1, action: str = "", setting: str = ""
+) -> dict[str, Any]:
+    """Cechy sceny (FR-03b) w odpowiedzi LLM. Puste czynność i miejsce pomiar pomija."""
+    return {"subject": subject, "characters": characters, "action": action, "setting": setting}
+
+
 def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
-    """Odpowiedź LLM w kształcie schematu `_LLMIdeas` z `count` różnymi pomysłami."""
+    """Odpowiedź LLM w kształcie schematu `_LLMIdeas` z `count` różnymi pomysłami.
+
+    Co drugi pomysł ma dwie postacie, a przedmioty się nie powtarzają, więc rozkład
+    spełnia limity różnorodności (FR-03b) i nie wywołuje wyrównania.
+    """
     return {
         "book": {
             "title": "Dino Friends",
@@ -49,11 +60,13 @@ def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
             "keywords": ["dinosaur coloring book", "toddler coloring"],
             **book,
         },
+        "theme_anchors": [],
         "pages": [
             {
                 "title": f"Dinosaur {i}",
                 "scene": f"A friendly dinosaur number {i} standing in a meadow",
-                "elements": ["dinosaur", "grass"],
+                "elements": ["dinosaur", f"rock{i}"],
+                **scene_tags(characters=2 if i % 2 else 1),
             }
             for i in range(1, count + 1)
         ],
@@ -75,6 +88,10 @@ def review_response(user: str, **verdicts: dict[str, Any]) -> dict[str, Any]:
             "revised_title": "",
             "revised_scene": "",
             "revised_elements": [],
+            "revised_subject": "",
+            "revised_characters": 0,
+            "revised_action": "",
+            "revised_setting": "",
         }
         verdict.update(verdicts.get(idea_id, {}))
         result.append(verdict)
