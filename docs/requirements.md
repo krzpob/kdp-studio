@@ -48,7 +48,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 | D7 | **Formaty: `letter` (8.5"×11", pion) i `square` (8.5"×8.5")** | Dwa najpopularniejsze formaty kolorowanek na KDP. Formatów poziomych KDP nie obsługuje w tym rozmiarze. |
 | D8 | **Druk jednostronny** (grafika, potem pusta strona) | Standard w kolorowankach, bo kredki i flamastry nie przebijają na następną grafikę. Wpływa na liczenie stron (FR-02). |
 | D9 | **PDF wnętrza składany w Canvie**, nie w skrypcie | Canva daje kontrolę nad stroną tytułową i układem bez pisania kodu. Skrypt dostarcza pełne strony PNG, które wystarczy rozciągnąć na całą stronę projektu. Do Canvy trafia PNG, a nie SVG: Canva przyjmuje SVG tylko do 3 MB, 150–200 px szerokości i w profilu SVG 1.1, a gęsty line art z potrace przekracza te limity. |
-| D10 | **Geometria okładki liczona wzorami KDP**, nie odczytywana z szablonu przez LLM (FR-15) | Wymiary wynikają jednoznacznie z formatu, liczby stron i rodzaju papieru, a pomyłka w jednej cyfrze odrzuca plik. Szablon KDP służy tylko do kontroli i podglądu, odczytywany deterministycznie po kolorach pikseli. Tekst na okładce wpisuje program, model obrazu rysuje tylko ilustracje. |
+| D10 | **Geometria okładki liczona wzorami KDP**, nie odczytywana z szablonu przez LLM (FR-15) | Wymiary wynikają jednoznacznie z formatu i liczby stron (oprawa, papier i druk są stałe, FR-15), a pomyłka w jednej cyfrze odrzuca plik. Szablon KDP służy tylko do kontroli i podglądu, odczytywany deterministycznie po kolorach pikseli. Tekst na okładce wpisuje program, model obrazu rysuje tylko ilustracje. |
 
 ## 4. Pojęcia
 
@@ -252,9 +252,14 @@ przedszkole:
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
 
+**Stałe założenia produkcyjne**
+- Kolorowanki mają zawsze miękką okładkę (paperback), wnętrze czarno-białe i zwykły biały papier.
+- Grubość papieru, spad i strefy są więc stałe i siedzą w `kdp_cover` w `settings.yaml`, a nie w parametrach CLI.
+- Inna oprawa (hardcover), papier kremowy albo kolorowe wnętrze są poza zakresem. Wymagałyby innych wzorów (hardcover ma zawinięcie na tekturę i zawias) i nowych pól w konfiguracji.
+
 **Geometria: liczona, nie odczytywana (D10)**
 - Wszystkie wymiary program liczy wzorami KDP z danych w `manifest.json` (format, `pages_in_book`) i konfiguracji (`kdp_cover` w `settings.yaml`):
-  - `spine_in = pages_in_book × paper_factor` (papier biały 0.002252", kremowy 0.0025"; domyślnie biały, `--paper`);
+  - `spine_in = pages_in_book × paper_factor_in`, gdzie `paper_factor_in` = 0.002252" (biały papier, wnętrze czarno-białe);
   - szerokość = spad + tył + grzbiet + przód + spad, przy spadzie 0.125";
   - wysokość = wysokość formatu + 2 × spad;
   - piksele przy 300 DPI.
@@ -276,7 +281,7 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - Kolory skalibrowane na prawdziwym szablonie (`template_colors` niżej). Napisy objaśniające w szablonie pomija się: pole kodu to obrys żółtych pikseli, a linie to kolumny i wiersze z długimi ciągami pikseli danego koloru.
 - Szablon nie ma 300 DPI (przykładowy: 8000 × 4003 px, ok. 457.5 px/cal), a przy przesyłaniu bywa konwertowany do JPEG. Program przelicza piksele na cale przez `szerokość_px / szerokość_okładki_in`, przyjmuje PNG i JPEG, a tolerancje kolorów pokrywają artefakty kompresji.
 - Program porównuje położenie linii, stref i pola kodu z wyliczoną geometrią (tolerancja 0.01"). Rozbieżność, np. szablon pobrany dla innej liczby stron, to błąd walidacji z opisem różnic.
-- Nazwa pliku KDP koduje parametry (`PAPERBACK_8.500x8.500_104_BW_WHITE_en_US.png`: oprawa, format, liczba stron, atrament, papier). Jeśli nazwa pasuje do tego wzoru, program porównuje te wartości z manifestem i `--paper` i przy niezgodności kończy się błędem.
+- Nazwa pliku KDP koduje parametry (`PAPERBACK_8.500x8.500_104_BW_WHITE_en_US.png`: oprawa, format, liczba stron, atrament, papier). Jeśli nazwa pasuje do tego wzoru, program sprawdza `PAPERBACK`, `BW` i `WHITE` (stałe założenia) oraz porównuje format i liczbę stron z manifestem. Przy niezgodności kończy się błędem.
 - Szablon nałożony półprzezroczyście trafia do `cover_preview.png`.
 
 **Wybór grafik**
@@ -341,14 +346,13 @@ Konfiguracja (szkic):
 # settings.yaml
 kdp_cover:                      # wartości KDP, zmienia się je tylko gdy KDP zmieni zasady
   bleed_in: 0.125
-  paper_factor_in: {white: 0.002252, cream: 0.0025}
+  paper_factor_in: 0.002252     # paperback, wnętrze czarno-białe, biały papier (stałe założenie)
   safe_in: 0.125                # min. odległość tekstu od linii cięcia
   spine_safe_in: 0.0625         # min. odległość tekstu grzbietu od linii zgięcia
   spine_text_kdp_min_pages: 79
   barcode: {width_in: 2.0, height_in: 1.2, from_spine_in: 0.25, from_bottom_in: 0.25}
 
 cover:                          # nasze ustawienia
-  paper: white                  # --paper
   key_margin_in: 0.375
   spine_text_min_pages: 100
   thumbnails: 3                 # 3–4
@@ -528,7 +532,6 @@ kdp-studio profiles [age|style|format]
 kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
   [--cover-page 07] \
   [--thumbnails 03,12,21] \
-  [--paper white|cream] \
   [--template kdp_template.png] \
   [--qa] \
   [--max-cost 1.00]
