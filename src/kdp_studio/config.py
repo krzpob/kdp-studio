@@ -213,6 +213,95 @@ class BelongsToSettings(_Strict):
         return path if path.is_absolute() else REPO_ROOT / path
 
 
+class BarcodeBox(_Strict):
+    """Pole kodu kreskowego KDP na tylnej okładce (FR-15)."""
+
+    width_in: Annotated[float, Field(gt=0)] = 2.0
+    height_in: Annotated[float, Field(gt=0)] = 1.2
+    from_spine_in: Annotated[float, Field(ge=0)] = 0.25
+    from_bottom_in: Annotated[float, Field(ge=0)] = 0.25
+
+
+class KdpCover(_Strict):
+    """Wartości KDP dla okładki paperback (FR-15, D10): zmienia się je tylko, gdy KDP zmieni zasady.
+
+    Oprawa miękka, wnętrze czarno-białe i biały papier to stałe założenia, więc grubość
+    papieru jest jedna.
+    """
+
+    bleed_in: Annotated[float, Field(ge=0)] = 0.125
+    paper_factor_in: Annotated[float, Field(gt=0)] = 0.002252
+    safe_in: Annotated[float, Field(ge=0)] = 0.125  # tekst od linii cięcia i zgięcia
+    spine_safe_in: Annotated[float, Field(ge=0)] = 0.0625  # tekst grzbietu od linii zgięcia
+    spine_text_kdp_min_pages: Annotated[int, Field(gt=0)] = 79
+    barcode: BarcodeBox = BarcodeBox()
+
+
+class TemplateColor(_Strict):
+    rgb: tuple[int, int, int]
+    tolerance: Annotated[int, Field(ge=0, le=255)]
+
+
+class TemplateColors(_Strict):
+    """Kolory szablonu z kalkulatora okładek KDP (skalibrowane na tests/fixtures/kdp_templates)."""
+
+    live_bleed_pink: TemplateColor = TemplateColor(rgb=(255, 175, 176), tolerance=40)
+    barcode_yellow: TemplateColor = TemplateColor(rgb=(255, 255, 0), tolerance=60)
+    fold_blue: TemplateColor = TemplateColor(rgb=(18, 6, 220), tolerance=60)
+    trim_black: TemplateColor = TemplateColor(rgb=(0, 0, 0), tolerance=80)
+
+
+RenderingIntent = Literal["perceptual", "relative_colorimetric"]
+
+
+class CmykSettings(_Strict):
+    """Konwersja okładki do CMYK (FR-15). Profil ICC pobiera użytkownik (licencja profilu)."""
+
+    profile: str | None = None
+    rendering_intent: RenderingIntent = "perceptual"
+    black_point_compensation: bool = True
+    max_total_ink_pct: Annotated[int, Field(ge=100, le=400)] = 300
+    gamut_warn_delta_e: Annotated[float, Field(gt=0)] = 10
+    gamut_warn_area_pct: Annotated[float, Field(ge=0, le=100)] = 5
+
+    @property
+    def profile_path(self) -> Path | None:
+        if self.profile is None:
+            return None
+        path = Path(self.profile).expanduser()
+        return path if path.is_absolute() else REPO_ROOT / path
+
+
+class CoverSettings(_Strict):
+    """Nasze ustawienia okładki (FR-15)."""
+
+    key_margin_in: Annotated[float, Field(ge=0)] = 0.375
+    spine_text_min_pages: Annotated[int, Field(gt=0)] = 100
+    thumbnails: Annotated[int, Field(ge=3, le=4)] = 3
+    thumbnail_frame_ratio: Annotated[float, Field(gt=0)] = 2.0
+    thumbnail_frame_min_pt: Annotated[float, Field(gt=0)] = 2
+    thumbnail_check_px: Annotated[int, Field(gt=0)] = 160
+    title_band: Annotated[float, Field(gt=0.1, lt=0.6)] = 0.3  # górna część przodu na tytuł
+    subtitle_scale: Annotated[float, Field(gt=0, le=1)] = 0.45  # podtytuł względem tytułu
+    title_font_pt: Annotated[float, Field(gt=0)] = 64
+    spine_font_min_pt: Annotated[float, Field(gt=0)] = 7
+    seam_band_in: Annotated[float, Field(ge=0)] = 0.1
+    seam_max_delta_e: Annotated[float, Field(gt=0)] = 12
+    horizon_tolerance: Annotated[float, Field(gt=0, lt=1)] = 0.03
+    max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    back_text: bool = False
+    title_font: str = "assets/fonts/Fredoka-Variable.ttf"
+    title_font_variation: str | None = "Bold"
+    cmyk: CmykSettings = CmykSettings()
+    template_colors: TemplateColors = TemplateColors()
+    template_tolerance_in: Annotated[float, Field(gt=0)] = 0.01
+
+    @property
+    def title_font_path(self) -> Path:
+        path = Path(self.title_font)
+        return path if path.is_absolute() else REPO_ROOT / path
+
+
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
@@ -228,6 +317,8 @@ class Settings(_Strict):
     qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
     log_level: LogLevel = "info"
     belongs_to_page: BelongsToSettings = BelongsToSettings()
+    kdp_cover: KdpCover = KdpCover()
+    cover: CoverSettings = CoverSettings()
     api_pricing: ApiPricing = ApiPricing()
     max_cost_usd: Annotated[float, Field(gt=0)] = DEFAULT_MAX_COST_USD
 

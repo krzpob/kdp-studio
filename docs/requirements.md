@@ -28,7 +28,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
-| FR-15 | ⬜ | | Poza MVP. Specyfikacja: #17. |
+| FR-15 | 🟡 | #31 | Poza MVP. Specyfikacja: #17. Etap 1 z 3: geometria, szablon, układ, CMYK i PDF, przód jako szkic bez koloru. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -394,7 +394,7 @@ przedszkole:
 - **Krok 3 obrabia stronę ponownie**, gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Model nie jest wtedy wywoływany.
 - **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
-### ⬜ FR-15: Okładka (poza MVP)
+### 🟡 FR-15: Okładka (poza MVP)
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
 
@@ -521,6 +521,39 @@ KDP nie podaje ani konkretnego profilu CMYK, ani limitu sumy farb. Plik RGB KDP 
 - **Nieaktualna okładka:** jeśli później zmieni się `pages_in_book` książki, `cover` i `kdp-studio images` ostrzegają, że okładka jest nieaktualna.
 - **Koszt:** 2 grafiki (przód, tył z grzbietem) plus 1–3 wywołania oceny (wybór stron, horyzont, QA) i ponowienia; liczy się do `--max-cost` (FR-10).
 - **Kody wyjścia** jak w §9.3: brak okładki po wyczerpaniu ponowień to 2, błąd walidacji lub szablonu to 1.
+
+**Implementacja etapami**
+
+FR-15 powstaje w trzech PR-ach.
+
+*Etap 1 (zrobiony): bez wywołań modelu.*
+- **Geometria i strefy** (`pipeline/cover_geometry.py`) zgadzają się z obydwoma szablonami testowymi.
+- **Odczyt i kontrola szablonu KDP:** nazwa pliku i pomiar po kolorach przez `cv2.inRange`. Gdy już nazwa wskazuje inną książkę, pomiaru nie ma.
+- **Układ** (`pipeline/cover.py`):
+  - przód jako **szkic**: czarno-biała grafika wybranej strony pod tytułem i podtytułem, które wpisuje program;
+  - miniatury tyłu w ramkach (grubość z transformaty odległości) nad polem kodu;
+  - tytuł na grzbiecie od 100 stron;
+  - asercja rozmieszczenia i `cover_preview.png` ze strefami i szablonem.
+- **CMYK** (`pipeline/cmyk.py`): warstwy `color`, `black` (K100) i `paper` (K0), konwersja przez profil ICC (ImageCms), limit sumy farb, `cover_proof.png` i `cover_gamut.png` (ΔE76).
+- **`cover.pdf`** (`pipeline/pdf.py`): zapisywany ręcznie, bo Pillow zapisuje CMYK do PDF jako JPEG.
+- **Sekcja `cover` w manifeście.**
+- **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
+
+*Etap 2:* `reference_image` w adapterze OpenAI (edycja obrazu), kolorowanie przodu, nałożenie konturów 300 DPI z kontrolą przesunięcia, kolorowy tytuł z obrysem oraz kontrola czytelności w miniaturze (`thumbnail_check_px`, wysokość liter i kontrast).
+
+*Etap 3:* tło tyłu i grzbietu z modelu (horyzont, kolory, kontrola i wygładzenie styku), propozycja stron modelem z wizją (arkusz kontaktowy), QA okładki, `--qa` i `--max-cost` dla `cover`, opcjonalny `back_text`.
+
+**Decyzje etapu 1**
+- **Czcionka tytułu:** Fredoka w wariancie `Bold` (`cover.title_font_variation`), ta sama rodzina co napis FR-14 (otwarte pytanie 7).
+- **Tytuł:** zmniejszany do szerokości strefy, a gdy w jednej linii wyszedłby za mały, dzielony na dwie linie. Podział po dwukropku dostaje premię. Tytuł, którego nie da się zmieścić w 35% rozmiaru (`title_font_pt`), to błąd (kod 1).
+- **Wybór stron bez modelu:**
+  - przód: pierwsza gotowa strona;
+  - miniatury: strony rozłożone równo po książce;
+  - `selection: default` w manifeście;
+  - na okładkę trafiają tylko strony `ok` z plikiem PNG.
+- **Profil CMYK** domyślnie nie jest ustawiony (`cover.cmyk.profile: null`). `cover` kończy się wtedy kodem 1 z instrukcją, skąd wziąć SWOP v2 (na macOS do prób jest `Generic CMYK Profile.icc`).
+- **Ostrzeżenie o tytule:** gdy kolor zmienia się (ΔE > `gamut_warn_delta_e`) na ponad 1% jego powierzchni.
+- **`front.png`:** przód po przycięciu (bez spadu).
 
 **Wymagania wobec dostawców**
 - Adapter obrazu musi obsługiwać `reference_image` (OpenAI: endpoint edycji obrazu). Kontrakt już to przewiduje (§8.2).
@@ -1088,7 +1121,7 @@ kdp-studio/
 | 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
-Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etapy 1b–1c mają gotową specyfikację, kod jeszcze nie powstał.
+Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod etapu 1 z 3 (bez koloru z modelu), etap 1c ma gotową specyfikację.
 
 ## 14. Otwarte pytania
 
@@ -1098,7 +1131,7 @@ Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wy
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. ~~FR-14: wybór czcionki z licencją OFL i wariant polski napisu.~~ Rozstrzygnięte 16.11.2026: Fredoka, napis po angielsku, inny język przez `belongs_to_page.text`.
-7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (SWOP v2 czy GRACoL 2006) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
+7. FR-15: ~~wybór czcionki tytułowej (OFL)~~ Fredoka Bold (16.11.2026). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (SWOP v2 czy GRACoL 2006) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
 8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
 
 ## 14a. Pomysły na rozwój
