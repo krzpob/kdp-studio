@@ -45,6 +45,25 @@ models:
   # Spec §8.3: QA używa tego samego modelu co pomysły.
   vision: gpt-6-luna
 
+# Cennik API w USD za milion tokenów (FR-10), przepisany ze strony OpenAI. Koszt wywołania liczy się
+# z tokenów zwracanych przez API: wejście × input_per_1m + wyjście × output_per_1m. Tokeny wejścia
+# z pamięci podręcznej (tańsze) program liczy po pełnej cenie, więc koszt jest raczej zawyżony.
+# Model obrazu: input to tokeny tekstu promptu, output to tokeny grafiki. Model bez ceny w tym
+# cenniku to błąd konfiguracji przed pierwszym wywołaniem API.
+api_pricing:
+  source: https://developers.openai.com/api/docs/pricing
+  checked: "2026-11-16"
+  models:
+    gpt-6-luna: {input_per_1m: 0.10, output_per_1m: 0.50}
+    gpt-image-2.6-flare: {input_per_1m: 5.00, output_per_1m: 30.00}
+    gpt-image-2.6-sunburst: {input_per_1m: 5.00, output_per_1m: 30.00}
+    gpt-image-2.5-flare: {input_per_1m: 5.00, output_per_1m: 30.00}
+
+# Limit kosztu jednego uruchomienia komendy w USD (FR-10); --max-cost nadpisuje. Po przekroczeniu
+# program kończy strony w toku, nie zaczyna nowych i kończy się kodem 3. 50 grafik w jakości
+# medium kosztuje ok. 2.3 USD.
+max_cost_usd: 5.00
+
 # Jakość grafik: low, medium, high albo auto (spec §14, pytanie 5: ustalić po spike'u).
 image_quality: medium
 

@@ -21,9 +21,9 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-05 | ✅ | #9 | |
 | FR-06 | ✅ | #11 | |
 | FR-07 | ✅ | #14 | |
-| FR-08 | ✅ | #13, #23 | Pole `cost_usd` w manifeście czeka na FR-10. |
+| FR-08 | ✅ | #13, #23 | |
 | FR-09 | ↪ FR-17 | #23 | |
-| FR-10 | 🟡 | | Konsola podsumowuje strony ok/failed. Brakuje kosztów, `--max-cost`, statusu `budget_exceeded` i kodu wyjścia 3. |
+| FR-10 | ✅ | | Cennik `api_pricing` w `settings.yaml`, limit na jedno uruchomienie komendy. |
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
@@ -43,10 +43,10 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | NFR-03 | ✅ | Pokrycie modułów `pipeline/` wynosi 91–100%, całego pakietu 98%. Obróbkę testuje plik-wzorzec `tests/fixtures/line_art_bear.png`. |
 | NFR-04 | ✅ | Ponowienia z backoffem, atomowy zapis manifestu, wznawianie przez FR-17. |
 | NFR-05 | 🟡 | Obróbka strony trwa ok. 2,5 s. Czasu całej 30-stronicowej książki nie zmierzono. |
-| NFR-06 | ⬜ | Wymaga FR-10. |
+| NFR-06 | ✅ | 50 grafik w jakości `medium` kosztowało ok. 2,30 USD (trzy prawdziwe książki), więc 30 grafik z QA to ok. 1,40 USD. Twardy limit daje `--max-cost` (FR-10). |
 | NFR-07 | ✅ | `verify_page()` po każdym zapisie strony. |
 | NFR-08 | ✅ | Manifest zapisuje prompt, model i jakość. OpenAI nie obsługuje seeda. |
-| NFR-09 | 🟡 | Logi JSON w `kdp-studio.log` (`--log-level info\|debug`), pasek postępu w krokach 2 i 3, czas każdego kroku i całości `generate`. Brakuje tylko podsumowania kosztów (FR-10). |
+| NFR-09 | ✅ | Logi JSON w `kdp-studio.log` (`--log-level info\|debug`), pasek postępu w krokach 2 i 3, czas i koszt każdego kroku oraz podsumowanie `generate` (#28, FR-10). |
 | NFR-10 | ✅ | |
 | NFR-11 | ✅ | CI na Linux, macOS i Windows (Python 3.12 i 3.14). |
 | NFR-12 | ✅ | |
@@ -236,10 +236,21 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 ### ↪ FR-09: Wznawianie
 Zastąpione przez FR-17. Wznowienie to ponowne uruchomienie przerwanego kroku: `kdp-studio images <katalog>` generuje tylko strony, których brakuje, i nie wywołuje ponownie LLM dla pomysłów (idempotentność).
 
-### 🟡 FR-10: Koszty i limit budżetu
+### ✅ FR-10: Koszty i limit budżetu
 - Każde wywołanie API zapisuje szacowany koszt (z cennika w konfiguracji albo z `usage` zwracanego przez API).
 - `--max-cost <USD>` (domyślnie 5.00): po przekroczeniu limitu program kończy bieżące zadania, nie startuje nowych i zapisuje manifest (status `budget_exceeded`).
 - Na końcu program wypisuje podsumowanie: liczbę stron ok/failed, łączny koszt i czas.
+
+**Szczegóły**
+- **Cennik:** `api_pricing` w `settings.yaml`, przepisany ze strony dostawcy, z adresem źródła i datą sprawdzenia (`source`, `checked`). Dla każdego modelu podaje cenę w USD za milion tokenów wejścia i wyjścia. Koszt wywołania liczy się z tokenów, które zwraca API. Tokeny z pamięci podręcznej program liczy po pełnej cenie, więc koszt jest raczej zawyżony.
+- **Model bez ceny** w cenniku to błąd konfiguracji (kod 1) przed pierwszym wywołaniem API, bo bez ceny program nie pilnowałby limitu.
+- **Zakres limitu:** limit dotyczy jednego uruchomienia komendy (`ideas`, `images`, `generate`). Domyślna wartość to `max_cost_usd` w `settings.yaml`, a `--max-cost` ją nadpisuje.
+- **Sprawdzanie limitu:** program sprawdza limit przed każdą nową stroną i przed każdą grafiką z zapasowego pomysłu po odrzuceniu przez QA. Koszt strony dolicza się zaraz po jej zakończeniu, zanim wątek weźmie następną. Strony w innych wątkach mogą jeszcze trwać, więc limit może zostać przekroczony najwyżej o grafiki w toku.
+- **Po przekroczeniu w `images`:** strona, której QA odrzuciło grafikę, nie dostaje zapasowego pomysłu i jest oznaczona jako nieudana. Manifest dostaje status `budget_exceeded` z opisem w `error`, a program kończy się kodem 3. Kolejne `kdp-studio images` z wyższym limitem dokańcza brakujące strony.
+- **Po przekroczeniu w `generate`:** krok 3 (`finalize`) czeka, aż kroki 1 i 2 zostaną dokończone. Jeśli limit zużyją już pomysły, grafiki nie startują.
+- **Manifest:** strona ma `cost_usd` z grafik i QA, sumowany przez wszystkie uruchomienia (ponowne wygenerowanie dolicza się do poprzedniego kosztu). `ideas.cost_usd` obejmuje pomysły, weryfikację i `--redo`. Pole `cost_usd` w katalogu głównym manifestu to łączny koszt książki.
+- **Konsola:** koszt pomysłów, koszt każdej strony, koszt każdego kroku (`Czas kroku (grafiki): 6 min 12 s, koszt $2.27.`). `generate` kończy się podsumowaniem: liczba gotowych i nieudanych stron, koszt według rodzaju (pomysły, grafiki, QA) z limitem oraz czasy kroków.
+- **Log (NFR-09):** `cost_usd` przy `page_raw`, `ideas_saved`, `images_done` i `run_end`. Na poziomie `debug` koszt ma też każde wywołanie API (`api_call`).
 
 ### ↪ FR-11: Tryb próbny (dry run)
 Zastąpione przez FR-17. Tryb próbny to sam krok 1: `kdp-studio ideas …` zapisuje pomysły i prompty bez generowania grafik, co służy do taniego strojenia profili.
@@ -905,7 +916,7 @@ kdp-studio generate \
 
 # Generowanie krokowe (FR-17)
 kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
-  [--output-dir ./output] [--no-review-ideas] [--strict]
+  [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
 kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
@@ -931,7 +942,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09)). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
 
@@ -940,7 +951,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 | 0 | Sukces: wszystkie strony `ok` |
 | 1 | Błąd walidacji wejścia lub konfiguracji |
 | 2 | Zakończono częściowo: brakuje stron `ok` (failed lub QA) |
-| 3 | Przekroczony budżet (`--max-cost`) |
+| 3 | Przekroczony budżet (`--max-cost`, FR-10): status `budget_exceeded` |
 | 4 | Błąd dostawcy API po wyczerpaniu ponowień |
 
 ## 10. Struktura katalogu wyjściowego
@@ -1062,7 +1073,7 @@ kdp-studio/
 | 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
-Stan na 16.11.2026 (sekcja 0): z etapu 1 brakuje FR-10, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etapy 1a–1c mają gotową specyfikację, kod jeszcze nie powstał.
+Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etapy 1a–1c mają gotową specyfikację, kod jeszcze nie powstał.
 
 ## 14. Otwarte pytania
 

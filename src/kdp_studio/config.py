@@ -147,6 +147,24 @@ class DiversitySettings(_Strict):
     max_element_share: Share = 0.35
 
 
+class ModelPrice(_Strict):
+    """Cena modelu w USD za milion tokenów (FR-10)."""
+
+    input_per_1m: Annotated[float, Field(ge=0)]
+    output_per_1m: Annotated[float, Field(ge=0)]
+
+
+class ApiPricing(_Strict):
+    """Cennik API przepisany ze strony dostawcy (FR-10); źródło i data dla kontroli."""
+
+    source: str = ""
+    checked: str = ""
+    models: dict[str, ModelPrice] = {}
+
+
+DEFAULT_MAX_COST_USD = 5.0
+
+
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
@@ -161,6 +179,8 @@ class Settings(_Strict):
     qa: bool = False
     qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
     log_level: LogLevel = "info"
+    api_pricing: ApiPricing = ApiPricing()
+    max_cost_usd: Annotated[float, Field(gt=0)] = DEFAULT_MAX_COST_USD
 
 
 class AppConfig(_Strict):

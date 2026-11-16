@@ -48,6 +48,7 @@ from kdp_studio.pipeline.book import (
     user_edits,
 )
 from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
+from kdp_studio.pipeline.cost import CostTracker, format_usd, missing_prices
 from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
@@ -111,6 +112,7 @@ STEP_LABELS = {
     "images": "grafiki",
     "finalize": "obróbka",
 }
+COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA"}
 
 _log = logging.getLogger("kdp_studio.cli")
 
@@ -163,11 +165,15 @@ def _locked(target: Path, log_level: LogLevel) -> Iterator[None]:
 
 
 @contextmanager
-def _timed(timer: StepTimer, step: str) -> Iterator[None]:
-    """Krok z pomiarem czasu: zdarzenia step_start/step_end w logu i czas w konsoli."""
+def _timed(timer: StepTimer, step: str, costs: CostTracker | None = None) -> Iterator[None]:
+    """Krok z pomiarem czasu: zdarzenia step_start/step_end w logu, czas i koszt w konsoli."""
+    spent = 0.0 if costs is None else costs.spent
     with timer.step(step, _log):
         yield
-    typer.echo(f"Czas kroku ({STEP_LABELS[step]}): {format_duration(timer.steps[-1][1])}.")
+    line = f"Czas kroku ({STEP_LABELS[step]}): {format_duration(timer.steps[-1][1])}"
+    if costs is not None:
+        line += f", koszt {format_usd(costs.spent - spent)}"
+    typer.echo(f"{line}.")
 
 
 # --- Wspólne opcje ----------------------------------------------------------------------
@@ -213,6 +219,13 @@ QaOpt = Annotated[
     ),
 ]
 BookArg = Annotated[Path, typer.Argument(help="Katalog książki (z kroku kdp-studio ideas).")]
+MaxCostOpt = Annotated[
+    float | None,
+    typer.Option(
+        help="Limit kosztu API tego uruchomienia w USD (FR-10); po przekroczeniu nowe grafiki "
+        "nie startują, a program kończy się kodem 3. Domyślnie z settings.yaml.",
+    ),
+]
 LogLevelOpt = Annotated[
     str | None,
     typer.Option(
@@ -297,13 +310,30 @@ def _log_level(config: AppConfig, level: str | None) -> LogLevel:
     raise _fail([f"--log-level: dozwolone {', '.join(LOG_LEVELS)} (podano '{value}')"])
 
 
+def _cost_tracker(config: AppConfig, max_cost: float | None, models: list[str]) -> CostTracker:
+    """Limit budżetu (FR-10); model bez ceny w cenniku to błąd przed pierwszym wywołaniem API."""
+    settings = config.settings
+    limit = settings.max_cost_usd if max_cost is None else max_cost
+    if limit <= 0:
+        raise _fail([f"--max-cost: musi być większy od 0 (podano {limit:g})"])
+    missing = missing_prices(settings.api_pricing, models)
+    if missing:
+        raise _fail(
+            [
+                f"brak ceny modelu {', '.join(missing)} w config/settings.yaml "
+                "(api_pricing.models): bez niej program nie pilnuje limitu kosztu (FR-10)"
+            ]
+        )
+    return CostTracker(settings.api_pricing, limit)
+
+
 def _text_provider(config: AppConfig) -> TextProvider:
     settings = config.settings
     try:
         provider = create_text_provider(settings.providers.text, settings.models.text)
     except ConfigError as e:
         raise _fail([str(e)]) from e
-    return LoggedTextProvider(provider)
+    return LoggedTextProvider(provider, config.settings.api_pricing.models.get(provider.model))
 
 
 def _image_providers(
@@ -328,7 +358,11 @@ def _image_providers(
                 f"formatu {fmt}. Obsługiwane: {', '.join(images.supported_aspects())}"
             ]
         )
-    return LoggedImageProvider(images), None if vision is None else LoggedVisionProvider(vision)
+    prices = settings.api_pricing.models
+    logged = LoggedImageProvider(images, prices.get(images.model))
+    return logged, None if vision is None else LoggedVisionProvider(
+        vision, prices.get(vision.model)
+    )
 
 
 def _open_book(target: Path) -> ManifestWriter:
@@ -359,7 +393,12 @@ def _layout(config: AppConfig, spec: BookSpec) -> tuple[ManifestLayout, PageGeom
 
 
 def _step_ideas(
-    config: AppConfig, spec: BookSpec, target: Path, provider: TextProvider, do_review: bool
+    config: AppConfig,
+    spec: BookSpec,
+    target: Path,
+    provider: TextProvider,
+    do_review: bool,
+    costs: CostTracker,
 ) -> BookIdeas:
     """Pomysły, weryfikacja, prompty i manifest ze stronami `pending` (FR-17 krok 1)."""
     settings = config.settings
@@ -432,6 +471,8 @@ def _step_ideas(
     write_json_atomic(target / PROMPTS_FILE, prompts)
     typer.echo(f"Prompty obrazu: {len(prompts.pages)}. Zapisano: {target / PROMPTS_FILE}")
 
+    cost = costs.add("ideas", provider.model, ideas_usage)
+    typer.echo(f"Koszt pomysłów: {format_usd(cost)}.")
     layout, _ = _layout(config, spec)
     fmt = config.formats[spec.format]
     manifest = ManifestWriter.start(
@@ -459,7 +500,11 @@ def _step_ideas(
         ),
         layout=layout,
         ideas=ManifestIdeas(
-            count=len(ideas.pages), reserve=reserve, reviewed=do_review, usage=ideas_usage
+            count=len(ideas.pages),
+            reserve=reserve,
+            reviewed=do_review,
+            usage=ideas_usage,
+            cost_usd=cost,
         ),
     )
     typer.echo(f"Manifest: {manifest.path} (status: {manifest.manifest.status})")
@@ -469,12 +514,20 @@ def _step_ideas(
         "ideas_saved",
         pages=spec.pages,
         reserve=reserve,
+        cost_usd=cost,
         diversity_issues=[] if ideas.diversity is None else ideas.diversity.issues,
     )
     return ideas
 
 
-def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | None) -> None:
+def _step_redo(
+    config: AppConfig,
+    target: Path,
+    ids: list[str],
+    review: bool | None,
+    provider: TextProvider,
+    costs: CostTracker,
+) -> None:
     """`ideas <katalog> --redo`: nowe pomysły w miejsce wskazanych, z tymi samymi id."""
     writer = _open_book(target)
     spec = spec_from_manifest(writer.manifest)
@@ -487,7 +540,6 @@ def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | N
     if unknown:
         raise _fail([f"--redo: nie ma pomysłów {', '.join(unknown)} w {IDEAS_FILE}"])
     do_review = writer.manifest.input.review_ideas if review is None else review
-    provider = _text_provider(config)
     typer.echo(
         f"Wymyślam {plural(len(ids), 'nowy pomysł', 'nowe pomysły', 'nowych pomysłów')} "
         f"w miejsce {', '.join(ids)} ({provider.name}, {provider.model})…"
@@ -507,8 +559,8 @@ def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | N
     write_json_atomic(target / IDEAS_FILE, ideas)
     prompts = PromptBuilder(spec, config).build(ideas)
     write_json_atomic(target / PROMPTS_FILE, prompts)
-    writer.manifest.ideas.usage += result.usage
-    writer.save()
+    cost = costs.add("ideas", provider.model, result.usage)
+    writer.add_ideas_cost(result.usage, cost)
     log_event(
         _log,
         logging.INFO,
@@ -516,12 +568,13 @@ def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | N
         ids=ids,
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
+        cost_usd=cost,
     )
     pages = [p for p in writer.manifest.pages if p.idea_id in ids]
     usage = result.usage
     typer.echo(
         f"Zapisano: {target / IDEAS_FILE}, tokeny: {usage.input_tokens} wejście / "
-        f"{usage.output_tokens} wyjście."
+        f"{usage.output_tokens} wyjście, koszt {format_usd(cost)}."
     )
     redone = [p.name for p in pages if p.raw_sha256 is not None or p.attempts > 0]
     fresh = [p.name for p in pages if p.name not in redone]
@@ -557,6 +610,7 @@ def ideas(
             "wymaga katalogu książki."
         ),
     ] = None,
+    max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
     """Krok 1: pomysły, prompty i manifest, bez grafik (FR-17). Tani podgląd książki."""
@@ -571,8 +625,10 @@ def ideas(
         ids = [i.strip() for i in redo.split(",") if i.strip()]
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
-        with _locked(book, level), _timed(timer, "redo"):
-            _step_redo(config, book, list(dict.fromkeys(ids)), review_ideas)
+        provider = _text_provider(config)
+        costs = _cost_tracker(config, max_cost, [provider.model])
+        with _locked(book, level), _timed(timer, "redo", costs):
+            _step_redo(config, book, list(dict.fromkeys(ids)), review_ideas, provider, costs)
         return
     if redo is not None:
         raise _fail(["--redo wymaga katalogu książki: kdp-studio ideas <katalog> --redo …"])
@@ -580,9 +636,10 @@ def ideas(
     spec = _book_spec(config, theme, age, style, format_, pages, strict)
     target = _new_book_dir(output_dir, spec)
     provider = _text_provider(config)
+    costs = _cost_tracker(config, max_cost, [provider.model])
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
-    with _locked(target, level), _timed(timer, "ideas"):
-        _step_ideas(config, spec, target, provider, do_review)
+    with _locked(target, level), _timed(timer, "ideas", costs):
+        _step_ideas(config, spec, target, provider, do_review, costs)
     typer.echo(f"Przejrzyj {target / IDEAS_FILE}, a potem: kdp-studio images {target}")
 
 
@@ -596,6 +653,7 @@ def _step_images(
     vision: VisionProvider | None,
     workers: int,
     quality: str,
+    costs: CostTracker,
 ) -> ExitCode:
     """Surowe grafiki stron, których brakuje albo które trzeba wygenerować ponownie."""
     settings = config.settings
@@ -671,10 +729,20 @@ def _step_images(
             f"na stronę, zapasowe pomysły: {pool.remaining}."
         )
     done = 0
+    typer.echo(f"Limit kosztu: {format_usd(costs.limit_usd)} (wydano {format_usd(costs.spent)}).")
+
+    def spend(outcome: PageOutcome) -> None:
+        """W wątku workera, przed następną stroną: koszt liczy się do limitu od razu."""
+        costs.add("images", images.model, outcome.usage)
+        if vision is not None:
+            costs.add("qa", vision.model, outcome.qa_usage)
 
     def report(outcome: PageOutcome, advance: Callable[[], None]) -> None:
         nonlocal done
         done += 1
+        cost = costs.cost(images.model, outcome.usage)
+        if vision is not None:
+            cost += costs.cost(vision.model, outcome.qa_usage)
         log_event(
             _log,
             logging.INFO,
@@ -688,6 +756,7 @@ def _step_images(
             error=outcome.error,
             input_tokens=outcome.usage.input_tokens,
             output_tokens=outcome.usage.output_tokens,
+            cost_usd=round(cost, 6),
         )
         for rejected in outcome.rejected:
             log_event(
@@ -708,11 +777,13 @@ def _step_images(
                 )
         else:
             line = f"{outcome.name}: nieudana: {outcome.error}"
-        typer.echo(f"[{done}/{len(jobs)}] {line}")
+        typer.echo(f"[{done}/{len(jobs)}] {line}, {format_usd(cost)}")
         for rejected in outcome.rejected:
             issues = "; ".join(f"{i.criterion}: {i.detail}" for i in rejected.issues)
             typer.echo(f"  QA odrzuciło próbę {rejected.attempt} ({rejected.idea_id}): {issues}")
-        writer.record_raw(outcome, provider=images.name, model=images.model, quality=quality)
+        writer.record_raw(
+            outcome, provider=images.name, model=images.model, quality=quality, cost_usd=cost
+        )
         advance()
 
     worker = PageWorker(
@@ -725,14 +796,16 @@ def _step_images(
         preview=preview,
         reserve=pool,
         max_retries=settings.qa_max_retries,
+        over_budget=costs.over_budget,
+        on_spent=spend,
     )
     with progress_bar("Grafiki", len(jobs)) as advance:
         result = worker.run(jobs, on_done=lambda outcome: report(outcome, advance))
     usage = result.usage
     typer.echo(
         f"Surowe grafiki: {len(result.ok)}/{len(jobs)} ok, tokeny: "
-        f"{usage.input_tokens} wejście / {usage.output_tokens} wyjście. "
-        f"Zapisano: {target / RAW_DIR}"
+        f"{usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
+        f"koszt {format_usd(costs.by_kind.get('images', 0.0))}. Zapisano: {target / RAW_DIR}"
     )
     if checker is not None:
         qa_usage = result.qa_usage
@@ -740,9 +813,18 @@ def _step_images(
             f"QA: odrzucono {plural(result.rejected, 'grafikę', 'grafiki', 'grafik')} "
             f"(w {target / REJECTED_DIR}), "
             f"zapasowe pomysły: użyto {pool.used}/{pool.used + pool.remaining}, "
-            f"tokeny: {qa_usage.input_tokens} wejście / {qa_usage.output_tokens} wyjście."
+            f"tokeny: {qa_usage.input_tokens} wejście / {qa_usage.output_tokens} wyjście, "
+            f"koszt {format_usd(costs.by_kind.get('qa', 0.0))}."
         )
-    status = writer.update_status(result.fatal_error)
+    skipped = len(jobs) - len(result.outcomes)
+    budget_error = None
+    if result.budget_exceeded:
+        budget_error = (
+            f"przekroczony limit kosztu {format_usd(costs.limit_usd)} (wydano "
+            f"{format_usd(costs.spent)}), pominięto "
+            f"{plural(skipped, 'stronę', 'strony', 'stron')}"
+        )
+    status = writer.update_status(result.fatal_error, budget_error=budget_error)
     typer.echo(f"Manifest: {writer.path} (status: {status})")
     log_event(
         _log,
@@ -757,10 +839,22 @@ def _step_images(
         qa_output_tokens=result.qa_usage.output_tokens,
         status=status,
         fatal_error=result.fatal_error,
+        budget_exceeded=result.budget_exceeded,
+        skipped=skipped,
+        cost_usd=costs.spent,
+        book_cost_usd=manifest.cost_usd,
     )
     if result.fatal_error is not None:
         _fail_lines([result.fatal_error, f"po usunięciu przyczyny: kdp-studio images {target}"])
         return ExitCode.PROVIDER_ERROR
+    if budget_error is not None:
+        _fail_lines(
+            [
+                budget_error,
+                f"dokończ z wyższym limitem: kdp-studio images {target} --max-cost …",
+            ]
+        )
+        return ExitCode.BUDGET_EXCEEDED
     if result.failed:
         failed = ", ".join(o.name for o in result.failed)
         _warn([f"nieudane strony: {failed}; ponów: kdp-studio images {target}"])
@@ -775,6 +869,7 @@ def images(
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
     qa: QaOpt = None,
+    max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
     """Krok 2: surowe grafiki stron, których brakuje albo trzeba je odnowić (FR-17)."""
@@ -784,9 +879,12 @@ def images(
     quality = _quality(config, image_quality)
     writer = _open_book(book)
     do_qa = config.settings.qa if qa is None else qa
-    providers = _image_providers(config, writer.manifest.input.format, image_provider, do_qa)
-    with _locked(book, level), _timed(StepTimer(), "images"):
-        code = _step_images(config, book, *providers, workers, quality)
+    images_provider, vision = _image_providers(
+        config, writer.manifest.input.format, image_provider, do_qa
+    )
+    costs = _cost_tracker(config, max_cost, _models(images_provider, vision))
+    with _locked(book, level), _timed(StepTimer(), "images", costs):
+        code = _step_images(config, book, images_provider, vision, workers, quality, costs)
     if code == ExitCode.OK and _open_book(book).manifest.status != "completed":
         typer.echo(f"Przejrzyj {book / RAW_DIR}, a potem: kdp-studio finalize {book}")
     raise typer.Exit(code)
@@ -913,6 +1011,7 @@ def generate(
     image_quality: QualityOpt = None,
     review_ideas: ReviewOpt = None,
     qa: QaOpt = None,
+    max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
     """Generuje kolorowankę: kroki ideas, images i finalize po kolei (FR-17)."""
@@ -928,24 +1027,60 @@ def generate(
     # Wszyscy dostawcy przed pierwszym wywołaniem API: zły klucz albo proporcja wychodzą od razu.
     provider = _text_provider(config)
     images_provider, vision = _image_providers(config, spec.format, image_provider, do_qa)
+    costs = _cost_tracker(config, max_cost, [provider.model, *_models(images_provider, vision)])
 
     with _locked(target, level):
         log_event(_log, logging.INFO, "run_start", command="generate", book=str(target))
-        with _timed(timer, "ideas"):
-            _step_ideas(config, spec, target, provider, do_review)
-        with _timed(timer, "images"):
-            code = _step_images(config, target, images_provider, vision, workers, quality)
-        if code != ExitCode.PROVIDER_ERROR:
+        with _timed(timer, "ideas", costs):
+            _step_ideas(config, spec, target, provider, do_review, costs)
+        if costs.over_budget():
+            code = _stop_after_ideas(target, costs)
+        else:
+            with _timed(timer, "images", costs):
+                code = _step_images(
+                    config, target, images_provider, vision, workers, quality, costs
+                )
+        # Po błędzie krytycznym albo przekroczonym limicie krok 3 czeka na dokończenie kroku 2.
+        if code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
             with _timed(timer, "finalize"):
                 code = max(code, _step_finalize(config, target))
-        _report_times(timer, ExitCode(code))
+        _report_summary(target, timer, costs, ExitCode(code))
     raise typer.Exit(code)
 
 
-def _report_times(timer: StepTimer, code: ExitCode) -> None:
-    """Podsumowanie czasu `generate`: każdy krok i całość (NFR-09)."""
+def _models(images: ImageProvider, vision: VisionProvider | None) -> list[str]:
+    return [images.model] + ([] if vision is None else [vision.model])
+
+
+def _stop_after_ideas(target: Path, costs: CostTracker) -> ExitCode:
+    """`generate`: same pomysły zużyły limit (FR-10), więc grafiki nie startują."""
+    writer = _open_book(target)
+    message = (
+        f"przekroczony limit kosztu {format_usd(costs.limit_usd)} już po pomysłach "
+        f"(wydano {format_usd(costs.spent)})"
+    )
+    writer.update_status(budget_error=message)
+    _fail_lines([message, f"grafiki z wyższym limitem: kdp-studio images {target} --max-cost …"])
+    return ExitCode.BUDGET_EXCEEDED
+
+
+def _report_summary(target: Path, timer: StepTimer, costs: CostTracker, code: ExitCode) -> None:
+    """Podsumowanie `generate` (FR-10, NFR-09): strony, koszt i czas każdego kroku i całości."""
+    manifest = _open_book(target).manifest
+    ok = len(manifest.ok_pages)
+    failed = sum(p.status == "failed" for p in manifest.pages)
     total = timer.total
     steps = ", ".join(f"{STEP_LABELS[name]} {format_duration(s)}" for name, s in timer.steps)
+    kinds = ", ".join(
+        f"{COST_LABELS[kind]} {format_usd(amount)}" for kind, amount in costs.by_kind.items()
+    )
+    typer.echo(
+        f"Strony: {ok}/{len(manifest.pages)} gotowe, "
+        f"{plural(failed, 'nieudana', 'nieudane', 'nieudanych')}."
+    )
+    typer.echo(
+        f"Koszt: {kinds}; razem {format_usd(costs.spent)} z limitu {format_usd(costs.limit_usd)}."
+    )
     typer.echo(f"Czas: {steps}; razem {format_duration(total)}.")
     log_event(
         _log,
@@ -953,8 +1088,13 @@ def _report_times(timer: StepTimer, code: ExitCode) -> None:
         "run_end",
         command="generate",
         exit_code=int(code),
+        pages_ok=ok,
+        pages_failed=failed,
         duration_s=round(total, 2),
         steps={name: round(s, 2) for name, s in timer.steps},
+        cost_usd=costs.spent,
+        costs=costs.by_kind,
+        max_cost_usd=costs.limit_usd,
     )
 
 

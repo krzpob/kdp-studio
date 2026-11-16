@@ -15,7 +15,7 @@ uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii 
 
 `generate` waliduje parametry (FR-01, FR-02), wymyśla pomysły na strony i metadane książki (FR-03) i weryfikuje je (FR-03a, FR-03b), a potem generuje grafiki (FR-05) i zamienia je w gotowe strony (FR-06). Gotowe strony to `page_XX.png` w pełnym wymiarze druku KDP (300 DPI, czysta czerń i biel, marginesy według tabeli KDP), do zaimportowania w Canvie i rozciągnięcia na całą stronę. Wszystko trafia do `output/<temat>_<wiek>_<styl>_<format>/`. Wersje wektorowe są w `svg/`, a surowe wyniki modelu w `raw/`. Obok stron powstaje `canva.md` z instrukcją składania tej książki w Canvie (wymiar projektu, kolejność stron, ustawienia eksportu) i `manifest.json` z parametrami, modelami i statusem każdej strony.
 
-Uwaga: każda strona to płatne wywołanie modelu obrazu (ok. $0.02 za grafikę w jakości `low`), a limit budżetu (`--max-cost`, FR-10) jeszcze nie działa. Jakość ustawisz flagą `--image-quality` albo w `config/settings.yaml`, tam też jest model. Potrzebny jest klucz API OpenAI (osobny od abonamentu ChatGPT) w zmiennej `OPENAI_API_KEY` albo w pliku `.env`:
+Uwaga: każda strona to płatne wywołanie modelu obrazu (ok. $0.045 za grafikę w jakości `medium`, czyli ok. $2.30 za 50 grafik). Jakość ustawisz flagą `--image-quality` albo w `config/settings.yaml`, tam też jest model. Potrzebny jest klucz API OpenAI (osobny od abonamentu ChatGPT) w zmiennej `OPENAI_API_KEY` albo w pliku `.env`:
 
 ```bash
 echo 'OPENAI_API_KEY=sk-...' > .env
@@ -38,6 +38,16 @@ uv run kdp-studio finalize output/dinozaury_przedszkole_kawaii_square
 - **`finalize`** nie wywołuje API, więc możesz go powtarzać przy strojeniu obróbki w `config/ages.yaml`.
 
 Każdy krok bez zmian nic nie robi, a przerwany krok wznawiasz, uruchamiając go ponownie.
+
+### Koszt i limit (FR-10)
+
+Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i cennika `api_pricing` w `config/settings.yaml` (ceny przepisane ze strony OpenAI, z datą sprawdzenia). Gdy OpenAI zmieni ceny albo przełączysz model, zaktualizuj ten cennik: model bez ceny to błąd przed pierwszym wywołaniem. Koszt każdej strony, pomysłów i całej książki zapisuje się w `manifest.json` (`cost_usd`), a konsola pokazuje koszt stron, kroków i podsumowanie `generate`.
+
+`--max-cost` (domyślnie `max_cost_usd: 5.00` z `settings.yaml`) to limit jednego uruchomienia `ideas`, `images` albo `generate`. Po jego przekroczeniu strony w toku się kończą, nowe nie startują, manifest dostaje status `budget_exceeded`, a program kończy się kodem 3. Brakujące strony dokończysz tak:
+
+```bash
+uv run kdp-studio images output/<książka> --max-cost 10
+```
 
 ### Postęp, czasy i logi (NFR-09)
 

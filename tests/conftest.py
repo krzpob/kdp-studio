@@ -20,6 +20,26 @@ def repo_config() -> AppConfig:
     return load_config(DEFAULT_CONFIG_DIR)
 
 
+# Ceny modeli fałszywych dostawców (FR-10), USD za 1M tokenów. Przy ich `usage_per_call`:
+# wywołanie tekstowe $0.0002, grafika $0.0101, ocena QA $0.00104.
+FAKE_PRICES: dict[str, dict[str, float]] = {
+    "fake-text": {"input_per_1m": 1.0, "output_per_1m": 2.0},
+    "fake-image": {"input_per_1m": 10.0, "output_per_1m": 100.0},
+    "fake-vision": {"input_per_1m": 1.0, "output_per_1m": 2.0},
+}
+FAKE_IMAGE_COST = 0.0101
+
+
+def fake_settings(**overrides: Any) -> dict[str, Any]:
+    """settings.yaml z repozytorium z cenami fałszywych modeli i nadpisanymi kluczami."""
+    settings: dict[str, Any] = yaml.safe_load(
+        (DEFAULT_CONFIG_DIR / "settings.yaml").read_text(encoding="utf-8")
+    )
+    settings["api_pricing"]["models"].update(FAKE_PRICES)
+    settings.update(overrides)
+    return settings
+
+
 @pytest.fixture
 def config_dir(tmp_path: Path) -> ConfigDirFactory:
     """Kopia config/ w tmp_path; argumenty nazwane nadpisują zawartość plików.

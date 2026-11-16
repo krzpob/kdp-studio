@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kdp_studio import __version__
+from kdp_studio.pipeline.cost import COST_DIGITS
 from kdp_studio.pipeline.output import write_json_atomic
 from kdp_studio.pipeline.qa import QAIssue, QAResult
 from kdp_studio.pipeline.worker import PageJob, PageOutcome
@@ -32,7 +33,9 @@ AI_DISCLOSURE = (
 
 # FR-17: ideas_ready (po kroku 1) → raw_ready (po kroku 2) → completed (po kroku 3);
 # partial: brakuje stron, failed: błąd krytyczny. "running" tylko w manifestach sprzed FR-17.
-BookStatus = Literal["ideas_ready", "raw_ready", "completed", "partial", "failed", "running"]
+BookStatus = Literal[
+    "ideas_ready", "raw_ready", "completed", "partial", "failed", "budget_exceeded", "running"
+]
 # pending: brak surowej grafiki, raw_ok: surowa grafika gotowa, ok: gotowa strona do Canvy.
 PageStatus = Literal["pending", "raw_ok", "ok", "failed"]
 PageAction = Literal["regenerate"]
@@ -108,6 +111,7 @@ class ManifestIdeas(_Model):
     reserve: int
     reviewed: bool
     usage: Usage
+    cost_usd: float = 0.0  # FR-10: pomysły, weryfikacja i --redo, wszystkie uruchomienia
 
 
 class PageFilesInfo(_Model):
@@ -148,7 +152,7 @@ class ManifestPage(_Model):
     raw_sha256: str | None = None  # surowa grafika przyjęta przez program
     final: FinalInfo | None = None
     qa: QAResult | None = None  # FR-07, wynik ostatniej próby
-    cost_usd: float | None = None  # FR-10
+    cost_usd: float | None = None  # FR-10: grafiki i QA tej strony, wszystkie uruchomienia
     usage: Usage | None = None
     qa_usage: Usage | None = None
     duration_s: float | None = None
@@ -164,6 +168,7 @@ class Manifest(_Model):
     updated_at: str = Field(default_factory=_now)
     status: BookStatus = "running"
     error: str | None = None
+    cost_usd: float = 0.0  # FR-10: łączny koszt API książki ze wszystkich uruchomień
     input: ManifestInput
     providers: ManifestProviders
     layout: ManifestLayout
@@ -243,6 +248,7 @@ class ManifestWriter:
         ]
         manifest = Manifest(
             status="ideas_ready",
+            cost_usd=ideas.cost_usd,
             input=input,
             providers=providers,
             layout=layout,
@@ -255,9 +261,30 @@ class ManifestWriter:
         self.manifest.updated_at = _now()
         write_json_atomic(self.path, self.manifest)
 
-    def record_raw(self, outcome: PageOutcome, *, provider: str, model: str, quality: str) -> None:
-        """Wynik kroku 2 dla jednej strony: surowa grafika (raw_ok) albo błąd (failed)."""
+    def add_ideas_cost(self, usage: Usage, cost_usd: float) -> None:
+        """Kolejne wywołania modelu tekstowego dla pomysłów (`--redo`, FR-17)."""
+        ideas = self.manifest.ideas
+        ideas.usage += usage
+        ideas.cost_usd = round(ideas.cost_usd + cost_usd, COST_DIGITS)
+        self.manifest.cost_usd = round(self.manifest.cost_usd + cost_usd, COST_DIGITS)
+        self.save()
+
+    def record_raw(
+        self,
+        outcome: PageOutcome,
+        *,
+        provider: str,
+        model: str,
+        quality: str,
+        cost_usd: float = 0.0,
+    ) -> None:
+        """Wynik kroku 2 dla jednej strony: surowa grafika (raw_ok) albo błąd (failed).
+
+        `cost_usd` (grafiki i QA tego uruchomienia) dolicza się do strony i książki.
+        """
         page = self.page(outcome.page)
+        page.cost_usd = round((page.cost_usd or 0.0) + cost_usd, COST_DIGITS)
+        self.manifest.cost_usd = round(self.manifest.cost_usd + cost_usd, COST_DIGITS)
         ok = outcome.status == "ok" and outcome.raw_file is not None
         page.status = "raw_ok" if ok else "failed"
         page.idea_id = outcome.idea_id  # po odrzuceniu przez QA: pomysł zapasowy
@@ -320,13 +347,18 @@ class ManifestWriter:
         )
         self.save()
 
-    def update_status(self, fatal_error: str | None = None) -> BookStatus:
-        """Stan książki z wyników stron; `fatal_error` z kroku 2 daje `failed`."""
+    def update_status(
+        self, fatal_error: str | None = None, *, budget_error: str | None = None
+    ) -> BookStatus:
+        """Stan książki z wyników stron; `fatal_error` z kroku 2 daje `failed`,
+        a przekroczony limit kosztu (FR-10) `budget_exceeded`."""
         manifest = self.manifest
         statuses = {p.status for p in manifest.pages}
-        manifest.error = fatal_error
+        manifest.error = fatal_error or budget_error
         if fatal_error is not None:
             manifest.status = "failed"
+        elif budget_error is not None:
+            manifest.status = "budget_exceeded"
         elif statuses == {"ok"}:
             manifest.status = "completed"
         elif statuses & {"pending", "failed"}:
