@@ -406,14 +406,14 @@ Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada 
   - Zaokrąglenie do pełnego centa jak w kalkulatorze KDP, czyli do najbliższego, nie w górę (twarda oprawa: 7.49 / 0.6 = 12.483 → $12.48).
   - **Cenę minimalną liczy się z niezaokrąglonego kosztu druku**, a zaokrągla dopiero wynik. Potwierdzone w kalkulatorze KDP: 202 strony → koszt $4.434 (wyświetlany jako $4.43) → 4.434 / 0.5 = 8.868 → **$8.87**. Z zaokrąglonego kosztu wyszłoby $8.86. Podobnie 402 strony: 7.834 / 0.6 → $13.06, a nie $13.05.
   - **Arytmetyka na `Decimal`**, z wartościami z YAML wczytanymi jako tekst, nigdy na `float`. `round()` na `float` daje niespójne wyniki dla połówek centa (`round(2.955, 2)` = 2.96, ale `round(3.125, 2)` = 3.12).
-  - **Tryb zaokrąglania połówek** (`ROUND_HALF_UP` czy „bankierski”) ma znaczenie tylko wtedy, gdy wynik ma dokładnie 5 na trzecim miejscu po przecinku. Przy **parzystej** liczbie stron to się nie zdarza na żadnym rynku: koszt za stronę razy parzysta liczba stron daje parzystą liczbę tysięcznych, a dzielenie przez 0.5 i 0.6 też nie daje połówki centa. Połówka może wystąpić tylko w wyświetlanym koszcie druku przy nieparzystej liczbie stron (np. US, duży format: 115 stron → $2.955, 125 stron → $3.125). Do sprawdzenia w kalkulatorze KDP, jeśli przyjmuje nieparzyste liczby stron:
+  - **Zaokrąglanie połówek: `ROUND_HALF_UP`**, potwierdzone w kalkulatorze KDP 16.11.2026. Połówka centa pojawia się tylko przy nieparzystej liczbie stron: koszt za stronę razy parzysta liczba stron daje parzystą liczbę tysięcznych, a dzielenie przez 0.5 i 0.6 nie daje połówki. Kalkulator przyjmuje jednak nieparzyste liczby stron, a `front_matter_pages` może być nieparzyste.
+  - **Tantiemę też liczy się z niezaokrąglonego kosztu druku**, a zaokrągla dopiero wynik (`ROUND_HALF_UP`).
+  - Przypadki testowe (letter, Amazon.com, cena $14.00, stawka 60%), potwierdzone w kalkulatorze KDP:
 
-    | Strony | Koszt dokładny | `ROUND_HALF_UP` | Bankierskie | Obcięcie |
-    |---|---|---|---|---|
-    | 115 | 2.955 (druga cyfra nieparzysta) | 2.96 | 2.96 | 2.95 |
-    | 125 | 3.125 (druga cyfra parzysta) | 3.13 | 3.12 | 3.12 |
-
-    Do czasu sprawdzenia program używa `ROUND_HALF_UP`.
+    | Strony | Koszt dokładny | Koszt wyświetlany | Tantiema dokładna | Tantiema | Rozstrzyga |
+    |---|---|---|---|---|---|
+    | 115 | 2.955 | **$2.96** | 8.40 − 2.955 = 5.445 | **$5.45** | połówka przy parzystej drugiej cyfrze tantiemy (5.44|5) idzie w górę, więc nie bankierskie; z zaokrąglonego kosztu wyszłoby $5.44 |
+    | 125 | 3.125 | **$3.13** | 8.40 − 3.125 = 5.275 | **$5.28** | koszt 3.12|5 idzie w górę, więc nie bankierskie ani obcięcie; z zaokrąglonego kosztu wyszłoby $5.27 |
   - **Przypadek graniczny** (potwierdzony w kalkulatorze KDP 16.11.2026: letter, 258 stron → cena minimalna $9.99, stawka 60%): gdy `printing_cost / 0.5` przekracza próg 50%, a `printing_cost / 0.6` wypada poniżej ceny progowej 60%, ceną minimalną jest sama cena progowa. Cena niższa wpadłaby w stawkę 50%, przy której tantiema nie pokryłaby kosztu druku. Na Amazon.com dotyczy to kosztów druku od ok. $4.99 do $5.99.
   - Przypadki testowe (letter, Amazon.com), wszystkie potwierdzone w kalkulatorze KDP 16.11.2026:
 
