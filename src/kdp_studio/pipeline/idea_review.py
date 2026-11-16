@@ -209,6 +209,59 @@ class IdeaReviewer:
         review, usage = self.provider.complete_json(system, user, _Review)
         return {v.id.strip(): v for v in review.verdicts}, usage
 
+    @staticmethod
+    def _apply(
+        pending: Sequence[PageIdea],
+        verdicts: dict[str, _Verdict],
+        accepted: list[PageIdea],
+        rejected: list[RejectedIdea],
+        revised: list[tuple[PageIdea, RevisedIdea]],
+        seen: set[str],
+    ) -> None:
+        """Werdykty jednej rundy: przyjęte i poprawione do `accepted`, reszta do `rejected`."""
+        for idea in pending:
+            verdict = verdicts.get(idea.id)  # brak werdyktu: pomysł zostaje
+            final = idea
+            if verdict is not None and verdict.verdict == "reject":
+                rejected.append(
+                    RejectedIdea(title=idea.title, scene=idea.scene, reason=verdict.reason)
+                )
+                continue
+            if verdict is not None and verdict.verdict == "revise":
+                if not verdict.revised_scene.strip():
+                    rejected.append(
+                        RejectedIdea(title=idea.title, scene=idea.scene, reason=verdict.reason)
+                    )
+                    continue
+                final = PageIdea(
+                    id=idea.id,
+                    title=verdict.revised_title.strip() or idea.title,
+                    scene=verdict.revised_scene,
+                    elements=[e.strip() for e in verdict.revised_elements if e.strip()]
+                    or list(idea.elements),
+                    subject=tag(verdict.revised_subject) or idea.subject,
+                    characters=verdict.revised_characters or idea.characters,
+                    action=tag(verdict.revised_action) or idea.action,
+                    setting=tag(verdict.revised_setting) or idea.setting,
+                )
+            if _key(final.scene) in seen:
+                rejected.append(RejectedIdea(title=idea.title, scene=idea.scene, reason="duplikat"))
+                continue
+            seen.add(_key(final.scene))
+            accepted.append(final)
+            if final is not idea:
+                revised.append(
+                    (
+                        final,
+                        RevisedIdea(
+                            id=idea.id,
+                            original_title=idea.title,
+                            original_scene=idea.scene,
+                            reason=verdict.reason if verdict else "",
+                        ),
+                    )
+                )
+
     def _balance(
         self, spec: BookSpec, pages: list[PageIdea], limits: DiversityLimits
     ) -> tuple[list[PageIdea], list[tuple[PageIdea, RevisedIdea]], Usage]:
@@ -284,50 +337,7 @@ class IdeaReviewer:
             rounds += 1
             verdicts, call_usage = self._judge(spec, pending, accepted)
             usage += call_usage
-            for idea in pending:
-                verdict = verdicts.get(idea.id)  # brak werdyktu: pomysł zostaje
-                final = idea
-                if verdict is not None and verdict.verdict == "reject":
-                    rejected.append(
-                        RejectedIdea(title=idea.title, scene=idea.scene, reason=verdict.reason)
-                    )
-                    continue
-                if verdict is not None and verdict.verdict == "revise":
-                    if not verdict.revised_scene.strip():
-                        rejected.append(
-                            RejectedIdea(title=idea.title, scene=idea.scene, reason=verdict.reason)
-                        )
-                        continue
-                    final = PageIdea(
-                        id=idea.id,
-                        title=verdict.revised_title.strip() or idea.title,
-                        scene=verdict.revised_scene,
-                        elements=[e.strip() for e in verdict.revised_elements if e.strip()]
-                        or list(idea.elements),
-                        subject=tag(verdict.revised_subject) or idea.subject,
-                        characters=verdict.revised_characters or idea.characters,
-                        action=tag(verdict.revised_action) or idea.action,
-                        setting=tag(verdict.revised_setting) or idea.setting,
-                    )
-                if _key(final.scene) in seen:
-                    rejected.append(
-                        RejectedIdea(title=idea.title, scene=idea.scene, reason="duplikat")
-                    )
-                    continue
-                seen.add(_key(final.scene))
-                accepted.append(final)
-                if final is not idea:
-                    revised.append(
-                        (
-                            final,
-                            RevisedIdea(
-                                id=idea.id,
-                                original_title=idea.title,
-                                original_scene=idea.scene,
-                                reason=verdict.reason if verdict else "",
-                            ),
-                        )
-                    )
+            self._apply(pending, verdicts, accepted, rejected, revised, seen)
 
             missing = expected - len(accepted)
             if missing <= 0 or rounds > self.max_topups:
@@ -384,4 +394,87 @@ class IdeaReviewer:
                 "diversity": diversity,
             }
         )
+        return ReviewResult(ideas=result, usage=usage, warnings=warnings)
+
+    def replace(
+        self,
+        spec: BookSpec,
+        ideas: BookIdeas,
+        ids: Sequence[str],
+        generator: IdeaGenerator,
+        *,
+        review: bool = True,
+    ) -> ReviewResult:
+        """FR-17 `--redo`: nowe pomysły w miejsce `ids`, z tymi samymi id.
+
+        Nowe pomysły różnią się od wszystkich w książce, także od zastępowanych, i przechodzą
+        weryfikację (gdy `review`). Zastąpione trafiają do śladu `review.rejected`.
+        """
+        targets = list(dict.fromkeys(ids))
+        by_id = {idea.id: idea for idea in ideas.pages}
+        others = [idea for idea in ideas.pages if idea.id not in targets]
+        fresh: list[PageIdea] = []
+        rejected: list[RejectedIdea] = [
+            RejectedIdea(title=by_id[i].title, scene=by_id[i].scene, reason="zastąpiony (--redo)")
+            for i in targets
+        ]
+        revised: list[tuple[PageIdea, RevisedIdea]] = []
+        seen = {_key(idea.scene) for idea in ideas.pages}
+        usage = Usage()
+        next_number = max((int(i.id.split("_")[1]) for i in ideas.pages), default=0) + 1
+        added = rounds = 0
+
+        while len(fresh) < len(targets) and rounds <= self.max_topups:
+            rounds += 1
+            known = [
+                *ideas.pages,
+                *fresh,
+                *(
+                    PageIdea(id="idea_00", title=r.title, scene=r.scene, elements=[])
+                    for r in rejected
+                ),
+            ]
+            pending, call_usage = generator.generate_more(
+                spec, len(targets) - len(fresh), known, next_number
+            )
+            usage += call_usage
+            next_number += len(pending)
+            added += len(pending)
+            if not pending:
+                break
+            verdicts: dict[str, _Verdict] = {}
+            if review:
+                verdicts, call_usage = self._judge(spec, pending, others + fresh)
+                usage += call_usage
+            self._apply(pending, verdicts, fresh, rejected, revised, seen)
+
+        if len(fresh) < len(targets):
+            raise ProviderError(
+                f"udało się wymyślić {len(fresh)} z {len(targets)} nowych pomysłów "
+                f"(odrzucono {len(rejected) - len(targets)})"
+            )
+        new_ids = {idea.id: target for idea, target in zip(fresh, targets, strict=False)}
+        replacements = {
+            new_ids[idea.id]: idea.model_copy(update={"id": new_ids[idea.id]})
+            for idea in fresh[: len(targets)]
+        }
+        pages = [replacements.get(idea.id, idea) for idea in ideas.pages]
+        trail = [
+            note.model_copy(update={"id": new_ids[idea.id]})
+            for idea, note in revised
+            if idea.id in new_ids
+        ]
+        old = ideas.review or IdeaReview(rounds=0)
+        history = IdeaReview(
+            rejected=[*old.rejected, *rejected],
+            revised=[*old.revised, *trail],
+            added=old.added + added,
+            rounds=old.rounds + rounds,
+        )
+        limits = DiversityLimits.from_config(spec, self.config, ideas.theme_anchors)
+        diversity = diversity_report(pages[: spec.pages], limits)
+        result = ideas.model_copy(
+            update={"pages": pages, "review": history, "diversity": diversity}
+        )
+        warnings = [f"różnorodność: {issue}" for issue in diversity.issues]
         return ReviewResult(ideas=result, usage=usage, warnings=warnings)

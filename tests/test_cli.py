@@ -275,7 +275,7 @@ def test_generate_writes_raw_pages(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "Generuję 12 grafik (fake, fake-image, jakość medium, równolegle 4)" in out
     assert "page_07: ok (" in out
-    assert "Strony: 12/12 ok" in out
+    assert "Surowe grafiki: 12/12 ok" in out
     assert sorted(p.name for p in book.glob("*.png")) == [f"page_{i:02d}.png" for i in range(1, 13)]
     assert sorted(p.name for p in (book / "svg").iterdir()) == [
         f"page_{i:02d}.svg" for i in range(1, 13)
@@ -301,10 +301,10 @@ def test_page_failure_exits_2(
     _image_provider(monkeypatch, FakeImageProvider(fail=fail))
     assert main([*BASE, "--pages", "12"]) == ExitCode.PARTIAL
     captured = capsys.readouterr()
-    assert "Strony: 11/12 ok" in captured.out
+    assert "Surowe grafiki: 11/12 ok" in captured.out
     assert not (BOOK_DIR / "page_02.png").exists()
     assert "page_02: nieudana: moderacja" in captured.out
-    assert "Błąd: nieudane strony: page_02" in captured.err
+    assert "Ostrzeżenie: nieudane strony: page_02" in captured.err
 
 
 def test_fatal_image_error_exits_4(
@@ -540,7 +540,7 @@ def test_qa_gives_up_after_two_retries(
     assert not (BOOK_DIR / "page_02.png").exists()
     canva = (BOOK_DIR / "canva.md").read_text(encoding="utf-8")
     assert "brakuje 1 strony: `page_02.png`" in canva
-    assert "Błąd: nieudane strony: page_02" in capsys.readouterr().err
+    assert "Ostrzeżenie: brakujące strony: page_02" in capsys.readouterr().err
 
 
 def test_qa_from_settings_and_no_qa_flag(
