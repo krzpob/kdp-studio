@@ -583,6 +583,15 @@ Adapter `ComfyUIImageProvider` generuje grafiki na serwerze ComfyUI w sieci loka
   - Adapter ComfyUI buduje krótki prompt pozytywny z szablonu `comfyui.positive_template` (np. słowo-klucz modelu lub LoRA + `{scene}` + `{style_keywords}`) i prompt negatywny z `comfyui.negative` (np. `text, watermark, grid, panels, collage, shading, grayscale, color`).
 - Szablony są w konfiguracji, bo zależą od modelu w workflow (SD 1.5, SDXL, Flux mają różne potrzeby).
 
+**Model docelowy: Stable Diffusion 1.5** (`v1-5-pruned-emaonly`, wagi tylko do generowania)
+- Model był trenowany na 512 × 512, więc to jego naturalny rozmiar. Pion 512 × 768 działa, ale częściej powtarza elementy (np. dwie głowy jednej postaci), co wyłapuje kontrola jakości.
+- Bazowy SD 1.5 słabo trzyma się złożonych opisów i ma skłonność do cieniowania i szarości. Domyślne ustawienia są więc pod niego dobrane:
+  - prompt pozytywny w stylu tagów, krótki, z najważniejszym na początku (scena przed stylem);
+  - rozbudowany prompt negatywny, obejmujący też typowe wady SD 1.5 (`blurry, lowres, deformed, extra limbs`);
+  - sceny z 1–3 postaciami. Przy złożonych scenach dla starszych wieków trzeba się liczyć z większą liczbą odrzuceń w QA.
+- Czysty line art zwykle wymaga dodatkowego modelu w workflow: LoRA albo checkpointu wytrenowanego na kolorowankach (wybór po próbach, §14 pytanie 8).
+- **Licencja:** SD 1.5 jest na licencji CreativeML OpenRAIL-M, która dopuszcza użycie komercyjne z ograniczeniami użycia. Każda dodana LoRA lub checkpoint ma własną licencję i musi dopuszczać sprzedaż wygenerowanych obrazów. Manifest zapisuje nazwy plików modeli z workflow, żeby dało się to sprawdzić dla każdej książki.
+
 **Komunikacja z serwerem**
 - Przed pierwszą stroną: `GET /system_stats`. Brak odpowiedzi to błąd krytyczny („serwer ComfyUI niedostępny”, kod 4), zanim program wywoła cokolwiek płatnego.
 - Strona:
@@ -614,15 +623,15 @@ Konfiguracja (szkic):
 # settings.yaml
 comfyui:
   url: http://192.168.1.50:8188      # COMFYUI_URL nadpisuje
-  workflow: config/comfyui/lineart_sd15.json
+  workflow: config/comfyui/lineart_sd15.json   # checkpoint: v1-5-pruned-emaonly (+ LoRA do line artu)
   output_node: "9"                   # id węzła SaveImage w pliku workflow
   reference_workflow: null           # opcjonalnie, dla reference_image
   max_size: {long: 768, short: 512}  # limit sprzętowy generowania
   sizes:
     "1:1": [512, 512]
     "3:4": [512, 768]
-  positive_template: "coloring book page, line art, {scene}, {style_keywords}"
-  negative: "text, letters, watermark, signature, grid, multiple panels, collage, frame, shading, grayscale, color, gradient"
+  positive_template: "{scene}, coloring book page, black and white line art, thick clean outlines, white background, {style_keywords}"
+  negative: "text, letters, watermark, signature, grid, multiple panels, collage, frame, shading, grayscale, color, gradient, blurry, lowres, deformed, extra limbs"
   max_concurrency: 1
   poll_interval_s: 2
   timeout_s: 300
@@ -940,7 +949,7 @@ kdp-studio/
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
 7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
-8. FR-18: czy sprzęt pozwala na pion 512 × 768 (ta sama liczba pikseli co 768 × 512)? Który model i LoRA w ComfyUI dają czysty line art (wybór po próbach), i czy workflow ma węzeł powiększania dla starszych wieków.
+8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
 
 ## 14a. Pomysły na rozwój
 
