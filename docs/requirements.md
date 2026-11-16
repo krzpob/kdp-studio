@@ -211,7 +211,7 @@ Generowanie dzieli się na trzy kroki, każdy jako osobna komenda. Między kroka
 - Plik blokady w katalogu książki zapobiega dwóm równoczesnym uruchomieniom. Użytkownik edytuje pliki tylko między uruchomieniami.
 
 **Ręczna weryfikacja po kroku 1**
-- Użytkownik edytuje `ideas.json`: poprawia opis sceny (`scene`, `elements`), usuwa pomysły albo zmienia kolejność. Pierwsze `pages` pomysłów to strony, reszta to zapas.
+- Użytkownik edytuje `ideas.json`: poprawia opis sceny (`scene`, `elements`), usuwa pomysły albo zmienia kolejność. Pierwsze `pages` pomysłów to strony, reszta to zapas. Kolejność decyduje o przypisaniu tylko do pierwszej grafiki. Potem przypisanie jest w `manifest.json` (`idea_id`), bo strony mogą mieć już grafiki, a QA mogło podmienić pomysł na zapasowy.
 - `kdp-studio ideas <katalog> --redo idea_07,idea_19`: LLM wymyśla w miejsce wskazanych pomysłów nowe, różne od wszystkich pozostałych (mechanizm dogenerowania z FR-03a). Nowe pomysły przechodzą weryfikację i dostają te same `id`.
 - Krok 2 sprawdza `ideas.json` (schemat, wystarczająca liczba pomysłów, unikalne `id`) i buduje prompty od nowa. Błąd kończy się kodem 1, zanim powstanie jakakolwiek grafika.
 
@@ -227,12 +227,20 @@ Po wykonaniu program czyści `action`.
 
 Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Program wykrywa ją po `raw_sha256`, oznacza stronę jako `edited_by_user` i nie generuje jej ponownie.
 
+**Szczegóły kroku 2**
+- Do kolejki trafia strona z `action: regenerate`, bez surowej grafiki (brak pliku albo nieudana próba), nieudana (także po błędzie obróbki w kroku 3) i ze zmienionym promptem. Prompt zmienia się też po zmianie fragmentu promptu w profilach wieku, stylu albo formatu, więc po takiej zmianie krok 2 generuje ponownie wszystkie strony.
+- Przed generowaniem program usuwa nieaktualne `page_XX.png` i `svg/page_XX.svg` tych stron, żeby do Canvy nie trafiła stara wersja.
+- Zapas dla QA to pomysły bez strony, w kolejności z `ideas.json`, bez pomysłów już odrzuconych przez QA.
+- Odrzucona albo nieudana w obróbce podglądu surowa grafika trafia do `rejected/<strona>_tryN.png`. Pusty slot w `raw/` oznacza, że kolejne `kdp-studio images` wygeneruje stronę ponownie.
+- Błąd krytyczny (kod 4) zostawia stan `failed`. Po usunięciu przyczyny `kdp-studio images` dokańcza tylko brakujące strony.
+- Plik blokady to `.kdp-studio.lock` w katalogu książki. Po twardym przerwaniu procesu (bez Ctrl+C) zostaje i trzeba go usunąć ręcznie: komunikat to mówi.
+
 **QA w kroku 2**
 - Z `--qa` każda strona przechodzi kontrolę jakości w kroku 2, a odrzucone są wymieniane na zapas jak dotąd (FR-07). Użytkownik ogląda już przefiltrowany zestaw.
 - Kontrola ocenia stronę po obróbce, bo jest skalibrowana na tym, co idzie do druku. Krok 2 robi więc tymczasową obróbkę na potrzeby kontroli, a na dysk zapisuje tylko surowy plik. Obróbka jest deterministyczna, więc krok 3 daje ten sam wynik, który oceniała kontrola.
 
 **Krok 3**
-- `finalize` przetwarza tylko strony, których surowy plik albo parametry obróbki się zmieniły. Manifest zapisuje sumę kontrolną parametrów obróbki z profilu wieku, więc po zmianie `ages.yaml` przetwarza wszystkie strony ponownie.
+- `finalize` przetwarza tylko strony, których surowy plik albo parametry obróbki się zmieniły. Strona z błędem obróbki nie jest obrabiana ponownie z tymi samymi wejściami. Żeby ją naprawić, trzeba wygenerować grafikę ponownie (`kdp-studio images`) albo zmienić parametry obróbki. Manifest zapisuje sumę kontrolną parametrów obróbki z profilu wieku, więc po zmianie `ages.yaml` przetwarza wszystkie strony ponownie.
 - Nie wywołuje API, więc można go powtarzać bez kosztu, np. przy strojeniu progowania.
 
 **Jakość grafik**
@@ -763,7 +771,8 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
 ├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
-├── rejected/page_07_try1.png …     # odrzucone przez QA (z powodem w manifeście)
+├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
+├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
 └── cover/                          # tylko po `kdp-studio cover` (FR-15, poza MVP)
     ├── cover.pdf                   # gotowy plik okładki do KDP
     ├── cover.png, front.png
@@ -778,10 +787,16 @@ Przykład wpisu strony w `manifest.json`:
   "page": 7,
   "idea_id": "idea_07",
   "status": "ok",
+  "action": null,
+  "edited_by_user": false,
   "attempts": 2,
   "provider": "openai",
   "model": "gpt-image-2.5-flare",
+  "quality": "medium",
   "prompt": "…",
+  "prompt_sha256": "…",
+  "raw_sha256": "…",
+  "final": {"raw_sha256": "…", "postprocess_sha256": "…"},
   "qa": {"pass": true, "issues": []},
   "cost_usd": 0.08,
   "duration_s": 14.2,

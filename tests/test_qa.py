@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -17,6 +18,7 @@ from kdp_studio.models import (
     PageIdea,
     PagePrompt,
 )
+from kdp_studio.pipeline.postprocess import PageFiles, PagePostprocessor, PostprocessError
 from kdp_studio.pipeline.qa import QAChecker, QAIssue, QAResult, qa_instructions
 from kdp_studio.pipeline.worker import PageJob, PageWorker, ReservePool
 from kdp_studio.providers.base import ProviderError, Usage
@@ -182,7 +184,7 @@ def test_page_fails_after_max_retries(tmp_path: Path, repo_config: AppConfig) ->
     assert page.error is not None and page.error.startswith("QA odrzuciło 2 próby, ostatnio: text")
     assert [r.file.name for r in page.rejected] == ["page_01_try1.png", "page_01_try2.png"]
     assert [r.idea_id for r in page.rejected] == ["idea_01", "idea_04"]
-    assert page.page_file is None
+    assert page.raw_file is None  # odrzucona surowa grafika jest w rejected/
     assert page.qa is not None and not page.qa.passed
 
 
@@ -280,3 +282,22 @@ def test_reserve_pool_starts_after_book_pages(pages: int) -> None:
     assert pool.remaining == 6 - pages
     first = pool.take()
     assert first is not None and first.idea_id == f"idea_{pages + 1:02d}"
+
+
+@dataclass(frozen=True)
+class _BrokenPreview:
+    """Obróbka podglądu dla QA, która zawsze zawodzi (np. pusta strona)."""
+
+    book_dir: Path
+
+    def process(self, raw: Path, name: str) -> PageFiles:
+        raise PostprocessError("pusta strona")
+
+
+def test_preview_error_moves_raw_to_rejected(tmp_path: Path, repo_config: AppConfig) -> None:
+    worker = _worker(tmp_path, repo_config, FakeVisionProvider())
+    worker.preview = cast(PagePostprocessor, _BrokenPreview(tmp_path))
+    [page] = worker.run(_jobs(1)).outcomes
+    assert (page.status, page.error, page.raw_file) == ("failed", "obróbka: pusta strona", None)
+    assert (tmp_path / "rejected" / "page_01_try1.png").is_file()
+    assert not (tmp_path / "raw" / "page_01.png").exists()
