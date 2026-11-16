@@ -56,6 +56,12 @@ class PageIdea(BaseModel):
     title: NonEmptyStr
     scene: NonEmptyStr  # po angielsku, gotowe do promptu obrazu
     elements: list[NonEmptyStr]
+    # Cechy sceny do kontroli różnorodności (FR-03b), po angielsku, małymi literami.
+    # None w plikach sprzed FR-03b i po ręcznej edycji bez cech: pomiar je pomija.
+    subject: str | None = None  # rodzaj głównej postaci, np. "kitten"; "none" dla wzorów
+    characters: Annotated[int, Field(ge=0)] | None = None  # liczba postaci w scenie
+    action: str | None = None  # główna czynność, czasownik w formie podstawowej
+    setting: str | None = None  # miejsce akcji, np. "living room"
 
 
 class RejectedIdea(BaseModel):
@@ -90,6 +96,21 @@ class IdeaReview(BaseModel):
     rounds: int = 1
 
 
+class DiversityReport(BaseModel):
+    """Rozkład cech stron książki (FR-03b), zapisany w `ideas.json`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pages: int  # liczba stron, na których liczono rozkład (bez zapasu)
+    characters: dict[str, int] = {}  # liczba postaci → liczba stron
+    actions: dict[str, int] = {}  # najczęstsze wartości, malejąco
+    settings: dict[str, int] = {}
+    elements: dict[str, int] = {}
+    issues: list[str] = []  # problemy, które zostały po wyrównaniu (po polsku)
+    moved_from_reserve: int = 0  # pomysły zamienione z zapasem
+    revised: int = 0  # pomysły poprawione przez LLM dla różnorodności
+
+
 class BookIdeas(BaseModel):
     """Zawartość `ideas.json`: pierwsze `pages` pomysłów to strony, reszta to zapas."""
 
@@ -98,6 +119,10 @@ class BookIdeas(BaseModel):
     book: BookMetadata
     pages: list[PageIdea]
     review: IdeaReview | None = None  # None: weryfikacja wyłączona
+    # FR-03b: miejsca, przedmioty i czynności, których wymaga sam temat (np. "kitchen" dla
+    # „Kotki w kuchni”); nie podlegają limitom różnorodności.
+    theme_anchors: list[str] = []
+    diversity: DiversityReport | None = None  # FR-03b
 
 
 class PagePrompt(BaseModel):

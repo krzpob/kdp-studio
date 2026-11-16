@@ -4,6 +4,7 @@
 #   name, description  – wyświetlane przez `kdp-studio profiles age` (FR-12)
 #   line, subjects, background, fill_areas – charakterystyka grafiki (dokumentacja i wejście dla LLM w FR-03)
 #   prompt_fragment    – fragment promptu obrazu (FR-04), po angielsku
+#   multi_subject_share – minimalny udział stron z 2+ postaciami (FR-03b), 0–1; 0 wyłącza
 #   postprocess        – parametry obróbki (FR-06); cienkie linie wymagają łagodniejszego
 #                        usuwania szumu niż grube linie dla najmłodszych
 #     threshold        – "otsu" albo liczba 0–255
@@ -23,6 +24,7 @@ przedszkole:
     very thick bold outlines, one large simple subject, minimal details,
     no background, large closed areas, the whole drawing fits inside the image with white space
     on every side, for toddlers
+  multi_subject_share: 0.0
   postprocess:
     threshold: otsu
     min_speck_area: 64
@@ -42,6 +44,7 @@ wczesnoszkolne:
     thick clean outlines, simple scene with 1-3 subjects, simple background,
     the whole scene fits inside the image with white space on every side, nothing cut off
     by the edges, for kids 6-8
+  multi_subject_share: 0.25
   postprocess:
     threshold: otsu
     min_speck_area: 40
@@ -60,6 +63,7 @@ szkolne:
   prompt_fragment: >-
     medium outlines, full scene, moderate detail, background lines such as floor, walls or
     horizon may run to the edges but no object is cut off, for kids 9-12
+  multi_subject_share: 0.3
   postprocess:
     threshold: otsu
     min_speck_area: 24
@@ -78,6 +82,7 @@ nastolatki:
   prompt_fragment: >-
     fine clean lines, detailed scene, decorative patterns, detailed background may extend
     to the edges of the image, for teens
+  multi_subject_share: 0.2
   postprocess:
     threshold: otsu
     min_speck_area: 12
@@ -96,6 +101,7 @@ dorosli:
   prompt_fragment: >-
     fine intricate line work, highly detailed patterns, many small areas to color,
     background and patterns may extend to the edges of the image, for adults
+  multi_subject_share: 0.0
   postprocess:
     threshold: otsu
     min_speck_area: 6

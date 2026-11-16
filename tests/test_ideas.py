@@ -51,7 +51,8 @@ def test_prompt_contains_profiles_and_count(repo_config: AppConfig) -> None:
     assert "it must be 30" in user
     assert "copyrighted or trademarked characters" in system
     assert "in English" in system
-    assert "two or three characters doing something together" in system
+    assert "Vary the book as a whole" in system
+    assert "scenes with several characters: not required" in user  # przedszkole
 
 
 def test_prompt_uses_metadata_language_from_settings(repo_config: AppConfig) -> None:
