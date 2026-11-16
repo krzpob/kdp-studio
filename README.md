@@ -39,6 +39,16 @@ uv run kdp-studio finalize output/dinozaury_przedszkole_kawaii_square
 
 Każdy krok bez zmian nic nie robi, a przerwany krok wznawiasz, uruchamiając go ponownie.
 
+### Postęp, czasy i logi (NFR-09)
+
+W terminalu kroki `images` i `finalize` pokazują pasek postępu z czasem do końca. Każdy krok kończy się linią `Czas kroku (…)`, a `generate` podsumowuje czasy wszystkich kroków i całości, np. `Czas: pomysły 48 s, grafiki 6 min 12 s, obróbka 2 min 05 s; razem 9 min 07 s.`
+
+Szczegóły trafiają do `kdp-studio.log` w katalogu książki: jeden obiekt JSON w wierszu, dopisywany przez każdy krok (początek i koniec kroku z czasem, każda strona z czasem, tokenami i błędem, odrzucenia QA, ostrzeżenia). Z `--log-level debug` (albo `log_level: debug` w `settings.yaml`) log zapisuje też każde wywołanie API z czasem, tokenami i promptem grafiki. Przykład, czasy obróbki stron:
+
+```bash
+jq -r 'select(.event == "page_final") | "\(.name) \(.duration_s) s"' output/<książka>/kdp-studio.log
+```
+
 Z flagą `--qa` (albo `qa: true` w `settings.yaml`) każda gotowa strona przechodzi kontrolę jakości modelem z wizją (FR-07): panele lub kolaż, cieniowanie, tekst, otwarte kontury, poziom szczegółów niezgodny z wiekiem, scena niezgodna z opisem. Odrzucona strona trafia do `rejected/page_XX_tryN.png` (powód jest w `manifest.json`), a jej miejsce zajmuje grafika z zapasowego pomysłu, najwyżej 2 ponowienia na stronę (`qa_max_retries`). Ocena jednej strony to ok. 3,6 tys. tokenów wejścia modelu tekstowego.
 
 Dostępne profile wieku, stylu i formatu wypisuje `uv run kdp-studio profiles` (albo `profiles age`, `profiles style`, `profiles format`). Profile są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.

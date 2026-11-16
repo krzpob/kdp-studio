@@ -23,7 +23,7 @@ from kdp_studio.pipeline.manifest import (
     sha256_file,
     sha256_text,
 )
-from kdp_studio.pipeline.output import IDEAS_FILE, RAW_DIR
+from kdp_studio.pipeline.output import IDEAS_FILE, LOG_FILE, RAW_DIR
 from kdp_studio.pipeline.postprocess import PageGeometry
 from kdp_studio.pipeline.worker import PageJob
 
@@ -66,9 +66,12 @@ class BookLock:
 
     def release(self) -> None:
         self.path.unlink(missing_ok=True)
-        # Krok przerwany przed pierwszym plikiem nie zostawia pustego katalogu książki.
-        if self._created_dir and not any(self.path.parent.iterdir()):
-            self.path.parent.rmdir()
+        # Krok przerwany przed pierwszym plikiem nie zostawia pustego katalogu książki
+        # (sam log nieudanego kroku 1 to za mało, żeby katalog został).
+        parent = self.path.parent
+        if self._created_dir and all(p.name == LOG_FILE for p in parent.iterdir()):
+            (parent / LOG_FILE).unlink(missing_ok=True)
+            parent.rmdir()
 
     def acquire(self) -> None:
         self._created_dir = not self.path.parent.exists()

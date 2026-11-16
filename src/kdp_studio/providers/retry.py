@@ -5,11 +5,14 @@ Niezależne od dostawcy: adapter decyduje, które błędy są przejściowe.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 DEFAULT_MAX_ATTEMPTS = 3  # spec FR-05: maks. 3 próby na wywołanie
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,5 +48,11 @@ def call_with_retries[T](
             if decision is False or attempt == policy.max_attempts:
                 raise
             suggested = None if isinstance(decision, bool) else decision
-            sleep(policy.delay(attempt, suggested))
+            delay = policy.delay(attempt, suggested)
+            # Tylko typ błędu: treść błędu dostawcy bywa niebezpieczna (NFR-10).
+            _log.warning(
+                "retry",
+                extra={"fields": {"attempt": attempt, "delay_s": delay, "error": type(e).__name__}},
+            )
+            sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover

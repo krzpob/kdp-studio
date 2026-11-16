@@ -48,6 +48,10 @@ models:
 # Jakość grafik: low, medium, high albo auto (spec §14, pytanie 5: ustalić po spike'u).
 image_quality: medium
 
+# Poziom logu kdp-studio.log w katalogu książki (NFR-09): info zapisuje kroki, strony i ich czasy,
+# debug dodatkowo każde wywołanie API (czas, tokeny, prompt grafiki). --log-level nadpisuje.
+log_level: info
+
 # Liczba grafik generowanych równolegle (FR-05); --concurrency nadpisuje. Zakres 1–16.
 concurrency: 4
 

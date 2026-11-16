@@ -92,6 +92,7 @@ class ModelSettings(_Strict):
 
 
 ImageQuality = Literal["low", "medium", "high", "auto"]
+LogLevel = Literal["info", "debug"]  # NFR-09
 MAX_CONCURRENCY = 16
 MAX_QA_RETRIES = 5
 
@@ -159,6 +160,7 @@ class Settings(_Strict):
     diversity: DiversitySettings = DiversitySettings()
     qa: bool = False
     qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    log_level: LogLevel = "info"
 
 
 class AppConfig(_Strict):
