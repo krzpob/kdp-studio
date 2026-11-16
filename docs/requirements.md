@@ -31,6 +31,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-15 | ⬜ | | Poza MVP. Specyfikacja: #17. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
+| FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -621,6 +622,98 @@ pricing:
   stale_after_days: 180
 ```
 
+### ⬜ FR-18: Lokalne generowanie grafik przez ComfyUI (poza MVP)
+
+Adapter `ComfyUIImageProvider` generuje grafiki na serwerze ComfyUI w sieci lokalnej, zamiast w chmurze. Grafiki nic nie kosztują, a model i workflow wybiera użytkownik. Ograniczenie sprzętowe: **generowanie maksymalnie 512 × 512 px albo 768 × 512 px**.
+
+**Włączanie**
+- `--image-provider comfyui` albo `providers.image: comfyui` w `settings.yaml`.
+- Adres serwera w `settings.yaml` (`comfyui.url`, np. `http://192.168.1.50:8188`) albo w zmiennej `COMFYUI_URL`, która ma pierwszeństwo.
+- Zgodnie z NFR-02: nowy plik `providers/comfyui_image.py` i wpis w rejestrze; `pipeline/` pozostaje bez zmian, poza rozszerzeniem kontraktu `ImageRequest` opisanym niżej.
+
+**Workflow**
+- Użytkownik przygotowuje w ComfyUI workflow, który daje dobry line art, i eksportuje go w formacie API (*File → Export (API)*). Plik trafia do `config/comfyui/` i jest wskazany w `comfyui.workflow`.
+- W wartościach węzłów workflow użytkownik wpisuje znaczniki, które adapter podmienia przed wysłaniem:
+  - `{{positive}}` i `{{negative}}`: prompt pozytywny i negatywny;
+  - `{{seed}}`: ziarno;
+  - `{{width}}` i `{{height}}`: rozmiar generowania.
+  Znaczniki liczbowe są podmieniane na liczby, nie na tekst.
+- Walidacja przy starcie: plik jest w formacie API (węzły z `class_type` i `inputs`), zawiera wszystkie wymagane znaczniki, a `comfyui.output_node` wskazuje istniejący węzeł zapisu obrazu. Błąd to kod 1, przed pierwszym wywołaniem.
+
+**Rozmiar generowania**
+- Rozmiary z konfiguracji, dla każdej proporcji osobno, z twardym limitem `comfyui.max_size` (dłuższy bok ≤ 768 px, krótszy ≤ 512 px):
+  - `1:1` (kwadrat) → 512 × 512;
+  - `3:4` (letter) → 512 × 768 (pion; proporcja 2:3, różnicę wyrównuje biały margines w FR-06, jak w adapterze OpenAI).
+- `supported_aspects()` zwraca tylko proporcje z konfiguracji, więc nieobsługiwany format jest wykrywany przed pierwszym wywołaniem (jak dziś).
+- Rozmiar wyniku może być większy niż rozmiar generowania, jeśli workflow ma węzeł powiększania (np. model 2–4× po wygenerowaniu). Limit dotyczy generowania, a adapter zapisuje rzeczywiste wymiary pliku w `ImageResult`.
+
+**Niska rozdzielczość a wiek odbiorcy**
+- Przy 512 px wektoryzacja (D6) musi powiększyć grafikę ok. 4–5 razy. Grube linie dla młodszych dzieci to wytrzymują, ale drobne wzory dla nastolatków i dorosłych tracą szczegóły.
+- W `ages.yaml` dochodzi `min_source_px`: najkrótszy bok surowej grafiki, przy którym profil daje dobre strony (szkic: przedszkole i wczesnoszkolne 512, szkolne 768, nastolatki i dorośli 1024).
+- Walidacja (FR-01) ostrzega, gdy rozmiar wyniku dostawcy jest mniejszy niż `min_source_px` wybranego wieku, i podpowiada węzeł powiększania w workflow. Z `--strict` to błąd.
+
+**Prompt: pozytywny i negatywny osobno**
+- Modele Stable Diffusion źle rozumieją zakazy w prompcie pozytywnym („no text” potrafi dodać tekst), a koder CLIP czyta tylko ok. 77 tokenów, więc długi blok stylu z FR-04 zostałby obcięty.
+- Kontrakt `ImageRequest` dostaje strukturę promptu obok gotowego tekstu: `scene`, części bloku stylu i listę zakazów (`negative`).
+  - Adapter OpenAI składa z tego dokładnie ten sam prompt co dziś (test przypinający FR-04 bez zmian).
+  - Adapter ComfyUI buduje krótki prompt pozytywny z szablonu `comfyui.positive_template` (np. słowo-klucz modelu lub LoRA + `{scene}` + `{style_keywords}`) i prompt negatywny z `comfyui.negative` (np. `text, watermark, grid, panels, collage, shading, grayscale, color`).
+- Szablony są w konfiguracji, bo zależą od modelu w workflow (SD 1.5, SDXL, Flux mają różne potrzeby).
+
+**Model docelowy: Stable Diffusion 1.5** (`v1-5-pruned-emaonly`, wagi tylko do generowania)
+- Model był trenowany na 512 × 512, więc to jego naturalny rozmiar. Pion 512 × 768 działa, ale częściej powtarza elementy (np. dwie głowy jednej postaci), co wyłapuje kontrola jakości.
+- Bazowy SD 1.5 słabo trzyma się złożonych opisów i ma skłonność do cieniowania i szarości. Domyślne ustawienia są więc pod niego dobrane:
+  - prompt pozytywny w stylu tagów, krótki, z najważniejszym na początku (scena przed stylem);
+  - rozbudowany prompt negatywny, obejmujący też typowe wady SD 1.5 (`blurry, lowres, deformed, extra limbs`);
+  - sceny z 1–3 postaciami. Przy złożonych scenach dla starszych wieków trzeba się liczyć z większą liczbą odrzuceń w QA.
+- Czysty line art zwykle wymaga dodatkowego modelu w workflow: LoRA albo checkpointu wytrenowanego na kolorowankach (wybór po próbach, §14 pytanie 8).
+- **Licencja:** SD 1.5 jest na licencji CreativeML OpenRAIL-M, która dopuszcza użycie komercyjne z ograniczeniami użycia. Każda dodana LoRA lub checkpoint ma własną licencję i musi dopuszczać sprzedaż wygenerowanych obrazów. Manifest zapisuje nazwy plików modeli z workflow, żeby dało się to sprawdzić dla każdej książki.
+
+**Komunikacja z serwerem**
+- Przed pierwszą stroną: `GET /system_stats`. Brak odpowiedzi to błąd krytyczny („serwer ComfyUI niedostępny”, kod 4), zanim program wywoła cokolwiek płatnego.
+- Strona:
+  1. `POST /prompt` z workflow po podmianie znaczników → `prompt_id`. Odpowiedź z `node_errors` to błąd krytyczny (zły workflow).
+  2. Czekanie na wynik przez odpytywanie `GET /history/{prompt_id}` co `comfyui.poll_interval_s`, z limitem `comfyui.timeout_s` (domyślnie 300 s). Przekroczenie czasu to `POST /interrupt` i niekrytyczny błąd strony.
+  3. Pobranie obrazu przez `GET /view?filename=…&subfolder=…&type=output` z węzła `output_node`.
+- Błąd wykonania na serwerze (np. brak pamięci GPU) to błąd krytyczny z podpowiedzią zmniejszenia rozmiaru, bo kolejne strony skończyłyby się tak samo.
+- Równoległość: serwer ComfyUI ma jedną kolejkę na jedno GPU, więc liczba równoczesnych stron to `min(--concurrency, comfyui.max_concurrency)`, domyślnie 1.
+
+**Ziarno i koszt**
+- Każda strona dostaje losowe ziarno, chyba że podano `--seed`. Ziarno trafia do manifestu (NFR-08), więc stronę da się odtworzyć tym samym workflow i modelem. Manifest zapisuje też nazwę pliku workflow i jego sumę kontrolną.
+- Koszt grafiki to 0 USD (FR-10), albo `comfyui.cost_per_image_usd`, jeśli ktoś chce liczyć np. prąd. Limit budżetu dotyczy wtedy tylko wywołań tekstowych i kontroli jakości.
+
+**Obraz referencyjny**
+- `reference_image` (np. kolorowanie przodu okładki w FR-15) wymaga osobnego workflow z węzłem wczytującym obraz i znacznikiem `{{reference_image}}`. Adapter wysyła obraz przez `POST /upload/image`, a w workflow podmienia znacznik na nazwę pliku. Bez skonfigurowanego `comfyui.reference_workflow` adapter zgłasza, że referencja jest nieobsługiwana.
+
+**Bezpieczeństwo i sieć**
+- Serwer ComfyUI domyślnie nie ma uwierzytelniania, więc ma być dostępny tylko w sieci lokalnej. Program nie wymusza HTTPS dla adresów prywatnych (192.168.x.x, 10.x.x.x, `.local`), a dla innych adresów ostrzega.
+- Dla serwera za reverse proxy opcjonalny token w zmiennej `COMFYUI_TOKEN` (nagłówek `Authorization: Bearer …`). Token nie trafia do logów ani manifestu (NFR-10).
+
+**Testy**
+- Bez prawdziwego serwera: fałszywy transport HTTP odpowiada na `/system_stats`, `/prompt`, `/history` i `/view`. Testy obejmują podmianę znaczników, walidację workflow, przekroczenie czasu, `node_errors` i brak serwera.
+
+Generowanie pomysłów i kontrola jakości nadal korzystają z modeli w chmurze. Pełna praca offline wymagałaby lokalnego modelu tekstowego i modelu z wizją, co jest poza tym wymaganiem.
+
+Konfiguracja (szkic):
+
+```yaml
+# settings.yaml
+comfyui:
+  url: http://192.168.1.50:8188      # COMFYUI_URL nadpisuje
+  workflow: config/comfyui/lineart_sd15.json   # checkpoint: v1-5-pruned-emaonly (+ LoRA do line artu)
+  output_node: "9"                   # id węzła SaveImage w pliku workflow
+  reference_workflow: null           # opcjonalnie, dla reference_image
+  max_size: {long: 768, short: 512}  # limit sprzętowy generowania
+  sizes:
+    "1:1": [512, 512]
+    "3:4": [512, 768]
+  positive_template: "{scene}, coloring book page, black and white line art, thick clean outlines, white background, {style_keywords}"
+  negative: "text, letters, watermark, signature, grid, multiple panels, collage, frame, shading, grayscale, color, gradient, blurry, lowres, deformed, extra limbs"
+  max_concurrency: 1
+  poll_interval_s: 2
+  timeout_s: 300
+  cost_per_image_usd: 0
+```
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -714,6 +807,7 @@ class ImageProvider(Protocol):
     def supported_aspects(self) -> list[str]: ...
     def generate(self, req: ImageRequest) -> ImageResult: ...
     # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie)
+    #   + struktura promptu (scene, części stylu, negative) dla dostawców z osobnym promptem negatywnym (FR-18)
     # ImageResult: png_bytes, width, height, usage/cost, raw_response_meta
 
 class VisionProvider(Protocol):
@@ -746,6 +840,9 @@ Mapowanie rozmiarów dla OpenAI: `square` → `1024x1024`, `letter` → `1024x15
 - Klucz: `GEMINI_API_KEY` z Google AI Studio.
 - Wymagania wobec adaptera są takie same jak w FR-05.
 
+### 8.5 Adapter lokalny: ComfyUI
+- Serwer ComfyUI w sieci lokalnej, workflow użytkownika w formacie API, generowanie maks. 512 × 512 albo 768 × 512 px. Szczegóły w FR-18.
+
 ## 9. Interfejs CLI
 
 ### 9.1 Komendy
@@ -766,7 +863,7 @@ kdp-studio generate \
   [--no-review-ideas] \
   [--belongs-to-page] \
   [--strict] \
-  [--image-provider openai] \
+  [--image-provider openai|comfyui] \
   [--seed 1234] \
   [--verbose]
 
@@ -796,7 +893,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 ```
 
 ### 9.2 Konfiguracja i sekrety
-- Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`.
+- Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
 - Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
@@ -923,6 +1020,7 @@ kdp-studio/
 | 1c. Cena i tantiemy | FR-16: tabele kosztów druku i progów tantiem KDP w konfiguracji, komenda `price`, podsumowanie w `generate` i manifeście | Koszt druku i cena minimalna zgadzają się z kalkulatorem KDP dla letter i kwadratu przy 30, 54 i 100 grafikach na rynkach US, UK, DE i PL |
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
+| 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
 Stan na 16.11.2026 (sekcja 0): z etapu 1 brakuje FR-10, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etapy 1a–1c mają gotową specyfikację, kod jeszcze nie powstał.
@@ -936,6 +1034,7 @@ Stan na 16.11.2026 (sekcja 0): z etapu 1 brakuje FR-10, a jego kryterium wyjści
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
 7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
+8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
 
 ## 14a. Pomysły na rozwój
 
@@ -961,6 +1060,7 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
 - OpenAI Image API: https://developers.openai.com/api/docs/guides/image-generation
 - Gemini API (Nano Banana), cennik: https://ai.google.dev/gemini-api/docs/pricing
+- ComfyUI: API serwera (`/prompt`, `/history`, `/view`, `/upload/image`, format API workflow): https://docs.comfy.org/development/comfyui-server/comms_routes
 - Adobe: kredyty generatywne (zakres użycia): https://helpx.adobe.com/firefly/using/generative-credits-faq.html
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
