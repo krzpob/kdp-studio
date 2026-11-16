@@ -404,6 +404,14 @@ Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada 
   - jeśli `printing_cost / 0.5 ≤ próg_50%`, to `printing_cost / 0.5`;
   - w przeciwnym razie `max(printing_cost / 0.6, cena_od_60%)`.
   - Zaokrąglenie do pełnego centa jak w kalkulatorze KDP, czyli do najbliższego, nie w górę (twarda oprawa: 7.49 / 0.6 = 12.483 → $12.48).
+  - **Przypadek graniczny:** gdy `printing_cost / 0.5` przekracza próg 50%, a `printing_cost / 0.6` wypada poniżej ceny progowej 60%, ceną minimalną jest sama cena progowa. Cena niższa wpadłaby w stawkę 50%, przy której tantiema nie pokryłaby kosztu druku. Na Amazon.com dotyczy to kosztów druku od ok. $4.99 do $5.99.
+  - Przypadki do sprawdzenia w kalkulatorze KDP przy implementacji (letter, Amazon.com):
+
+    | Strony | Koszt druku | Koszt / 0.5 | Koszt / 0.6 | Oczekiwana cena minimalna |
+    |---|---|---|---|---|
+    | 202 | $4.43 | $8.87 | – | $8.87 (strefa 50%) |
+    | 258 | $5.39 | $10.77 | $8.98 | $9.99 (przypadek graniczny) |
+    | 402 | $7.83 | $15.67 | $13.06 | $13.06 (strefa 60%) |
 - **Ceny tuż pod progiem:** w strefie 50% tantiema jest zawsze niższa niż przy cenie progowej 60%. Na Amazon.com, żeby przy stawce 50% zarobić tyle co przy $9.99, cena musiałaby wynosić $11.99, czyli przekroczyć próg. Program pokazuje to wprost: między ceną minimalną a progiem tantiema jest niższa niż przy cenie progowej, a różnica rośnie im bliżej progu.
 - **Strony bez dodatkowego kosztu:** do progu stron koszt druku jest stały. Przy druku jednostronnym i 2 stronach wstępnych do progu 110 stron mieści się 54 grafiki: tyle samo kosztuje druk 30 i 54 grafik. Powyżej każda grafika dodaje 2 strony × `per_page` (Amazon.com, duży format: $0.034).
 
