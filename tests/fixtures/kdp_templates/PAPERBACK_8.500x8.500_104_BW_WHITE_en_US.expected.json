@@ -1,0 +1,37 @@
+{
+  "_comment": "FR-15: geometria wyliczona wzorami KDP dla szablonu obok i zmierzona na nim (pomiar w calach, tolerancja 0.01\").",
+  "input": {
+    "binding": "PAPERBACK",
+    "trim_in": [8.5, 8.5],
+    "pages_in_book": 104,
+    "ink": "BW",
+    "paper": "WHITE"
+  },
+  "expected": {
+    "spine_in": 0.234208,
+    "cover_in": [17.484208, 8.75],
+    "trim_box_in": {"left": 0.125, "top": 0.125, "right": 17.359208, "bottom": 8.625},
+    "folds_x_in": [8.625, 8.859208],
+    "live_area_in": {
+      "back": {"left": 0.25, "top": 0.25, "right": 8.5, "bottom": 8.5},
+      "spine": {"left": 8.6875, "right": 8.796708},
+      "front": {"left": 8.984208, "top": 0.25, "right": 17.234208, "bottom": 8.5}
+    },
+    "barcode_in": {"left": 6.375, "top": 7.175, "right": 8.375, "bottom": 8.375}
+  },
+  "measured_on_template": {
+    "image_px": [8000, 4003],
+    "px_per_in": 457.5,
+    "folds_x_in": [8.624, 8.858],
+    "trim_x_in": [0.125, 17.357],
+    "trim_y_in": [0.125, 8.625],
+    "live_x_in_at_mid_row": [0.249, 8.499, 8.687, 8.795, 8.985, 17.233],
+    "barcode_in": {"left": 6.375, "top": 7.176, "right": 8.373, "bottom": 8.374}
+  },
+  "template_colors": {
+    "live_bleed_pink": {"rgb": [255, 175, 176], "tolerance": 40},
+    "barcode_yellow": {"rgb": [255, 255, 0], "tolerance": 60},
+    "fold_blue": {"rgb": [18, 6, 220], "tolerance": 60},
+    "trim_black": {"rgb": [0, 0, 0], "tolerance": 80}
+  }
+}
