@@ -420,16 +420,22 @@ def _step_redo(config: AppConfig, target: Path, ids: list[str], review: bool | N
     write_json_atomic(target / PROMPTS_FILE, prompts)
     writer.manifest.ideas.usage += result.usage
     writer.save()
-    pages = [p.name for p in writer.manifest.pages if p.idea_id in ids]
+    pages = [p for p in writer.manifest.pages if p.idea_id in ids]
     usage = result.usage
     typer.echo(
         f"Zapisano: {target / IDEAS_FILE}, tokeny: {usage.input_tokens} wejście / "
         f"{usage.output_tokens} wyjście."
     )
-    if pages:
+    redone = [p.name for p in pages if p.raw_sha256 is not None or p.attempts > 0]
+    fresh = [p.name for p in pages if p.name not in redone]
+    if redone:
         typer.echo(
-            f"Strony z nowymi pomysłami ({', '.join(pages)}) powstaną ponownie przy "
-            f"`kdp-studio images {target}`."
+            f"Strony z nowymi pomysłami ({', '.join(redone)}) zostaną wygenerowane ponownie "
+            f"przy `kdp-studio images {target}`."
+        )
+    if fresh:
+        typer.echo(
+            f"Nowe pomysły trafią na strony {', '.join(fresh)} przy `kdp-studio images {target}`."
         )
 
 

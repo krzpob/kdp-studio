@@ -170,16 +170,32 @@ MORE_PROMPT = """\
 Return exactly {count} NEW page ideas. Each must be different from every idea below \
 (different subject, action or setting, not a rewording):
 {existing}
-"""
+{hints}"""
 
 
 def build_more_prompts(
-    spec: BookSpec, config: AppConfig, count: int, existing: Sequence[PageIdea]
+    spec: BookSpec,
+    config: AppConfig,
+    count: int,
+    existing: Sequence[PageIdea],
+    hints: Sequence[str] = (),
 ) -> tuple[str, str]:
-    """Prompt dogenerowania pomysłów, gdy weryfikacja odrzuci za dużo (FR-03a)."""
+    """Prompt dogenerowania pomysłów, gdy weryfikacja odrzuci za dużo (FR-03a).
+
+    `hints` to wskazówki różnorodności dla nowych pomysłów (FR-03b, FR-17 `--redo`).
+    """
     system, _ = build_prompts(spec, config)
     listing = "\n".join(f"- {idea.title}: {idea.scene}" for idea in existing) or "- (none)"
-    user = MORE_PROMPT.format(profile=profile_prompt(spec, config), count=count, existing=listing)
+    advice = ""
+    if hints:
+        advice = (
+            "\nThe book already has enough of some things. For the new ideas:\n"
+            + "\n".join(f"- {hint}" for hint in hints)
+            + "\n"
+        )
+    user = MORE_PROMPT.format(
+        profile=profile_prompt(spec, config), count=count, existing=listing, hints=advice
+    )
     return system, user
 
 
@@ -333,13 +349,18 @@ class IdeaGenerator:
         )
 
     def generate_more(
-        self, spec: BookSpec, count: int, existing: Sequence[PageIdea], first_number: int
+        self,
+        spec: BookSpec,
+        count: int,
+        existing: Sequence[PageIdea],
+        first_number: int,
+        hints: Sequence[str] = (),
     ) -> tuple[list[PageIdea], Usage]:
         """Dogenerowuje do `count` nowych pomysłów różnych od `existing` (FR-03a).
 
         Numeracja od `first_number`; ostateczne id nadaje weryfikacja po scaleniu.
         """
-        system, user = build_more_prompts(spec, self.config, count, existing)
+        system, user = build_more_prompts(spec, self.config, count, existing, hints)
         response, usage = self.provider.complete_json(system, user, _LLMMoreIdeas)
         known = {_fingerprint(i.title) for i in existing} | {
             _fingerprint(i.scene) for i in existing

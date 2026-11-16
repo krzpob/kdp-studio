@@ -155,6 +155,42 @@ def measure(pages: Sequence[PageIdea], limits: DiversityLimits) -> list[Issue]:
     return sorted(issues, key=lambda i: -i.excess)
 
 
+def redo_hints(
+    pages: Sequence[PageIdea], limits: DiversityLimits, total: int, count: int
+) -> list[str]:
+    """Wskazówki dla `count` nowych pomysłów, które uzupełnią `pages` do `total` stron.
+
+    Wartości, które już osiągnęły limit, nowe pomysły mają omijać; brakujące sceny z kilkoma
+    postaciami mają uzupełniać. Po angielsku, dla modelu (FR-17 `--redo`).
+    """
+    hints: list[str] = []
+    if limits.multi_subject_share > 0:
+        required = math.ceil(limits.multi_subject_share * total)
+        multi = sum(1 for p in pages if (p.characters or 0) >= 2)
+        missing = min(required - multi, count)
+        if missing > 0:
+            hints.append(
+                f"at least {missing} of the new ideas show two or three characters doing "
+                "something together"
+            )
+    counted: dict[Kind, tuple[float, Counter[str]]] = {
+        "action": (limits.max_action_share, Counter(p.action for p in pages if p.action)),
+        "setting": (limits.max_setting_share, Counter(p.setting for p in pages if p.setting)),
+        "element": (
+            limits.max_element_share,
+            Counter(key for p in pages for key in element_keys(p)),
+        ),
+    }
+    what = {"action": "the action", "setting": "the setting", "element": "the object"}
+    for kind, (share, counter) in counted.items():
+        limit = max(1, math.floor(share * total))
+        full = sorted(v for v, n in counter.items() if n >= limit and v not in limits.exempt)
+        if full:
+            names = ", ".join(f'"{value}"' for value in full)
+            hints.append(f"do not use {what[kind]} {names}")
+    return hints
+
+
 def total_excess(issues: Sequence[Issue]) -> int:
     return sum(issue.excess for issue in issues)
 

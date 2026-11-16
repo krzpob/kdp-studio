@@ -11,6 +11,7 @@ from kdp_studio.pipeline.diversity import (
     element_keys,
     measure,
     noun,
+    redo_hints,
     swap_with_reserve,
     total_excess,
 )
@@ -338,3 +339,51 @@ def test_old_ideas_without_tags_still_load() -> None:
         del data["pages"][0][key]
     del data["diversity"]
     assert BookIdeas.model_validate(data).pages[0].characters is None
+
+
+# --- Wskazówki dla --redo (FR-17) ------------------------------------------------------
+
+
+def test_redo_hints_name_saturated_values_and_missing_cast() -> None:
+    limits = DiversityLimits(0.3, 0.3, 0.3, 0.35, exempt=frozenset({"snow"}))
+    rest = [
+        _idea(
+            i,
+            action="sit" if i <= 3 else f"act{i}",
+            setting="kitchen" if i <= 2 else f"place{i}",
+            elements=["tree", "snow"] if i <= 3 else [f"thing{i}"],
+        )
+        for i in range(1, 10)
+    ]
+    hints = redo_hints(rest, limits, total=10, count=1)
+    assert hints == [
+        "at least 1 of the new ideas show two or three characters doing something together",
+        'do not use the action "sit"',
+        'do not use the object "tree"',
+    ]  # kitchen: 2 < 3, snow: motyw tematu
+
+
+def test_redo_sends_hints_to_the_generator(repo_config: AppConfig) -> None:
+    response = llm_ideas_response(12)
+    for page in response["pages"]:
+        page["setting"] = "kitchen"
+    more = {
+        "pages": [
+            {
+                "title": "Sled",
+                "scene": "Two kittens sled down a hill",
+                "elements": ["sled"],
+                "subject": "kitten",
+                "characters": 2,
+                "action": "sled",
+                "setting": "snowy hill",
+            }
+        ]
+    }
+    provider = FakeTextProvider([response], routes={"_Review": approve_all, "_LLMMoreIdeas": more})
+    generator = IdeaGenerator(provider, repo_config)
+    ideas = generator.generate(_spec()).ideas
+    result = IdeaReviewer(provider, repo_config).replace(_spec(), ideas, ["idea_02"], generator)
+    [call] = [c for c in provider.calls if c.schema.__name__ == "_LLMMoreIdeas"]
+    assert 'do not use the setting "kitchen"' in call.user
+    assert result.ideas.pages[1].scene == "Two kittens sled down a hill"
