@@ -452,10 +452,16 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 
 **Kolory: PDF w CMYK**
 
-KDP przyjmuje okładkę w RGB albo w CMYK (nie mieszane w jednym pliku) i sam konwertuje RGB. Przy RGB to jednak KDP wybiera profil i sposób konwersji, a jaskrawe kolory potrafią zmatowieć bez ostrzeżenia. Program konwertuje więc okładkę do CMYK sam: pod kontrolą, z podglądem skutków przed wysłaniem.
+Co mówi KDP (strona pomocy o okładce paperback, G201953020):
+- obrazy okładki powinny być w CMYK, żeby okładka dobrze wyglądała w druku;
+- nie należy mieszać przestrzeni barw w jednym pliku;
+- nie zaleca dołączania profili kolorów do pliku, bo przed publikacją są automatycznie usuwane;
+- przy druku na żądanie dopuszcza pewną tolerancję kolorów.
+
+KDP nie podaje ani konkretnego profilu CMYK, ani limitu sumy farb. Plik RGB KDP konwertuje sam, według własnych ustawień, a jaskrawe kolory potrafią wtedy zmatowieć bez ostrzeżenia. Program konwertuje więc okładkę do CMYK sam: pod kontrolą, z podglądem skutków przed wysłaniem.
 
 - **Praca w RGB, CMYK na końcu.** Model obrazu, skalowanie, wygładzanie styku i kontrola czytelności działają w RGB. Do CMYK trafia dopiero gotowa warstwa kolorowa, jednym przekształceniem przez profil ICC (Pillow `ImageCms`, czyli LittleCMS dołączony do kół Pillow, bez bibliotek natywnych, NFR-11).
-- **Profil docelowy** z konfiguracji (`cover.cmyk.profile`). KDP nie publikuje swojego profilu; poradniki dla KDP najczęściej wskazują U.S. Web Coated (SWOP) v2, a jako alternatywę GRACoL 2006 Coated. Plik profilu nie trafia do repozytorium, jeśli jego licencja nie pozwala na redystrybucję: użytkownik pobiera go sam i podaje ścieżkę. Brak pliku przy włączonym CMYK to błąd walidacji z instrukcją, skąd go wziąć (kod 1).
+- **Profil docelowy** z konfiguracji (`cover.cmyk.profile`). KDP żadnego nie wskazuje, więc to nasz wybór; poradniki zewnętrzne najczęściej podają U.S. Web Coated (SWOP) v2, a jako alternatywę GRACoL 2006 Coated. Profil służy tylko do konwersji i podglądu, nie trafia do PDF. Plik profilu nie trafia do repozytorium, jeśli jego licencja nie pozwala na redystrybucję: użytkownik pobiera go sam i podaje ścieżkę. Brak pliku przy włączonym CMYK to błąd walidacji z instrukcją, skąd go wziąć (kod 1).
 - **Sposób konwersji** (`cover.cmyk.rendering_intent`): domyślnie `perceptual`, bo ilustracje dla dzieci mają dużo nasyconych kolorów spoza gamutu druku, a ta metoda zachowuje relacje między nimi. Alternatywa: `relative_colorimetric` z kompensacją punktu czerni. Wybór po porównaniu na prawdziwych okładkach.
 - **Czarny tylko z K.** Elementy czarne program rysuje bezpośrednio w CMYK jako C0 M0 Y0 K100, z pominięciem profilu:
   - kontury przodu (warstwa 300 DPI z FR-06);
@@ -479,7 +485,7 @@ KDP przyjmuje okładkę w RGB albo w CMYK (nie mieszane w jednym pliku) i sam ko
 - **Kolory:** cały `cover.pdf` jest w CMYK, bez żadnego obiektu RGB ani przezroczystości. Czarne kontury, ramki i czarny tekst mają wyłącznie K100. Suma farb nie przekracza limitu.
 
 **Wynik (`cover/` w katalogu książki)**
-- **`cover.pdf`**: jedna strona w dokładnym rozmiarze, obraz CMYK osadzony bez stratnej kompresji (Flate, nie JPEG). Strona ma ustawione `TrimBox` i `BleedBox` oraz `OutputIntent` z użytym profilem. Celem jest zgodność z PDF/X-1a, sprawdzana przy implementacji. Napisy są w obrazie, więc nie ma problemu z osadzaniem czcionek.
+- **`cover.pdf`**: jedna strona w dokładnym rozmiarze, obraz w `DeviceCMYK` osadzony bez stratnej kompresji (Flate, nie JPEG), z ustawionymi `TrimBox` i `BleedBox`. **Bez osadzonego profilu ICC i bez `OutputIntent`**, bo KDP i tak usuwa profile przed publikacją i tego nie zaleca. Z tego samego powodu celem nie jest PDF/X-1a, który wymaga `OutputIntent`. Użyty profil zapisuje tylko manifest. Napisy są w obrazie, więc nie ma problemu z osadzaniem czcionek.
 - **`cover_proof.png`** i **`cover_gamut.png`**: podgląd druku i mapa zmian kolorów (patrz wyżej).
 - **`cover.png`**: cała okładka w RGB (przed konwersją, do podglądu na ekranie).
 - **`front.png`**: sam przód w RGB, np. jako miniatura do reklam i na stronę produktu.
@@ -995,4 +1001,5 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Adobe: kredyty generatywne (zakres użycia): https://helpx.adobe.com/firefly/using/generative-credits-faq.html
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
-- Okładka w CMYK dla KDP (RGB albo CMYK, nie mieszane; profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
+- KDP: okładka paperback (CMYK zalecany, bez mieszania przestrzeni barw, profile kolorów usuwane przed publikacją, brak wskazanego profilu i limitu farb): https://kdp.amazon.com/en_US/help/topic/G201953020
+- Poradniki zewnętrzne o CMYK dla okładek (profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
