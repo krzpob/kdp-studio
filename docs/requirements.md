@@ -450,19 +450,42 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - Układ liczy program: wszystkie miniatury w strefie bezpiecznej tyłu (`key_margin_in`), z dala od linii zgięcia i **poza polem kodu kreskowego**. Pod polem kodu może biec tylko tło.
 - Opcjonalnie krótki opis z metadanych (`back_text`, domyślnie wyłączony), z tymi samymi ograniczeniami.
 
+**Kolory: PDF w CMYK**
+
+KDP przyjmuje okładkę w RGB albo w CMYK (nie mieszane w jednym pliku) i sam konwertuje RGB. Przy RGB to jednak KDP wybiera profil i sposób konwersji, a jaskrawe kolory potrafią zmatowieć bez ostrzeżenia. Program konwertuje więc okładkę do CMYK sam: pod kontrolą, z podglądem skutków przed wysłaniem.
+
+- **Praca w RGB, CMYK na końcu.** Model obrazu, skalowanie, wygładzanie styku i kontrola czytelności działają w RGB. Do CMYK trafia dopiero gotowa warstwa kolorowa, jednym przekształceniem przez profil ICC (Pillow `ImageCms`, czyli LittleCMS dołączony do kół Pillow, bez bibliotek natywnych, NFR-11).
+- **Profil docelowy** z konfiguracji (`cover.cmyk.profile`). KDP nie publikuje swojego profilu; poradniki dla KDP najczęściej wskazują U.S. Web Coated (SWOP) v2, a jako alternatywę GRACoL 2006 Coated. Plik profilu nie trafia do repozytorium, jeśli jego licencja nie pozwala na redystrybucję: użytkownik pobiera go sam i podaje ścieżkę. Brak pliku przy włączonym CMYK to błąd walidacji z instrukcją, skąd go wziąć (kod 1).
+- **Sposób konwersji** (`cover.cmyk.rendering_intent`): domyślnie `perceptual`, bo ilustracje dla dzieci mają dużo nasyconych kolorów spoza gamutu druku, a ta metoda zachowuje relacje między nimi. Alternatywa: `relative_colorimetric` z kompensacją punktu czerni. Wybór po porównaniu na prawdziwych okładkach.
+- **Czarny tylko z K.** Elementy czarne program rysuje bezpośrednio w CMYK jako C0 M0 Y0 K100, z pominięciem profilu:
+  - kontury przodu (warstwa 300 DPI z FR-06);
+  - linie i ramki miniatur na tyle;
+  - czarny tekst (tytuł, podtytuł, grzbiet).
+  Po konwersji przez profil czerń byłaby mieszanką czterech farb, a przy minimalnym przesunięciu farb w druku cienkie linie i litery mają kolorowe obwódki. Kolorowe elementy tekstu (wypełnienie, obrys, cień) przechodzą przez profil jak reszta.
+- **Białe tło miniatur** to C0 M0 Y0 K0 (sam papier), a nie wynik konwersji bieli.
+- **Limit sumy farb** (`cover.cmyk.max_total_ink_pct`, domyślnie 300, zgodnie z SWOP v2). KDP nie podaje limitu. Inne drukarnie (IngramSpark) wymagają 240%, a zbyt dużo farby w ciemnych miejscach szkodzi laminatowi. Program mierzy sumę C+M+Y+K w każdym pikselu i w miejscach powyżej limitu zmniejsza C, M i Y proporcjonalnie, bez ruszania K. W manifeście zapisuje maksymalną sumę i odsetek poprawionych pikseli. Wartość 240 da plik gotowy też dla innych drukarni.
+- **Podpowiedź dla modelu:** prompt przodu i tyłu prosi o paletę przyjazną drukowi (bez neonów i fluorescencji), żeby mniej kolorów wypadało poza gamut.
+
+**Podgląd przed wysłaniem do KDP**
+- `cover_proof.png`: okładka po konwersji CMYK, przeliczona z powrotem na RGB przez ten sam profil (symulacja druku na ekranie). Pokazuje, jak kolory zmienią się w druku, zanim plik trafi do KDP.
+- `cover_gamut.png`: okładka z zaznaczonymi miejscami, gdzie różnica między oryginałem a symulacją druku przekracza `cover.cmyk.gamut_warn_delta_e` (ΔE). Program podaje odsetek powierzchni z dużą zmianą i ostrzega, gdy obejmuje ona tytuł albo przekracza `gamut_warn_area_pct`.
+- Nawet przy własnej konwersji druk różni się od ekranu (papier, maszyna, nieskalibrowany monitor). Ostateczną kontrolą kolorów jest egzemplarz próbny zamówiony w KDP. `canva.md` dla okładki i podsumowanie w konsoli przypominają o tym przy pierwszej książce z nowym profilem lub nową paletą.
+
 **Kontrole przed zapisem**
 - **Wymiary:** obraz ma dokładnie wyliczone piksele, 300 DPI. Rozmiar strony PDF to wyliczone cale (dokładność 0.001").
 - **Rozmieszczenie:** tytuł, podtytuł, miniatury i tekst grzbietu leżą w swoich strefach, nic z tego nie wchodzi w pole kodu kreskowego. Te elementy rozmieszcza program, więc kontrola to asercja, a nie heurystyka.
 - **Tekst na grzbiecie** tylko przy spełnionym progu stron.
 - **QA (z `--qa`):** model z wizją sprawdza, że model obrazu nie dorysował tekstu, że przód pokazuje wybraną stronę i że tył pasuje stylem do przodu.
+- **Kolory:** cały `cover.pdf` jest w CMYK, bez żadnego obiektu RGB ani przezroczystości. Czarne kontury, ramki i czarny tekst mają wyłącznie K100. Suma farb nie przekracza limitu.
 
 **Wynik (`cover/` w katalogu książki)**
-- **`cover.pdf`**: jedna strona w dokładnym rozmiarze, obraz osadzony bez stratnej kompresji, RGB. KDP przyjmuje RGB i konwertuje je przy druku; konwersja do CMYK to możliwe rozszerzenie. Napisy są w obrazie, więc nie ma problemu z osadzaniem czcionek.
-- **`cover.png`**: cała okładka.
-- **`front.png`**: sam przód, np. jako miniatura do reklam.
+- **`cover.pdf`**: jedna strona w dokładnym rozmiarze, obraz CMYK osadzony bez stratnej kompresji (Flate, nie JPEG). Strona ma ustawione `TrimBox` i `BleedBox` oraz `OutputIntent` z użytym profilem. Celem jest zgodność z PDF/X-1a, sprawdzana przy implementacji. Napisy są w obrazie, więc nie ma problemu z osadzaniem czcionek.
+- **`cover_proof.png`** i **`cover_gamut.png`**: podgląd druku i mapa zmian kolorów (patrz wyżej).
+- **`cover.png`**: cała okładka w RGB (przed konwersją, do podglądu na ekranie).
+- **`front.png`**: sam przód w RGB, np. jako miniatura do reklam i na stronę produktu.
 - **`cover_preview.png`**: okładka z naniesionymi liniami cięcia i zgięcia, strefami bezpiecznymi, polem kodu i opcjonalnie szablonem KDP.
 - **`raw/`**: surowe wyniki modelu.
-- **Manifest:** `manifest.json` dostaje sekcję `cover` z geometrią (`pages_in_book`, `spine_in`, wymiary), wyborem stron, promptami, wynikami kontroli styku, kosztem i statusem.
+- **Manifest:** `manifest.json` dostaje sekcję `cover` z geometrią (`pages_in_book`, `spine_in`, wymiary), wyborem stron, promptami, wynikami kontroli styku, użytym profilem CMYK (nazwa i suma kontrolna pliku), sposobem konwersji, maksymalną sumą farb, odsetkiem powierzchni ze zmianą koloru, kosztem i statusem.
 - **Nieaktualna okładka:** jeśli później zmieni się `pages_in_book` książki, `cover` i `kdp-studio images` ostrzegają, że okładka jest nieaktualna.
 - **Koszt:** 2 grafiki (przód, tył z grzbietem) plus 1–3 wywołania oceny (wybór stron, horyzont, QA) i ponowienia; liczy się do `--max-cost` (FR-10).
 - **Kody wyjścia** jak w §9.3: brak okładki po wyczerpaniu ponowień to 2, błąd walidacji lub szablonu to 1.
@@ -496,6 +519,13 @@ cover:                          # nasze ustawienia
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
+  cmyk:
+    profile: ~/icc/USWebCoatedSWOP.icc   # plik pobiera użytkownik (licencja profilu)
+    rendering_intent: perceptual          # albo relative_colorimetric
+    black_point_compensation: true
+    max_total_ink_pct: 300                # 240 dla drukarni z takim wymaganiem
+    gamut_warn_delta_e: 10
+    gamut_warn_area_pct: 5
   template_colors:              # skalibrowane na szablonie KDP (tests/fixtures/kdp_templates/)
     live_bleed_pink: {rgb: [255, 175, 176], tolerance: 40}
     barcode_yellow: {rgb: [255, 255, 0], tolerance: 60}
@@ -823,7 +853,8 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
 ├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
 └── cover/                          # tylko po `kdp-studio cover` (FR-15, poza MVP)
-    ├── cover.pdf                   # gotowy plik okładki do KDP
+    ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
+    ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
     ├── cover.png, front.png
     ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
     └── raw/
@@ -935,7 +966,7 @@ Stan na 16.11.2026 (sekcja 0): z etapu 1 brakuje FR-10, a jego kryterium wyjści
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
-7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
+7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (SWOP v2 czy GRACoL 2006) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
 
 ## 14a. Pomysły na rozwój
 
@@ -964,3 +995,4 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Adobe: kredyty generatywne (zakres użycia): https://helpx.adobe.com/firefly/using/generative-credits-faq.html
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
+- Okładka w CMYK dla KDP (RGB albo CMYK, nie mieszane; profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
