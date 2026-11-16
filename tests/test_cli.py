@@ -378,6 +378,23 @@ def test_no_review_ideas_flag(fake_text_provider: FakeTextProvider) -> None:
     assert data["review"] is None
 
 
+def test_no_review_ideas_still_reports_diversity(
+    fake_text_provider: FakeTextProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    response = llm_ideas_response(12)
+    for page in response["pages"]:
+        page["characters"] = 1
+    fake_text_provider.responses[:] = [response]
+    args = ["generate", "--theme", "Kotki", "--age", "wczesnoszkolne", "--style", "cozy"]
+    assert main([*args, "--pages", "10", "--no-review-ideas"]) == ExitCode.OK
+    captured = capsys.readouterr()
+    assert "Różnorodność (10 stron): postacie 1×10" in captured.out
+    assert "różnorodność: sceny z kilkoma postaciami: 0 z 10 stron" in captured.err
+    ideas_file = Path("output/kotki_wczesnoszkolne_cozy_letter/ideas.json")
+    data = json.loads(ideas_file.read_text(encoding="utf-8"))
+    assert data["diversity"]["characters"] == {"1": 10}
+
+
 # --- FR-08, FR-13 --------------------------------------------------------------------
 
 

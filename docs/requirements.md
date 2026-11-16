@@ -105,6 +105,24 @@ Parametry techniczne opisuje sekcja 9.
 - `ideas.json` dostaje ślad weryfikacji w polu `review`: `rejected` (tytuł, scena, powód), `revised` (id, pierwotny tytuł i scena, powód), `added`, `rounds`. Ostateczne id to `idea_01…` po weryfikacji.
 - Uzasadnienie: weryfikacja kosztuje ułamek centa na książkę, a jedna wyrzucona grafika kilka centów. Nie zastępuje QA z wizją (FR-07), które łapie problemy widoczne dopiero na obrazku (tekst, siatka, cieniowanie).
 
+### FR-03b: Różnorodność pomysłów w skali książki
+Weryfikacja z FR-03a ocenia każdy pomysł osobno, a powtarzalność to cecha całej książki: w pierwszych książkach na prawie każdej stronie był jeden kotek siedzący obok przedmiotu, a choinka pojawiała się w co drugiej scenie.
+
+- **Cechy sceny.** Model przy każdym pomyśle (generowanie, dogenerowanie, poprawka weryfikacji) podaje: `subject` (rodzaj głównej postaci, np. `kitten`), `characters` (liczba postaci), `action` (główna czynność, czasownik w formie podstawowej) i `setting` (miejsce akcji, 1–3 słowa). Wszystko po angielsku, małymi literami. Pole `elements` już istnieje.
+- **Rozkład liczy program, nie model.** Model wiarygodnie opisuje jedną scenę, ale słabo liczy w kilkudziesięciu naraz. Liczone są tylko strony książki (pierwsze `pages` pomysłów), bez zapasu.
+- **Limity** (kod porównuje rozkład z konfiguracją, profile to dane):
+  - co najmniej `multi_subject_share` stron z 2+ postaciami, z profilu wieku (`ages.yaml`): `przedszkole` 0 (jeden duży obiekt), `wczesnoszkolne` 0,25, `szkolne` 0,3, `nastolatki` 0,2, `dorosli` 0 (wzory). Ten sam udział trafia do promptu generowania jako cel;
+  - najwyżej `max_action_share` (0,3) stron z tą samą czynnością, `max_setting_share` (0,3) z tym samym miejscem i `max_element_share` (0,35) z tym samym przedmiotem (`settings.yaml`, `diversity`). Przedmiot to rdzeń nazwy z `elements` (ostatnie słowo w liczbie pojedynczej, „decorated trees” → `tree`), bez głównej postaci, która z założenia jest na każdej stronie.
+- **Motywy tematu.** Generator zwraca `theme_anchors`: miejsca, przedmioty lub czynności, które nazywa sam temat (dla „Kotki w kuchni” `kitchen`). Nie podlegają limitom. Dla większości tematów lista jest pusta („Świąteczne kotki” nie nazywają miejsca ani przedmiotu).
+- **Wyrównanie** (tylko przy włączonej weryfikacji FR-03a, po jej rundach):
+  1. Zamiana stron z zapasem, dopóki każda zamiana zmniejsza przekroczenia limitów. Bez wywołań API.
+  2. Gdy problemy zostają: jedno wywołanie LLM z listą problemów (liczby od programu), kandydatami do zmiany (pomysły, które tworzą problem) i budżetem zmian równym sumie przekroczeń. Zmieniony pomysł musi dalej spełniać listę kontrolną FR-03a. Program przyjmuje zmianę tylko wtedy, gdy dotyczy kandydata, nie powtarza innej sceny i zmniejsza przekroczenia, więc model nie może pogorszyć rozkładu.
+  3. Problemy, które zostały, to ostrzeżenia w konsoli, nie błąd.
+- **Wynik:** `ideas.json` dostaje `theme_anchors` i `diversity` (`pages`, rozkład liczby postaci, najczęstsze czynności, miejsca i przedmioty, `issues`, `moved_from_reserve`, `revised`). Poprawki dla różnorodności trafiają też do `review.revised` z powodem zaczynającym się od „różnorodność:”. Konsola pokazuje rozkład po pomysłach.
+- Bez weryfikacji (`--no-review-ideas`) program tylko mierzy rozkład i ostrzega.
+- Pomysły bez cech (starsze pliki, ręczna edycja w FR-17) pomiar pomija w danym wymiarze.
+- Ograniczenie: synonimy liczą się osobno (`tree` i `evergreen`, `living room` i `lounge`), więc limity są raczej łagodne niż surowe.
+
 ### FR-04: Budowanie promptów obrazu
 - Prompt dla każdej strony składa się z: opisu sceny z FR-03, **wspólnego bloku stylu** (identycznego dla wszystkich stron książki), fragmentu z profilu wieku i fragmentu z profilu formatu.
 - Każdy prompt zawiera stałe ograniczenia: `black and white line art, coloring book page, single illustration, one scene, pure white background, closed outlines, no shading, no grayscale, no text, no grid, no multiple panels, no collage, no frame`.
@@ -560,7 +578,7 @@ Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pyt
 | `nastolatki` | cienka | scena, stylizacja | pełne | wzory | `fine clean lines, detailed scene, decorative patterns, detailed background may extend to the edges of the image, for teens` |
 | `dorosli` | bardzo cienka | wzory, mandale, zentangle | gęste | drobne pola | `fine intricate line work, highly detailed patterns, many small areas to color, background and patterns may extend to the edges of the image, for adults` |
 
-Każdy profil ma też parametry obróbki (np. `min_speck_area`, wygładzanie potrace), bo cienkie linie dla dorosłych wymagają innego progowania niż grube linie dla przedszkolaków. Fragment promptu określa też, co może dotykać krawędzi grafiki: dla najmłodszych cała scena mieści się w kadrze z białym marginesem, a w szczegółowych scenach dla starszych tło może sięgać krawędzi. Główny motyw nigdy nie jest ucięty (wskazówka kompozycji formatu, §7.3).
+Każdy profil ma też minimalny udział stron z kilkoma postaciami (`multi_subject_share`, FR-03b) oraz parametry obróbki (np. `min_speck_area`, wygładzanie potrace). Parametry obróbki różnią się, bo cienkie linie dla dorosłych wymagają innego progowania niż grube linie dla przedszkolaków. Fragment promptu określa też, co może dotykać krawędzi grafiki: dla najmłodszych cała scena mieści się w kadrze z białym marginesem, a w szczegółowych scenach dla starszych tło może sięgać krawędzi. Główny motyw nigdy nie jest ucięty (wskazówka kompozycji formatu, §7.3).
 
 ### 7.2 Profile stylu: `config/styles.yaml`
 
@@ -619,7 +637,7 @@ Zasady:
 CLI (typer)
   └─ BookSpec (walidacja: FR-01, FR-02)
       ├─ IdeaGenerator ── TextProvider ──► pomysły               (FR-03)
-      ├─ IdeaReviewer  ── TextProvider ──► ideas.json            (FR-03a)
+      ├─ IdeaReviewer  ── TextProvider ──► ideas.json            (FR-03a, FR-03b)
       ├─ PromptBuilder ◄─ ages/styles/formats.yaml               (FR-04)
       ├─ PageWorker × concurrency                                (FR-05..07)
       │    ├─ ImageProvider.generate() ──► raw/page_XX.png
@@ -722,7 +740,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`.
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, `qa`, `qa_max_retries`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość). Flagi CLI nadpisują `settings.yaml`.
 
 ### 9.3 Kody wyjścia
 

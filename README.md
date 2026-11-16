@@ -19,6 +19,8 @@ Na razie `generate` waliduje parametry (FR-01, FR-02), generuje pomysły na stro
 echo 'OPENAI_API_KEY=sk-...' > .env
 ```
 
+Po weryfikacji pomysłów program sprawdza różnorodność całej książki (FR-03b): ile scen ma kilka postaci i czy te same czynności, miejsca albo przedmioty nie powtarzają się na zbyt wielu stronach. Rozkład liczy program z cech, które model podaje przy każdym pomyśle, a braki naprawia najpierw zamianą z zapasem, potem jedną poprawką modelu. Limity ustawisz w `config/settings.yaml` (`diversity`) i w profilach wieku (`multi_subject_share`), a rozkład jest w `ideas.json` (`diversity`).
+
 Z flagą `--qa` (albo `qa: true` w `settings.yaml`) każda gotowa strona przechodzi kontrolę jakości modelem z wizją (FR-07): panele lub kolaż, cieniowanie, tekst, otwarte kontury, poziom szczegółów niezgodny z wiekiem, scena niezgodna z opisem. Odrzucona strona trafia do `rejected/page_XX_tryN.png` (powód jest w `manifest.json`), a jej miejsce zajmuje grafika z zapasowego pomysłu, najwyżej 2 ponowienia na stronę (`qa_max_retries`). Ocena jednej strony to ok. 3,6 tys. tokenów wejścia modelu tekstowego.
 
 Dostępne profile wieku, stylu i formatu wypisuje `uv run kdp-studio profiles` (albo `profiles age`, `profiles style`, `profiles format`). Profile są w katalogu `config/`, a model i inne ustawienia w `config/settings.yaml`.
