@@ -78,7 +78,9 @@ cozy:
   description: Pełna scenka z codziennego życia w przytulnym klimacie kawaii, średnia szczegółowość.
   prompt_fragment: >-
     cozy style, warm slice-of-life scene from everyday life, cute kawaii characters,
-    homey setting with soft furnishings and small everyday objects, moderate detail
+    homey setting with soft furnishings and only props that belong to this scene,
+    no repeated filler objects (no potted plants, mugs or heart decorations unless the scene needs them),
+    moderate detail
 
 fantasy:
   name: Fantasy

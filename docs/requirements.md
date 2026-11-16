@@ -188,13 +188,13 @@ Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pyt
 
 | Klucz | Linia | Obiekty | Tło | Wypełnienia | Fragment promptu (szkic) |
 |---|---|---|---|---|---|
-| `przedszkole` | bardzo gruba | 1 duży, proste kształty | brak | duże, zamknięte pola | `very thick bold outlines, one large simple subject, minimal details, no background, large closed areas, for toddlers` |
-| `wczesnoszkolne` | gruba | 1–3 | proste | średnie | `thick clean outlines, simple scene with 1-3 subjects, simple background, for kids 6-8` |
-| `szkolne` | średnia | pełna scena | tak | więcej detali | `medium outlines, full scene, moderate detail, for kids 9-12` |
-| `nastolatki` | cienka | scena, stylizacja | pełne | wzory | `fine clean lines, detailed scene, decorative patterns, for teens` |
-| `dorosli` | bardzo cienka | wzory, mandale, zentangle | gęste | drobne pola | `fine intricate line work, highly detailed patterns, many small areas to color, for adults` |
+| `przedszkole` | bardzo gruba | 1 duży, proste kształty | brak | duże, zamknięte pola | `very thick bold outlines, one large simple subject, minimal details, no background, large closed areas, the whole drawing fits inside the image with white space on every side, for toddlers` |
+| `wczesnoszkolne` | gruba | 1–3 | proste | średnie | `thick clean outlines, simple scene with 1-3 subjects, simple background, the whole scene fits inside the image with white space on every side, nothing cut off by the edges, for kids 6-8` |
+| `szkolne` | średnia | pełna scena | tak | więcej detali | `medium outlines, full scene, moderate detail, background lines such as floor, walls or horizon may run to the edges but no object is cut off, for kids 9-12` |
+| `nastolatki` | cienka | scena, stylizacja | pełne | wzory | `fine clean lines, detailed scene, decorative patterns, detailed background may extend to the edges of the image, for teens` |
+| `dorosli` | bardzo cienka | wzory, mandale, zentangle | gęste | drobne pola | `fine intricate line work, highly detailed patterns, many small areas to color, background and patterns may extend to the edges of the image, for adults` |
 
-Każdy profil ma też parametry obróbki (np. `min_speck_area`, wygładzanie potrace), bo cienkie linie dla dorosłych wymagają innego progowania niż grube linie dla przedszkolaków.
+Każdy profil ma też parametry obróbki (np. `min_speck_area`, wygładzanie potrace), bo cienkie linie dla dorosłych wymagają innego progowania niż grube linie dla przedszkolaków. Fragment promptu określa też, co może dotykać krawędzi grafiki: dla najmłodszych cała scena mieści się w kadrze z białym marginesem, a w szczegółowych scenach dla starszych tło może sięgać krawędzi. Główny motyw nigdy nie jest ucięty (wskazówka kompozycji formatu, §7.3).
 
 ### 7.2 Profile stylu: `config/styles.yaml`
 
@@ -210,14 +210,14 @@ letter:            # 8.5" × 11", pion
   page_px: [2550, 3300]
   aspect: "3:4"
   safe_margin_in: 0.5     # nasz minimalny margines (wygoda kolorowania); KDP wymaga ≥ 0.25"
-  composition_hint: "vertical composition, subject fills the portrait frame"
+  composition_hint: "vertical composition, subject fills most of the portrait frame, main subject fully inside the image, not cut off by the edges"
 square:            # 8.5" × 8.5"
   trim_in: [8.5, 8.5]
   dpi: 300
   page_px: [2550, 2550]
   aspect: "1:1"
   safe_margin_in: 0.5
-  composition_hint: "centered composition, single focal subject or concentric design"
+  composition_hint: "centered composition, single focal subject or concentric design, main subject fully inside the image, not cut off by the edges"
 ```
 
 Bez spadu (bleed): grafika zawsze mieści się w obszarze bezpiecznym na białym tle.
