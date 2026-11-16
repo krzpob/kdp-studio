@@ -4,13 +4,16 @@ Wszystkie elementy rozmieszcza program, więc kontrola rozmieszczenia to asercja
 podtytuł i grafika przodu w strefie `key_margin_in` przodu, miniatury w strefie tyłu
 i poza polem kodu kreskowego, tekst grzbietu w strefie bezpiecznej grzbietu.
 
-Etap 1 (bez modelu obrazu): przód to szkic z czarno-białą grafiką wybranej strony
-w dolnej części i tytułem w pasie u góry; tło jest białe. Kolorowanie przodu i tło tyłu
-dochodzą w kolejnych etapach, na warstwie `color`.
+Przód: szkic z czarno-białą grafiką wybranej strony w dolnej części i pustym pasem u góry.
+Etap 2: model koloruje szkic (`colorize`), program nakłada na kolor ostre kontury 300 DPI,
+jeśli kontury modelu się zgadzają, a na końcu wpisuje tytuł (wypełnienie w kolorze, obrys
+czarny K100) i sprawdza jego czytelność w miniaturze. Bez `colorize` przód zostaje szkicem na
+białym tle. Tło tyłu i grzbietu z modelu to etap 3.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +30,8 @@ BLACK = 0
 POINTS_PER_INCH = 72
 GAP_IN = 0.15  # odstęp między elementami (tytuł/grafika, miniatury, nad polem kodu)
 MIN_TITLE_SCALE = 0.35  # tytuł nie mniejszy niż 35% rozmiaru z konfiguracji
+CONTOUR_DARK = 110  # piksel obrazu modelu ciemniejszy niż to liczy się jako kontur
+CONTOUR_CHECK_PX = 800  # szerokość, przy której porównuje się kontury
 
 
 class CoverError(Exception):
@@ -56,6 +61,11 @@ class CoverBuild:
     placements: dict[str, RectPx] = field(default_factory=dict)  # element → prostokąt
     spine_text: bool = False
     warnings: list[str] = field(default_factory=list)
+    colorized: bool = False  # przód pokolorowany przez model (etap 2)
+    contour_match: float | None = None  # zgodność konturów modelu ze szkicem
+    contours_overlay: bool = True  # nałożono ostre kontury 300 DPI
+    title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze thumbnail_check_px
+    title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
 
 
 # --- Pomocnicze ----------------------------------------------------------------------------
@@ -173,72 +183,197 @@ def _title_lines(
     return best if best_size > one.size else [(title, one)]
 
 
-def place_front(
+def place_front_art(
+    layers: CoverLayers, geometry: CoverGeometry, settings: CoverSettings, page: Image.Image
+) -> RectPx:
+    """Grafika wybranej strony w strefie przodu pod pasem tytułu (czarne kontury K100)."""
+    left, top, right, bottom = geometry.px(geometry.key_front)
+    band = top + round((bottom - top) * settings.title_band)
+    gap = round(GAP_IN * geometry.dpi)
+    art = page.convert("L").crop(art_bbox(page))
+    rect = fit(art.size, (left, band + gap, right, bottom))
+    _paste_line_art(layers, art, rect)
+    return rect
+
+
+@dataclass(frozen=True)
+class _Text:
+    ink: np.ndarray  # True = litera
+    outline: np.ndarray  # True = litera albo obrys
+    letter_height: int  # wysokość liter bez obrysu (kontrola czytelności)
+
+
+def _outlined(text: str, font: ImageFont.FreeTypeFont, radius: int) -> _Text:
+    mask = _text_mask(text, font)
+    ink = np.pad(np.asarray(mask) == BLACK, radius)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+    outline = cv2.dilate(ink.astype(np.uint8), kernel) > 0 if radius else ink
+    return _Text(ink=ink, outline=np.asarray(outline), letter_height=mask.height)
+
+
+def _resized(text: _Text, scale: float) -> _Text:
+    def shrink(mask: np.ndarray) -> np.ndarray:
+        h, w = mask.shape
+        size = (max(1, round(w * scale)), max(1, round(h * scale)))
+        return np.asarray(
+            cv2.resize(mask.astype(np.uint8), size, interpolation=cv2.INTER_NEAREST) > 0
+        )
+
+    return _Text(shrink(text.ink), shrink(text.outline), max(1, round(text.letter_height * scale)))
+
+
+def _paste_text(
+    layers: CoverLayers, text: _Text, origin: tuple[int, int], fill: tuple[int, int, int]
+) -> RectPx:
+    """Obrys do warstwy K100, wnętrze liter w kolorze `fill` do warstwy koloru."""
+    x, y = origin
+    h, w = text.outline.shape
+    rect = (x, y, x + w, y + h)
+    black = np.asarray(layers.black.crop(rect)).copy()
+    black[text.outline] = BLACK
+    black[text.ink] = WHITE
+    layers.black.paste(Image.fromarray(black), (x, y))
+    color = np.asarray(layers.color.crop(rect)).copy()
+    color[text.ink] = fill
+    layers.color.paste(Image.fromarray(color), (x, y))
+    return rect
+
+
+@dataclass(frozen=True)
+class TitleInfo:
+    placements: dict[str, RectPx]
+    letter_height_px: int  # najmniejsza wysokość liter tytułu na okładce
+
+
+def place_titles(
     layers: CoverLayers,
     geometry: CoverGeometry,
     settings: CoverSettings,
-    page: Image.Image,
     title: str,
     subtitle: str,
-) -> dict[str, RectPx]:
-    """Szkic przodu: tytuł i podtytuł w pasie u góry, grafika strony pod nimi."""
-    key = geometry.px(geometry.key_front)
-    left, top, right, bottom = key
+) -> TitleInfo:
+    """Tytuł i podtytuł w pasie u góry przodu: wypełnienie `title_fill_rgb`, obrys czarny K100."""
+    left, top, right, bottom = geometry.px(geometry.key_front)
     band = top + round((bottom - top) * settings.title_band)
-    gap = round(GAP_IN * geometry.dpi)
     width = right - left
     size = round(settings.title_font_pt / POINTS_PER_INCH * geometry.dpi)
+    radius = round(settings.title_outline_pt / POINTS_PER_INCH * geometry.dpi)
 
-    lines = _title_lines(settings, title, size, width)
+    lines = _title_lines(settings, title, size, width - 2 * radius)
     if min(f.size for _, f in lines) < size * MIN_TITLE_SCALE:
         raise CoverError("tytuł nie mieści się na przodzie okładki (za długi)")
-    masks = [_text_mask(text, font) for text, font in lines]
-    sub_mask = None
+    texts = [_outlined(line, font, radius) for line, font in lines]
+    sub_text = None
     if subtitle:
-        sub_font = _fit_font(settings, subtitle, round(size * settings.subtitle_scale), width)
-        sub_mask = _text_mask(subtitle, sub_font)
-    line_gap = round(0.15 * lines[0][1].size)
-    total = sum(m.height for m in masks) + line_gap * (len(masks) - 1)
-    if sub_mask is not None:
-        total += line_gap * 2 + sub_mask.height
-    scale = min(1.0, (band - top) / total)
+        sub_radius = max(1, round(radius * settings.subtitle_scale))
+        sub_font = _fit_font(
+            settings, subtitle, round(size * settings.subtitle_scale), width - 2 * sub_radius
+        )
+        sub_text = _outlined(subtitle, sub_font, sub_radius)
+    line_gap = round(0.1 * lines[0][1].size)
+
+    def total() -> int:
+        height = sum(t.outline.shape[0] for t in texts) + line_gap * (len(texts) - 1)
+        if sub_text is not None:
+            height += line_gap * 2 + sub_text.outline.shape[0]
+        return int(height)
+
+    scale = min(1.0, (band - top) / total())
     if scale < 1.0:  # pas za niski: zmniejsz wszystko proporcjonalnie
-        masks = [
-            m.resize((max(1, round(m.width * scale)), max(1, round(m.height * scale))))
-            for m in masks
-        ]
-        if sub_mask is not None:
-            sub_mask = sub_mask.resize(
-                (max(1, round(sub_mask.width * scale)), max(1, round(sub_mask.height * scale)))
-            )
+        texts = [_resized(t, scale) for t in texts]
+        sub_text = _resized(sub_text, scale) if sub_text is not None else None
         line_gap = round(line_gap * scale)
-        total = sum(m.height for m in masks) + line_gap * (len(masks) - 1)
-        if sub_mask is not None:
-            total += line_gap * 2 + sub_mask.height
 
     placements: dict[str, RectPx] = {}
-    y = top + (band - top - total) // 2
-    title_rects = []
-    for mask in masks:
-        title_rects.append(_paste_mask(layers, mask, (left + (width - mask.width) // 2, y)))
-        y += mask.height + line_gap
+    y = top + (band - top - total()) // 2
+    rects = []
+    fill = settings.title_fill_rgb
+    for text in texts:
+        w = text.outline.shape[1]
+        rects.append(_paste_text(layers, text, (left + (width - w) // 2, y), fill))
+        y += text.outline.shape[0] + line_gap
     placements["title"] = (
-        min(r[0] for r in title_rects),
-        title_rects[0][1],
-        max(r[2] for r in title_rects),
-        title_rects[-1][3],
+        min(r[0] for r in rects),
+        rects[0][1],
+        max(r[2] for r in rects),
+        rects[-1][3],
     )
-    if sub_mask is not None:
+    if sub_text is not None:
         y += line_gap
-        placements["subtitle"] = _paste_mask(
-            layers, sub_mask, (left + (width - sub_mask.width) // 2, y)
+        w = sub_text.outline.shape[1]
+        placements["subtitle"] = _paste_text(
+            layers, sub_text, (left + (width - w) // 2, y), settings.subtitle_fill_rgb
         )
+    return TitleInfo(placements=placements, letter_height_px=min(t.letter_height for t in texts))
 
-    art = page.convert("L").crop(art_bbox(page))
-    art_rect = fit(art.size, (left, band + gap, right, bottom))
-    _paste_line_art(layers, art, art_rect)
-    placements["front_art"] = art_rect
-    return placements
+
+# --- Kolor przodu (etap 2) -------------------------------------------------------------------
+
+
+def front_sketch(layers: CoverLayers, geometry: CoverGeometry) -> Image.Image:
+    """Szkic przodu ze spadem dla modelu: kontury na białym tle, pusty pas na tytuł."""
+    return layers.black.crop(geometry.px(geometry.front_panel)).convert("RGB")
+
+
+def contour_match(line_art: np.ndarray, colored: Image.Image, radius: int) -> float:
+    """Udział konturów szkicu, przy których obraz modelu ma ciemny piksel (w promieniu)."""
+    if not line_art.any():
+        return 1.0
+    dark = (np.asarray(colored.convert("L")) < CONTOUR_DARK).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+    near = cv2.dilate(dark, kernel) > 0
+    return float(near[line_art].mean())
+
+
+def apply_front_color(
+    layers: CoverLayers,
+    geometry: CoverGeometry,
+    settings: CoverSettings,
+    colored: Image.Image,
+) -> tuple[float, bool]:
+    """Kolor przodu z modelu: (zgodność konturów, czy nałożono kontury 300 DPI).
+
+    Przy zgodności ≥ `contour_match_min` zostają ostre kontury K100 ze szkicu (mnożenie
+    przez czerń). Przy przesunięciu program używa samego powiększonego obrazu modelu.
+    """
+    rect = geometry.px(geometry.front_panel)
+    size = (rect[2] - rect[0], rect[3] - rect[1])
+    colored = colored.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+    # Porównanie w mniejszej skali: szybciej, a promień wyszukiwania i tak jest w calach.
+    scale = min(1.0, CONTOUR_CHECK_PX / size[0])
+    small = (max(1, round(size[0] * scale)), max(1, round(size[1] * scale)))
+    sketch = layers.black.crop(rect).resize(small, Image.Resampling.BILINEAR)
+    line_art = np.asarray(sketch) < 128
+    radius = max(1, round(settings.contour_search_in * geometry.dpi * scale))
+    match = contour_match(line_art, colored.resize(small, Image.Resampling.BILINEAR), radius)
+    overlay = match >= settings.contour_match_min
+    if not overlay:
+        layers.black.paste(Image.new("L", size, WHITE), rect[:2])
+    layers.color.paste(colored, rect[:2])
+    return round(match, 3), overlay
+
+
+def _luminance(rgb: np.ndarray) -> np.ndarray:
+    channels = rgb.astype(np.float64) / 255
+    linear = np.where(channels <= 0.03928, channels / 12.92, ((channels + 0.055) / 1.055) ** 2.4)
+    return np.asarray(linear @ np.array([0.2126, 0.7152, 0.0722]))
+
+
+def contrast_ratio(first: np.ndarray, second: np.ndarray) -> float:
+    """Kontrast WCAG między dwoma kolorami RGB (1–21)."""
+    a, b = float(_luminance(first)), float(_luminance(second))
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def title_contrast(layers: CoverLayers, rect: RectPx, fill: tuple[int, int, int]) -> float:
+    """Kontrast tytułu z tłem: lepszy z (wypełnienie, czarny obrys) wobec średniego tła."""
+    color = np.asarray(layers.color.crop(rect)).reshape(-1, 3)
+    black = np.asarray(layers.black.crop(rect)).reshape(-1)
+    background_px = color[(black == WHITE) & np.any(color != fill, axis=1)]
+    if background_px.size == 0:
+        return 21.0
+    background = background_px.mean(axis=0)
+    return max(contrast_ratio(np.array(fill), background), contrast_ratio(np.zeros(3), background))
 
 
 # --- Tył -----------------------------------------------------------------------------------
@@ -347,6 +482,9 @@ def place_spine(
 # --- Całość --------------------------------------------------------------------------------
 
 
+Colorize = Callable[[Image.Image], Image.Image]
+
+
 def build_cover(
     geometry: CoverGeometry,
     settings: CoverSettings,
@@ -354,7 +492,10 @@ def build_cover(
     thumbnails: list[Path],
     title: str,
     subtitle: str,
+    colorize: Colorize | None = None,
 ) -> CoverBuild:
+    """Okładka w warstwach. `colorize(szkic przodu) -> obraz RGB` to kolor z modelu (etap 2);
+    bez niego przód zostaje szkicem na białym tle."""
     layers = CoverLayers.blank(geometry.size_px)
     with Image.open(front_page) as img:
         front = img.convert("L")
@@ -363,7 +504,7 @@ def build_cover(
         with Image.open(path) as img:
             pages.append(img.convert("L"))
     build = CoverBuild(layers=layers)
-    build.placements.update(place_front(layers, geometry, settings, front, title, subtitle))
+    build.placements["front_art"] = place_front_art(layers, geometry, settings, front)
     build.placements.update(place_back(layers, geometry, settings, pages))
     spine, warning = place_spine(layers, geometry, settings, title)
     if spine is not None:
@@ -371,8 +512,47 @@ def build_cover(
         build.spine_text = True
     if warning is not None:
         build.warnings.append(warning)
+
+    if colorize is not None:
+        colored = colorize(front_sketch(layers, geometry))
+        build.contour_match, build.contours_overlay = apply_front_color(
+            layers, geometry, settings, colored
+        )
+        build.colorized = True
+        if not build.contours_overlay:
+            build.warnings.append(
+                f"kontury z modelu przesunięte (zgodność {build.contour_match:.0%}); "
+                "przód bez nałożonych konturów 300 DPI"
+            )
+
+    titles = place_titles(layers, geometry, settings, title, subtitle)
+    build.placements.update(titles.placements)
+    check_readability(build, geometry, settings, titles)
     check_placements(build, geometry)
     return build
+
+
+def check_readability(
+    build: CoverBuild, geometry: CoverGeometry, settings: CoverSettings, titles: TitleInfo
+) -> None:
+    """Czytelność tytułu w miniaturze `thumbnail_check_px` (wyniki Amazon) i jego kontrast."""
+    left, _, right, _ = geometry.px(geometry.front_panel)
+    scale = settings.thumbnail_check_px / (right - left)
+    build.title_thumb_px = round(titles.letter_height_px * scale, 1)
+    build.title_contrast = round(
+        title_contrast(build.layers, titles.placements["title"], settings.title_fill_rgb), 2
+    )
+    if build.title_thumb_px < settings.thumbnail_min_text_px:
+        build.warnings.append(
+            f"tytuł w miniaturze {settings.thumbnail_check_px} px ma litery wysokości "
+            f"{build.title_thumb_px:g} px (zalecane ≥ {settings.thumbnail_min_text_px:g} px): "
+            "skróć tytuł albo zwiększ title_font_pt"
+        )
+    if build.title_contrast < settings.title_min_contrast:
+        build.warnings.append(
+            f"słaby kontrast tytułu z tłem ({build.title_contrast:g}:1, "
+            f"zalecane ≥ {settings.title_min_contrast:g}:1)"
+        )
 
 
 def check_placements(build: CoverBuild, geometry: CoverGeometry) -> None:

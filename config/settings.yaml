@@ -134,6 +134,22 @@ cover:
   back_text: false
   title_font: assets/fonts/Fredoka-Variable.ttf
   title_font_variation: Bold
+  title_fill_rgb: [255, 255, 255]   # wypełnienie liter tytułu (obrys zawsze czarny K100)
+  subtitle_fill_rgb: [255, 230, 120]
+  title_outline_pt: 3.0
+  thumbnail_min_text_px: 6      # min. wysokość liter tytułu w miniaturze thumbnail_check_px
+  title_min_contrast: 3.0       # kontrast WCAG tytułu z tłem (lepszy z wypełnienia i obrysu)
+  # Etap 2: model obrazu koloruje szkic przodu (reference_image); --no-color zostawia szkic.
+  colorize: true
+  color_prompt: >-
+    Color this black-and-white coloring book page as the front cover of a children's coloring
+    book. Keep every black outline exactly where it is: do not move, redraw, remove or add lines.
+    Fill all shapes with vivid but print-friendly colors (no neon, no fluorescent colors). Fill
+    the empty band at the top with a calm, simple background such as sky or a soft gradient that
+    continues the scene, with no objects in it. Extend the background to all four edges of the
+    image. No text, no letters, no title, no logos, no frame, no border.
+  contour_match_min: 0.85       # tyle konturów szkicu musi mieć ciemny piksel modelu w pobliżu,
+  contour_search_in: 0.02       # w tym promieniu, żeby nałożyć ostre kontury 300 DPI
   cmyk:
     # Profil ICC do konwersji RGB → CMYK (nie trafia do PDF). KDP żadnego nie wskazuje; poradniki
     # podają U.S. Web Coated (SWOP) v2, alternatywnie GRACoL 2006 Coated. Plik pobierasz sam

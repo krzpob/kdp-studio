@@ -1,4 +1,9 @@
-"""Adapter OpenAI dla ImageProvider: Image API `images.generate` (spec §8.3, FR-05)."""
+"""Adapter OpenAI dla ImageProvider: Image API (spec §8.3, FR-05).
+
+Bez `reference_image` adapter woła `images.generate`. Z obrazem referencyjnym (FR-15, np.
+kolorowanie szkicu okładki) woła `images.edit` z `input_fidelity="high"`, żeby model
+trzymał się konturów referencji.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,7 @@ import binascii
 from typing import Literal, cast
 
 import openai
+from openai.types import ImagesResponse
 
 from kdp_studio.providers.base import (
     ImageRequest,
@@ -62,19 +68,34 @@ class OpenAIImageProvider:
         if req.quality not in QUALITIES:
             raise ProviderError(f"OpenAI: nieobsługiwana jakość '{req.quality}'")
         quality = cast(OpenAIQuality, req.quality)
-        try:
-            response = call_with_retries(
-                lambda: self._client.images.generate(
+        reference = req.reference_image
+
+        def call() -> ImagesResponse:
+            if reference is not None:
+                return self._client.images.edit(
                     model=self.model,
+                    image=("reference.png", reference, "image/png"),
                     prompt=req.prompt,
                     size=size,
                     quality=quality,
                     n=1,
                     output_format="png",
-                    background="opaque",  # przezroczystość zamieniłaby tło w czerń w FR-06
-                ),
-                retry_after=openai_retry_decision,
-                policy=self._retry_policy,
+                    background="opaque",
+                    input_fidelity="high",
+                )
+            return self._client.images.generate(
+                model=self.model,
+                prompt=req.prompt,
+                size=size,
+                quality=quality,
+                n=1,
+                output_format="png",
+                background="opaque",  # przezroczystość zamieniłaby tło w czerń w FR-06
+            )
+
+        try:
+            response = call_with_retries(
+                call, retry_after=openai_retry_decision, policy=self._retry_policy
             )
         except openai.OpenAIError as e:
             raise ProviderError(describe_openai_error(e), fatal=is_fatal(e)) from e

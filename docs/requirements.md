@@ -28,7 +28,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
-| FR-15 | 🟡 | #31 | Poza MVP. Specyfikacja: #17. Etap 1 z 3: geometria, szablon, układ, CMYK i PDF, przód jako szkic bez koloru. |
+| FR-15 | 🟡 | #31 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -539,7 +539,20 @@ FR-15 powstaje w trzech PR-ach.
 - **Sekcja `cover` w manifeście.**
 - **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
 
-*Etap 2:* `reference_image` w adapterze OpenAI (edycja obrazu), kolorowanie przodu, nałożenie konturów 300 DPI z kontrolą przesunięcia, kolorowy tytuł z obrysem oraz kontrola czytelności w miniaturze (`thumbnail_check_px`, wysokość liter i kontrast).
+*Etap 2 (zrobiony):*
+- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`.
+- **Kolorowanie** (`pipeline/cover_front.py`):
+  - szkic przodu ze spadem (kontury i pusty pas na tytuł) idzie do modelu jako referencja, rozciągnięty do najbliższych proporcji dostawcy (kwadrat → 1:1, letter → 3:4);
+  - wynik wraca rozciągnięty z powrotem do przodu;
+  - prompt `cover.color_prompt` z blokiem stylu książki;
+  - ponowienia przy błędach niekrytycznych (`max_retries`).
+- **Kontury:** program mierzy, jaka część konturów szkicu ma w pobliżu ciemny piksel modelu (`contour_search_in`, 0,02"). Przy zgodności ≥ `contour_match_min` (85%) nakłada ostre kontury K100. Przy przesunięciu używa samego obrazu modelu i ostrzega.
+- **Tytuł i podtytuł:** wypełnienie w kolorze (`title_fill_rgb`, `subtitle_fill_rgb`) przez profil ICC, obrys czarny K100 (`title_outline_pt`). Wpisywane po kolorowaniu, więc model ich nie widzi.
+- **Czytelność:** wysokość liter tytułu w miniaturze `thumbnail_check_px` (≥ `thumbnail_min_text_px`) i kontrast WCAG tytułu z tłem (lepszy z wypełnienia i obrysu, ≥ `title_min_contrast`). Niespełnione to ostrzeżenie.
+- **`cover`:** opcje `--color/--no-color` (domyślnie `cover.colorize`), `--image-quality`, `--image-provider` i `--max-cost`. Koszt trafia do `cover.cost_usd` i do łącznego kosztu książki.
+- **Kody wyjścia:** nieudane kolorowanie to kod 2 (`cover.status: failed`, poprzednie pliki zostają), przekroczony limit to kod 3, błąd krytyczny to kod 4.
+- **Pliki prób:** `cover/raw/front_sketch.png` i `cover/raw/front_color_tryN.png`.
+- **Ograniczenie:** `Usage` nie rozróżnia tokenów obrazu wejściowego (cennik OpenAI: $8 za 1M wobec $5 za tekst), więc koszt wejścia referencji jest nieco zaniżony. Wyjście, które dominuje w koszcie, liczy się dokładnie.
 
 *Etap 3:* tło tyłu i grzbietu z modelu (horyzont, kolory, kontrola i wygładzenie styku), propozycja stron modelem z wizją (arkusz kontaktowy), QA okładki, `--qa` i `--max-cost` dla `cover`, opcjonalny `back_text`.
 
@@ -980,6 +993,7 @@ kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
   [--cover-page 07] \
   [--thumbnails 03,12,21] \
   [--template kdp_template.png] \
+  [--color|--no-color] [--image-quality low|medium|high] \
   [--qa] \
   [--max-cost 1.00]
 
@@ -1121,7 +1135,7 @@ kdp-studio/
 | 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
-Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod etapu 1 z 3 (bez koloru z modelu), etap 1c ma gotową specyfikację.
+Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod etapów 1–2 z 3 (tło tyłu z modelu w etapie 3), etap 1c ma gotową specyfikację.
 
 ## 14. Otwarte pytania
 

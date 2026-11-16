@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from enum import IntEnum
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal, get_args
 
@@ -61,7 +62,13 @@ from kdp_studio.pipeline.book import (
 )
 from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
 from kdp_studio.pipeline.cost import CostTracker, format_usd, missing_prices
-from kdp_studio.pipeline.cover import CoverError, build_cover, front_crop, preview
+from kdp_studio.pipeline.cover import CoverBuild, CoverError, build_cover, front_crop, preview
+from kdp_studio.pipeline.cover_front import (
+    CoverBudgetError,
+    CoverColorError,
+    FrontColorizer,
+    color_prompt,
+)
 from kdp_studio.pipeline.cover_geometry import (
     CoverGeometry,
     check_template_name,
@@ -76,6 +83,7 @@ from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
     CoverCmykInfo,
     CoverFiles,
+    CoverFrontInfo,
     CoverInfo,
     CoverTemplateInfo,
     FinalInfo,
@@ -119,7 +127,13 @@ from kdp_studio.pipeline.worker import (
     page_jobs,
 )
 from kdp_studio.profiles import PROFILE_KINDS, ProfileKind, format_profiles
-from kdp_studio.providers.base import ImageProvider, ProviderError, TextProvider, VisionProvider
+from kdp_studio.providers.base import (
+    ImageProvider,
+    ProviderError,
+    TextProvider,
+    Usage,
+    VisionProvider,
+)
 from kdp_studio.providers.registry import (
     create_image_provider,
     create_text_provider,
@@ -1535,6 +1549,17 @@ def cover(
         Path | None,
         typer.Option(help="Szablon z kalkulatora okładek KDP (PNG/JPEG) do kontroli wymiarów."),
     ] = None,
+    color: Annotated[
+        bool | None,
+        typer.Option(
+            "--color/--no-color",
+            help="Kolorowanie przodu modelem obrazu (płatne); --no-color: szkic bez koloru. "
+            "Domyślnie z settings.yaml (cover.colorize).",
+        ),
+    ] = None,
+    image_provider: ImageProviderOpt = None,
+    image_quality: QualityOpt = None,
+    max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
     """Okładka paperback do KDP: cover.pdf w CMYK, podglądy i strefy (FR-15)."""
@@ -1575,9 +1600,30 @@ def cover(
         raise _fail(e.errors) from e
     if manifest.status != "completed":
         _warn([f"książka nie jest gotowa (status {manifest.status}); okładka z gotowych stron"])
+    colorizer = None
+    costs = None
+    if settings.cover.colorize if color is None else color:
+        quality = _quality(config, image_quality)
+        try:
+            provider = create_image_provider(
+                image_provider or settings.providers.image, settings.models.image
+            )
+        except ConfigError as e:
+            raise _fail([str(e)]) from e
+        logged = LoggedImageProvider(provider, settings.api_pricing.models.get(provider.model))
+        costs = _cost_tracker(config, max_cost, [provider.model])
+        colorizer = FrontColorizer(
+            provider=logged,
+            quality=quality,
+            prompt=color_prompt(spec_from_manifest(manifest), config),
+            settings=settings.cover,
+            raw_dir=book / COVER_DIR / RAW_DIR,
+            over_budget=costs.over_budget,
+            spend=partial(_spend, costs, provider.model),
+        )
 
-    with _locked(book, level), _timed(StepTimer(), "cover"):
-        _make_cover(
+    with _locked(book, level), _timed(StepTimer(), "cover", costs):
+        code = _make_cover(
             book,
             writer,
             geometry,
@@ -1589,7 +1635,10 @@ def cover(
             template,
             template_info,
             ideas,
+            colorizer,
+            costs,
         )
+    raise typer.Exit(code)
 
 
 def _make_cover(
@@ -1604,7 +1653,9 @@ def _make_cover(
     template: Path | None,
     template_info: CoverTemplateInfo | None,
     ideas: BookIdeas,
-) -> None:
+    colorizer: FrontColorizer | None,
+    costs: CostTracker | None,
+) -> ExitCode:
     settings = config.settings.cover
     title, subtitle = ideas.book.title, ideas.book.subtitle
     width_in, height_in = geometry.size_in
@@ -1614,6 +1665,11 @@ def _make_cover(
         f'{geometry.dpi} DPI), grzbiet {geometry.spine_in:.4f}" '
         f"({plural(geometry.pages_in_book, 'strona', 'strony', 'stron')})."
     )
+    if colorizer is not None:
+        typer.echo(
+            f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
+            f"{colorizer.quality}, limit {format_usd(costs.limit_usd if costs else 0)})…"
+        )
     try:
         build = build_cover(
             geometry,
@@ -1622,7 +1678,34 @@ def _make_cover(
             [target / f"{p.name}.png" for p in thumbs],
             title,
             subtitle,
+            colorize=colorizer,
         )
+    except (CoverColorError, CoverBudgetError, ProviderError) as e:
+        code = (
+            ExitCode.BUDGET_EXCEEDED
+            if isinstance(e, CoverBudgetError)
+            else ExitCode.PROVIDER_ERROR
+            if isinstance(e, ProviderError)
+            else ExitCode.PARTIAL
+        )
+        cost = costs.spent if costs is not None else 0.0
+        writer.manifest.cover = CoverInfo(
+            status="failed",
+            error=str(e),
+            geometry=geometry.summary(),
+            front_page=front.name,
+            thumbnails=[p.name for p in thumbs],
+            selection=selection,
+            title=title,
+            subtitle=subtitle,
+            spine_text=False,
+            front=_front_info(target, colorizer, None),
+            cost_usd=round(cost, 6),
+        )
+        writer.manifest.cost_usd = round(writer.manifest.cost_usd + cost, 6)
+        writer.save()
+        _fail_lines([f"okładka: {e}", f"spróbuj ponownie: kdp-studio cover {target}"])
+        return code
     except (CoverError, FontError) as e:
         raise _fail([f"okładka: {e}"]) from e
     out = target / COVER_DIR
@@ -1677,6 +1760,7 @@ def _make_cover(
         spine_text=build.spine_text,
         placements=build.placements,
         template=template_info,
+        front=_front_info(target, colorizer, build),
         cmyk=CoverCmykInfo(
             profile=converter.name,
             profile_file=str(profile_path) if profile_path is not None else None,
@@ -1692,8 +1776,10 @@ def _make_cover(
         ),
         files=files,
         warnings=warnings,
+        cost_usd=round(costs.spent, 6) if costs is not None else 0.0,
     )
     writer.manifest.cover = info
+    writer.manifest.cost_usd = round(writer.manifest.cost_usd + info.cost_usd, 6)
     writer.save()
     log_event(
         _log,
@@ -1706,6 +1792,9 @@ def _make_cover(
         max_total_ink_pct=result.max_total_ink_pct,
         gamut_area_pct=area_pct,
         warnings=warnings,
+        colorized=build.colorized,
+        contour_match=build.contour_match,
+        cost_usd=info.cost_usd,
     )
 
     how = (
@@ -1717,6 +1806,19 @@ def _make_cover(
     minimum = max(settings.spine_text_min_pages, geometry.kdp.spine_text_kdp_min_pages)
     spine = "tak" if build.spine_text else f"nie (od {minimum} stron)"
     typer.echo(f"Tekst na grzbiecie: {spine}.")
+    if build.colorized and colorizer is not None:
+        contours = "nałożone kontury 300 DPI" if build.contours_overlay else "kontury z modelu"
+        typer.echo(
+            f"Przód pokolorowany ({plural(colorizer.attempts, 'próba', 'próby', 'prób')}, "
+            f"zgodność konturów {build.contour_match:.0%}, {contours}), "
+            f"koszt {format_usd(info.cost_usd)}."
+        )
+    else:
+        typer.echo("Przód: szkic bez koloru (--no-color).")
+    typer.echo(
+        f"Tytuł w miniaturze {settings.thumbnail_check_px} px: litery {build.title_thumb_px:g} px, "
+        f"kontrast {build.title_contrast:g}:1."
+    )
     if template_info is not None:
         typer.echo(f"Szablon KDP {template.name if template else ''}: zgodny z geometrią.")
     typer.echo(
@@ -1734,6 +1836,34 @@ def _make_cover(
         "Pamiętaj: druk różni się od ekranu, więc ostateczną kontrolą kolorów jest egzemplarz "
         "próbny zamówiony w KDP."
     )
+    return ExitCode.OK
+
+
+def _spend(costs: CostTracker, model: str, usage: Usage) -> None:
+    costs.add("images", model, usage)
+
+
+def _front_info(
+    target: Path, colorizer: FrontColorizer | None, build: CoverBuild | None
+) -> CoverFrontInfo:
+    info = CoverFrontInfo(colorized=build.colorized if build is not None else False)
+    if colorizer is not None:
+        info.provider, info.model = colorizer.provider.name, colorizer.provider.model
+        info.quality, info.aspect, info.prompt = (
+            colorizer.quality,
+            colorizer.aspect,
+            colorizer.prompt,
+        )
+        info.attempts, info.errors, info.usage = (
+            colorizer.attempts,
+            colorizer.errors,
+            colorizer.usage,
+        )
+        info.raw_files = [str(p.relative_to(target)) for p in colorizer.raw_files]
+    if build is not None:
+        info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
+        info.title_thumb_px, info.title_contrast = build.title_thumb_px, build.title_contrast
+    return info
 
 
 @app.command()
