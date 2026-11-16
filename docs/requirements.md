@@ -259,7 +259,14 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - Twarda oprawa nie opłaca się w kolorowankach:
   - KDP oferuje ją tylko w kilku formatach (5.5" × 8.5", 6" × 9", 6.14" × 9.21", 7" × 10", 8.25" × 11"). Nie ma kwadratu, a najbliższy letter jest o 0.25" węższy, więc wnętrze trzeba by renderować osobno;
   - wymaga min. 75 stron;
-  - koszt druku jest mniej więcej dwukrotnie wyższy, co mocno podnosi cenę kolorowanki.
+  - koszt druku jest ok. 2.6 razy wyższy, co mocno podnosi cenę kolorowanki. Kalkulator KDP (amazon.com, 104 strony, wnętrze czarno-białe, stan na 16.11.2026):
+
+    | Oprawa | Format | Koszt druku | Minimalna cena |
+    |---|---|---|---|
+    | miękka | 8.5" × 11" | $2.84 | $5.68 |
+    | twarda | 8.25" × 11" | $7.49 | $12.48 |
+
+    Źródło: https://kdp.amazon.com/en_US/royalty-calculator
 
 **Geometria: liczona, nie odczytywana (D10)**
 - Wszystkie wymiary program liczy wzorami KDP z danych w `manifest.json` (format, `pages_in_book`) i konfiguracji (`kdp_cover` w `settings.yaml`):
