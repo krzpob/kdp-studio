@@ -100,7 +100,7 @@ def test_multiline_yaml_fragments_are_flattened(repo_config: AppConfig) -> None:
 @pytest.mark.parametrize(
     ("field", "value", "fragment"),
     [
-        ("format", "letter", "vertical composition, subject fills most of the portrait frame"),
+        ("format", "letter", "vertical composition, main subjects fill most of the portrait frame"),
         ("age", "dorosli", "fine intricate line work"),
         ("age", "nastolatki", "detailed background may extend to the edges"),
         ("style", "mandala", "mandala style, radially symmetric"),
