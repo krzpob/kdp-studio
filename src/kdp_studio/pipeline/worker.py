@@ -3,7 +3,9 @@
 Strony są generowane równolegle (`concurrency` wątków). Błąd jednej strony
 (moderacja, przeciążenie po ponowieniach) oznacza ją jako nieudaną, a reszta idzie
 dalej. Błąd krytyczny (zły klucz, brak środków, nieznany model) przerywa przebieg:
-nowe strony nie startują, a te w toku kończą się normalnie.
+nowe strony nie startują, a te w toku kończą się normalnie. Tak samo działa przekroczony
+limit budżetu (FR-10, `over_budget`), z tą różnicą, że strona w toku nie bierze już
+kolejnego zapasowego pomysłu po odrzuceniu przez QA.
 
 Worker zapisuje tylko surowe grafiki w `raw/`; gotowe strony robi krok 3 (FR-17). Z QA
 (FR-07) grafika przechodzi tymczasową obróbkę (`preview`, katalog tymczasowy), bo kontrola
@@ -78,6 +80,7 @@ class PageOutcome:
 class ImagesResult:
     outcomes: list[PageOutcome]  # tylko strony, które wystartowały, posortowane po numerze
     fatal_error: str | None = None
+    budget_exceeded: bool = False  # FR-10: część stron nie wystartowała albo nie dostała zapasu
 
     @property
     def ok(self) -> list[PageOutcome]:
@@ -166,8 +169,21 @@ class PageWorker:
     preview: PagePostprocessor | None = None
     reserve: ReservePool | None = None  # zapasowe pomysły dla stron odrzuconych przez QA
     max_retries: int = 2  # ponowienia na pozycję po odrzuceniu przez QA
+    # FR-10: True, gdy limit budżetu jest przekroczony; nowe grafiki wtedy nie powstają.
+    over_budget: Callable[[], bool] | None = None
+    # FR-10: wołane w wątku roboczym zaraz po stronie, zanim wątek weźmie następną, żeby
+    # licznik kosztu znał tę stronę przed sprawdzeniem limitu. Strony w innych wątkach
+    # mogą jeszcze trwać, więc limit bywa przekroczony o grafiki w toku.
+    on_spent: Callable[[PageOutcome], None] | None = None
     clock: Callable[[], float] = time.monotonic
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    _budget: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+
+    def _check_budget(self) -> bool:
+        """True (i zapamiętanie), gdy limit budżetu nie pozwala na kolejną grafikę."""
+        if self.over_budget is not None and self.over_budget():
+            self._budget.set()
+        return self._budget.is_set()
 
     def _render(self, name: str, prompt: str) -> _Render:
         """Surowa grafika. ProviderError z fatal=True przechodzi wyżej."""
@@ -270,6 +286,10 @@ class PageWorker:
                 return outcome(
                     render, f"{reason} (przerwano po błędzie krytycznym)", verdict, moved=True
                 )
+            if self._check_budget():
+                return outcome(
+                    render, f"{reason} (przerwano: przekroczony limit kosztu)", verdict, moved=True
+                )
             idea_id, prompt = replacement.idea_id, replacement.prompt
 
     def run(
@@ -282,15 +302,19 @@ class PageWorker:
         # Ustawiana w wątku roboczym: wolny wątek mógłby wziąć kolejną stronę, zanim
         # główny wątek zdąży anulować kolejkę, i wysłać zbędne zapytanie.
         stop = self._stop = threading.Event()
+        self._budget = threading.Event()
 
         def run_job(job: PageJob) -> PageOutcome:
-            if stop.is_set():
+            if stop.is_set() or self._check_budget():
                 raise _Skipped
             try:
-                return self.generate_page(job)
+                outcome = self.generate_page(job)
             except ProviderError:
                 stop.set()
                 raise
+            if self.on_spent is not None:
+                self.on_spent(outcome)
+            return outcome
 
         pool = ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="page")
         futures: list[Future[PageOutcome]] = [pool.submit(run_job, j) for j in jobs]
@@ -315,4 +339,6 @@ class PageWorker:
             raise
         pool.shutdown(wait=True)
         outcomes.sort(key=lambda o: o.page)
-        return ImagesResult(outcomes=outcomes, fatal_error=fatal_error)
+        return ImagesResult(
+            outcomes=outcomes, fatal_error=fatal_error, budget_exceeded=self._budget.is_set()
+        )

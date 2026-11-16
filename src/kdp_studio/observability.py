@@ -31,7 +31,8 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from kdp_studio.config import LogLevel
+from kdp_studio.config import LogLevel, ModelPrice
+from kdp_studio.pipeline.cost import usage_cost
 from kdp_studio.pipeline.output import LOG_FILE
 from kdp_studio.providers.base import (
     ImageProvider,
@@ -186,8 +187,14 @@ def progress_bar(label: str, total: int) -> Iterator[Callable[[], None]]:
 # --- Wywołania API w logu (debug) ------------------------------------------------------------
 
 
-def _usage_fields(usage: Usage) -> dict[str, int]:
-    return {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+def _usage_fields(usage: Usage, price: ModelPrice | None) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+    }
+    if price is not None:
+        fields["cost_usd"] = usage_cost(price, usage)  # FR-10
+    return fields
 
 
 @contextmanager
@@ -235,23 +242,25 @@ _api_log = logging.getLogger(f"{ROOT_LOGGER}.api")
 class LoggedTextProvider:
     """TextProvider, który zapisuje w logu każde wywołanie (debug) i błąd (warning)."""
 
-    def __init__(self, inner: TextProvider) -> None:
+    def __init__(self, inner: TextProvider, price: ModelPrice | None = None) -> None:
         self.inner = inner
+        self.price = price
         self.name = inner.name
         self.model = inner.model
 
     def complete_json(self, system: str, user: str, schema: type[SchemaT]) -> tuple[SchemaT, Usage]:
         with _api_call(_api_log, "text", self.name, self.model, schema=schema.__name__) as out:
             parsed, usage = self.inner.complete_json(system, user, schema)
-            out.update(_usage_fields(usage))
+            out.update(_usage_fields(usage, self.price))
         return parsed, usage
 
 
 class LoggedImageProvider:
     """ImageProvider z logiem wywołań; prompt trafia do logu na poziomie debug."""
 
-    def __init__(self, inner: ImageProvider) -> None:
+    def __init__(self, inner: ImageProvider, price: ModelPrice | None = None) -> None:
         self.inner = inner
+        self.price = price
         self.name = inner.name
         self.model = inner.model
 
@@ -269,15 +278,18 @@ class LoggedImageProvider:
             prompt=req.prompt,
         ) as out:
             result = self.inner.generate(req)
-            out.update(_usage_fields(result.usage), width=result.width, height=result.height)
+            out.update(
+                _usage_fields(result.usage, self.price), width=result.width, height=result.height
+            )
         return result
 
 
 class LoggedVisionProvider:
     """VisionProvider z logiem wywołań."""
 
-    def __init__(self, inner: VisionProvider) -> None:
+    def __init__(self, inner: VisionProvider, price: ModelPrice | None = None) -> None:
         self.inner = inner
+        self.price = price
         self.name = inner.name
         self.model = inner.model
 
@@ -286,5 +298,5 @@ class LoggedVisionProvider:
     ) -> tuple[SchemaT, Usage]:
         with _api_call(_api_log, "vision", self.name, self.model, schema=schema.__name__) as out:
             parsed, usage = self.inner.assess(image_png, instructions, schema)
-            out.update(_usage_fields(usage))
+            out.update(_usage_fields(usage, self.price))
         return parsed, usage

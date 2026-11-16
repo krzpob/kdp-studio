@@ -12,7 +12,13 @@ from kdp_studio.cli import ExitCode, main
 from kdp_studio.config import DEFAULT_CONFIG_DIR
 from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider, FakeVisionProvider
-from tests.conftest import ConfigDirFactory, approve_all, llm_ideas_response, review_response
+from tests.conftest import (
+    ConfigDirFactory,
+    approve_all,
+    fake_settings,
+    llm_ideas_response,
+    review_response,
+)
 
 BASE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
 BOOK_DIR = Path("output/dinozaury_przedszkole_kawaii_letter")
@@ -35,7 +41,8 @@ def fake_text_provider(
     for fmt in formats.values():
         fmt["dpi"] = TEST_DPI
         fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
-    monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats)))
+    directory = config_dir(formats=formats, settings=fake_settings())
+    monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(directory))
     provider = FakeTextProvider([llm_ideas_response(300)], routes={"_Review": approve_all})
 
     def create(name: str, model: str) -> TextProvider:
@@ -551,7 +558,7 @@ def test_qa_from_settings_and_no_qa_flag(
         fmt["dpi"] = TEST_DPI
         fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
     monkeypatch.setenv(
-        "KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats, settings={"qa": True}))
+        "KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats, settings=fake_settings(qa=True)))
     )
     vision = _vision(monkeypatch)
     assert main([*BASE, "--pages", "12"]) == ExitCode.OK
