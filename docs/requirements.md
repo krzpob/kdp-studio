@@ -29,6 +29,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 ### Poza zakresem MVP (roadmapa, sekcja 13)
 - Składanie PDF wnętrza książki w skrypcie. W MVP robi to użytkownik w Canvie (D9). Automatyczne składanie to opcjonalny etap 2.
 - Okładka: komenda `kdp-studio cover` tworzy gotowy PDF okładki (FR-15). W MVP okładkę projektuje się ręcznie w Canvie albo w pakiecie Adobe.
+- Koszt druku, cena minimalna i tantiemy z tabel KDP oraz podpowiedź ceny: komenda `kdp-studio price` (FR-16).
 - Strona „This book belongs to…” dopasowana do motywu kolorowanki, włączana przełącznikiem (FR-14). W MVP użytkownik robi ją ręcznie w Canvie.
 - Adapter Gemini API (Nano Banana). Architektura musi go umożliwiać od początku.
 - Adapter Adobe Firefly.
@@ -384,6 +385,123 @@ cover:                          # nasze ustawienia
   template_tolerance_in: 0.01
 ```
 
+### FR-16: Koszt druku, cena minimalna i tantiemy (poza MVP)
+
+Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada cenę. Pomaga to już przy wyborze liczby grafik, przed generowaniem.
+
+**Dane: tabele KDP w konfiguracji**
+- `config/kdp_pricing.yaml` przepisuje dwie strony pomocy KDP. Każdy rynek ma źródło i datę sprawdzenia (`checked`):
+  - **koszt druku** paperback, czarny atrament, papier biały: dla formatu regularnego i dużego, dla każdego rynku: koszt stały dla krótkich książek (24–110 stron, na Amazon.com.au 24–108) oraz koszt stały + koszt za stronę powyżej tego progu;
+  - **progi tantiemy:** stawka 50% do ceny progowej włącznie, 60% od następnej ceny, plus cena maksymalna.
+- Format jest **duży**, gdy ma ponad 6.12" szerokości albo ponad 9" wysokości. Oba nasze formaty (letter i kwadrat 8.5") są duże.
+- Program nie pobiera tych stron automatycznie. Gdy dane mają ponad `stale_after_days` dni (domyślnie 180), pokazuje ostrzeżenie z linkami do aktualizacji.
+
+**Obliczenia**
+- `printing_cost = fixed_only`, gdy `pages_in_book ≤ próg_stron`, w przeciwnym razie `fixed + pages_in_book × per_page`.
+  - Sprawdzone z kalkulatorem KDP: letter, 104 strony, Amazon.com → $2.84.
+- `royalty(cena) = stawka(cena) × cena − printing_cost`. Stawka zależy od progu rynku (np. Amazon.com: 50% do 9.98 USD, 60% od 9.99 USD).
+- **Cena minimalna** (wzór KDP: koszt druku / stawka):
+  - jeśli `printing_cost / 0.5 ≤ próg_50%`, to `printing_cost / 0.5`;
+  - w przeciwnym razie `max(printing_cost / 0.6, cena_od_60%)`.
+  - Zaokrąglenie do pełnego centa jak w kalkulatorze KDP, czyli do najbliższego, nie w górę (twarda oprawa: 7.49 / 0.6 = 12.483 → $12.48).
+  - **Cenę minimalną liczy się z niezaokrąglonego kosztu druku**, a zaokrągla dopiero wynik. Potwierdzone w kalkulatorze KDP: 202 strony → koszt $4.434 (wyświetlany jako $4.43) → 4.434 / 0.5 = 8.868 → **$8.87**. Z zaokrąglonego kosztu wyszłoby $8.86. Podobnie 402 strony: 7.834 / 0.6 → $13.06, a nie $13.05.
+  - **Arytmetyka na `Decimal`**, z wartościami z YAML wczytanymi jako tekst, nigdy na `float`. `round()` na `float` daje niespójne wyniki dla połówek centa (`round(2.955, 2)` = 2.96, ale `round(3.125, 2)` = 3.12).
+  - **Zaokrąglanie połówek: `ROUND_HALF_UP`**, potwierdzone w kalkulatorze KDP 16.11.2026. Połówka centa pojawia się tylko przy nieparzystej liczbie stron: koszt za stronę razy parzysta liczba stron daje parzystą liczbę tysięcznych, a dzielenie przez 0.5 i 0.6 nie daje połówki. Kalkulator przyjmuje jednak nieparzyste liczby stron, a `front_matter_pages` może być nieparzyste.
+  - **Tantiemę też liczy się z niezaokrąglonego kosztu druku**, a zaokrągla dopiero wynik (`ROUND_HALF_UP`).
+  - Przypadki testowe (letter, Amazon.com, cena $14.00, stawka 60%), potwierdzone w kalkulatorze KDP:
+
+    | Strony | Koszt dokładny | Koszt wyświetlany | Tantiema dokładna | Tantiema | Rozstrzyga |
+    |---|---|---|---|---|---|
+    | 115 | 2.955 | **$2.96** | 8.40 − 2.955 = 5.445 | **$5.45** | tantiema 5.445 (parzysta druga cyfra) idzie w górę, więc nie bankierskie; z zaokrąglonego kosztu wyszłoby $5.44 |
+    | 125 | 3.125 | **$3.13** | 8.40 − 3.125 = 5.275 | **$5.28** | koszt 3.125 (parzysta druga cyfra) idzie w górę, więc nie bankierskie ani obcięcie; z zaokrąglonego kosztu wyszłoby $5.27 |
+  - **Przypadek graniczny** (potwierdzony w kalkulatorze KDP 16.11.2026: letter, 258 stron → cena minimalna $9.99, stawka 60%): gdy `printing_cost / 0.5` przekracza próg 50%, a `printing_cost / 0.6` wypada poniżej ceny progowej 60%, ceną minimalną jest sama cena progowa. Cena niższa wpadłaby w stawkę 50%, przy której tantiema nie pokryłaby kosztu druku. Na Amazon.com dotyczy to kosztów druku od ok. $4.99 do $5.99.
+  - Przypadki testowe (letter, Amazon.com), wszystkie potwierdzone w kalkulatorze KDP 16.11.2026:
+
+    | Strony | Koszt druku | Koszt / 0.5 | Koszt / 0.6 | Oczekiwana cena minimalna |
+    |---|---|---|---|---|
+    | 202 | $4.43 | $8.87 | – | $8.87, stawka 50% |
+    | 258 | $5.39 | $10.77 | $8.98 | $9.99, stawka 60% (przypadek graniczny) |
+    | 402 | $7.83 | $15.67 | $13.06 | $13.06, stawka 60% |
+- **Ceny tuż pod progiem:** w strefie 50% tantiema jest zawsze niższa niż przy cenie progowej 60%. Na Amazon.com, żeby przy stawce 50% zarobić tyle co przy $9.99, cena musiałaby wynosić $11.99, czyli przekroczyć próg. Program pokazuje to wprost: między ceną minimalną a progiem tantiema jest niższa niż przy cenie progowej, a różnica rośnie im bliżej progu.
+- **Strony bez dodatkowego kosztu:** do progu stron koszt druku jest stały. Przy druku jednostronnym i 2 stronach wstępnych do progu 110 stron mieści się 54 grafiki: tyle samo kosztuje druk 30 i 54 grafik. Powyżej każda grafika dodaje 2 strony × `per_page` (Amazon.com, duży format: $0.034).
+
+Przykład (Amazon.com, letter albo kwadrat):
+
+| Grafiki | Strony książki | Koszt druku | Cena minimalna | Tantiema przy $9.99 | Tantiema przy $12.99 |
+|---|---|---|---|---|---|
+| 30 | 62 | $2.84 | $5.68 | $3.15 | $4.95 |
+| 54 | 110 | $2.84 | $5.68 | $3.15 | $4.95 |
+| 60 | 122 | $3.07 | $6.15 | $2.92 | $4.72 |
+| 100 | 202 | $4.43 | $8.87 | $1.56 | $3.36 |
+
+**Interfejs**
+- Komenda `kdp-studio price`:
+  - dla gotowej książki: `kdp-studio price <katalog-książki>` (format i `pages_in_book` z manifestu);
+  - przed generowaniem: `kdp-studio price --format letter --pages 30` (liczba stron jak w FR-02).
+  - Opcje: `--market US,UK,DE,PL` (domyślnie `pricing.markets` z `settings.yaml`, np. `[US]`) i `--price 9.99` (konkretna cena do sprawdzenia, w walucie rynku).
+- Wynik dla każdego rynku:
+  - koszt druku i cena minimalna;
+  - tabela tantiem dla ceny minimalnej, kilku cen z `pricing.candidate_prices` (np. 6.99, 7.99, 8.99, ostatnia cena przed progiem, cena progowa, 12.99, 14.99) i ceny z `--price`;
+  - ostrzeżenie o cenach tuż pod progiem;
+  - informacja, ile grafik zmieści się jeszcze bez wzrostu kosztu druku.
+- `--price` poniżej ceny minimalnej albo powyżej maksymalnej to błąd walidacji (kod 1).
+- `generate` po zakończeniu wypisuje jedną linię dla domyślnego rynku: koszt druku, cenę minimalną i tantiemę przy cenie progowej. `manifest.json` dostaje sekcję `pricing` z tymi wartościami i datą danych (`checked`).
+
+**Zastrzeżenia**
+- To szacunek z tabel; wiążący jest kalkulator KDP, a wynik zawiera link do niego.
+- **Cena w KDP to cena netto.** Na rynkach z VAT Amazon dolicza podatek do ceny wpisanej w KDP, a klient widzi cenę z VAT. Tantiema liczy się od ceny wpisanej przez wydawcę, czyli bez VAT. Program operuje więc wyłącznie cenami netto, a w wyniku dla rynków z VAT zaznacza, że klient zapłaci więcej.
+- **Promocje Amazona nie obniżają tantiemy.** Gdy Amazon sam obniża cenę (np. z okazji Black Friday), tantiema nadal liczy się od ceny wpisanej w KDP. Program liczy tylko na tej cenie i nie modeluje promocji.
+- Kolorowanki nie są przyjmowane do Expanded Distribution, więc program liczy tylko sprzedaż na Amazonie.
+- Twarda oprawa jest poza zakresem (FR-15), więc tabele obejmują tylko paperback.
+
+Konfiguracja (szkic, wartości z KDP sprawdzone 16.11.2026):
+
+```yaml
+# config/kdp_pricing.yaml
+sources:
+  printing_cost: https://kdp.amazon.com/en_US/help/topic/G201834340
+  royalty: https://kdp.amazon.com/en_US/help/topic/G201834330
+  calculator: https://kdp.amazon.com/en_US/royalty-calculator
+checked: 2026-11-16
+large_trim: {width_over_in: 6.12, height_over_in: 9.0}
+markets:
+  US:
+    currency: USD
+    printing_cost:            # czarny atrament, papier biały
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.30, fixed: 1.00, per_page: 0.012}
+      large:   {fixed_only: 2.84, fixed: 1.00, per_page: 0.017}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+  UK:
+    currency: GBP
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 1.93, fixed: 0.85, per_page: 0.010}
+      large:   {fixed_only: 2.15, fixed: 0.85, per_page: 0.012}
+    royalty: {rate_50_max_price: 7.98, rate_60_min_price: 7.99, max_price: 250}
+  EU:                         # DE, FR, ES, IT, NL, IE, BE
+    currency: EUR
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.05, fixed: 0.75, per_page: 0.012}
+      large:   {fixed_only: 2.48, fixed: 0.75, per_page: 0.016}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+  PL:
+    currency: PLN
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 9.58, fixed: 3.51, per_page: 0.056}
+      large:   {fixed_only: 11.61, fixed: 3.51, per_page: 0.075}
+    royalty: {rate_50_max_price: 39, rate_60_min_price: 40, max_price: 1200}
+  # CA, AU, SE, JP – analogicznie, z tych samych stron KDP
+
+# settings.yaml
+pricing:
+  markets: [US]
+  candidate_prices: {US: [6.99, 7.99, 8.99, 9.98, 9.99, 12.99, 14.99]}
+  stale_after_days: 180
+```
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -546,6 +664,10 @@ kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
   [--template kdp_template.png] \
   [--qa] \
   [--max-cost 1.00]
+
+# Koszt druku, cena minimalna i tantiemy (FR-16, poza MVP)
+kdp-studio price ./output/dinozaury_przedszkole_kawaii_square [--market US,UK,DE,PL] [--price 9.99]
+kdp-studio price --format letter --pages 30 [--market US]
 ```
 
 ### 9.2 Konfiguracja i sekrety
@@ -666,6 +788,7 @@ kdp-studio/
 | 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
 | 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, przełącznik `--belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
 | 1b. Okładka | FR-15: komenda `cover`, geometria z wzorów KDP, przód z pokolorowanej strony z tytułem, tył z grzbietem dopasowany do przodu, miniatury w ramkach, PDF | Na 3 książkach (letter i kwadrat, różna liczba stron) PDF przechodzi kreator KDP bez błędów, a podgląd KDP nie pokazuje szwu na grzbiecie ani elementów w polu kodu |
+| 1c. Cena i tantiemy | FR-16: tabele kosztów druku i progów tantiem KDP w konfiguracji, komenda `price`, podsumowanie w `generate` i manifeście | Koszt druku i cena minimalna zgadzają się z kalkulatorem KDP dla letter i kwadratu przy 30, 54 i 100 grafikach na rynkach US, UK, DE i PL |
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
