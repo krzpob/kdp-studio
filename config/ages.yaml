@@ -5,6 +5,9 @@
 #   line, subjects, background, fill_areas – charakterystyka grafiki (dokumentacja i wejście dla LLM w FR-03)
 #   prompt_fragment    – fragment promptu obrazu (FR-04), po angielsku
 #   multi_subject_share – minimalny udział stron z 2+ postaciami (FR-03b), 0–1; 0 wyłącza
+#   belongs_to         – strona „This book belongs to…” (FR-14): wielkość napisu (font_pt, program
+#                        zmniejsza go, gdy nie mieści się w polu), wysokość miejsca na imię
+#                        (name_line_height_in) i litery konturowe do pokolorowania (outline_text)
 #   postprocess        – parametry obróbki (FR-06); cienkie linie wymagają łagodniejszego
 #                        usuwania szumu niż grube linie dla najmłodszych
 #     threshold        – "otsu" albo liczba 0–255
@@ -25,6 +28,10 @@ przedszkole:
     no background, large closed areas, the whole drawing fits inside the image with white space
     on every side, for toddlers
   multi_subject_share: 0.0
+  belongs_to:
+    font_pt: 48
+    name_line_height_in: 1.0
+    outline_text: true
   postprocess:
     threshold: otsu
     min_speck_area: 64
@@ -45,6 +52,10 @@ wczesnoszkolne:
     the whole scene fits inside the image with white space on every side, nothing cut off
     by the edges, for kids 6-8
   multi_subject_share: 0.25
+  belongs_to:
+    font_pt: 42
+    name_line_height_in: 0.85
+    outline_text: true
   postprocess:
     threshold: otsu
     min_speck_area: 40
@@ -64,6 +75,10 @@ szkolne:
     medium outlines, full scene, moderate detail, background lines such as floor, walls or
     horizon may run to the edges but no object is cut off, for kids 9-12
   multi_subject_share: 0.3
+  belongs_to:
+    font_pt: 36
+    name_line_height_in: 0.7
+    outline_text: false
   postprocess:
     threshold: otsu
     min_speck_area: 24
@@ -83,6 +98,10 @@ nastolatki:
     fine clean lines, detailed scene, decorative patterns, detailed background may extend
     to the edges of the image, for teens
   multi_subject_share: 0.2
+  belongs_to:
+    font_pt: 32
+    name_line_height_in: 0.6
+    outline_text: false
   postprocess:
     threshold: otsu
     min_speck_area: 12
@@ -102,6 +121,10 @@ dorosli:
     fine intricate line work, highly detailed patterns, many small areas to color,
     background and patterns may extend to the edges of the image, for adults
   multi_subject_share: 0.0
+  belongs_to:
+    font_pt: 30
+    name_line_height_in: 0.55
+    outline_text: false
   postprocess:
     threshold: otsu
     min_speck_area: 6

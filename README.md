@@ -39,6 +39,12 @@ uv run kdp-studio finalize output/dinozaury_przedszkole_kawaii_square
 
 Każdy krok bez zmian nic nie robi, a przerwany krok wznawiasz, uruchamiając go ponownie.
 
+### Strona „This book belongs to…” (FR-14)
+
+Z flagą `--belongs-to-page` (w `generate`, `ideas` albo później w `images <katalog>`) książka dostaje stronę wstępną z miejscem na imię właściciela, w motywie i stylu kolorowanki. Model obrazu rysuje tylko ramkę z elementami motywu wokół pustej tabliczki. Napis „This book belongs to:” i linię na imię wpisuje program czcionką Fredoka (SIL OFL, `assets/fonts/`). Dla najmłodszych są to litery konturowe, które też można pokolorować.
+
+Jeśli tabliczka z modelu nie jest pusta, program generuje ramkę ponownie, najwyżej 2 razy. Potem przechodzi na układ zapasowy: grafika pierwszej strony książki u góry i napis pod nią. Wynik to `front_belongs_to.png` w katalogu książki, który w Canvie jest pierwszy na liście. `canva.md` mówi, że to druga strona wstępna. Napis, pole na tekst i czcionkę ustawisz w `config/settings.yaml` (`belongs_to_page`), a wielkość liter i miejsca na imię w profilach wieku (`belongs_to`). Strona kosztuje jedną grafikę plus ewentualne ponowienia.
+
 ### Koszt i limit (FR-10)
 
 Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i cennika `api_pricing` w `config/settings.yaml` (ceny przepisane ze strony OpenAI, z datą sprawdzenia). Gdy OpenAI zmieni ceny albo przełączysz model, zaktualizuj ten cennik: model bez ceny to błąd przed pierwszym wywołaniem. Koszt każdej strony, pomysłów i całej książki zapisuje się w `manifest.json` (`cost_usd`), a konsola pokazuje koszt stron, kroków i podsumowanie `generate`.

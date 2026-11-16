@@ -17,7 +17,9 @@ from types import TracebackType
 from pydantic import ValidationError
 
 from kdp_studio.models import BookIdeas, BookPrompts, BookSpec, PagePrompt
+from kdp_studio.pipeline.belongs_to import FRONT_NAME
 from kdp_studio.pipeline.manifest import (
+    FrontPage,
     Manifest,
     ManifestPage,
     sha256_file,
@@ -254,3 +256,50 @@ def plan_finalize(book_dir: Path, manifest: Manifest, params_sha256: str) -> lis
         ):
             todo.append(page)
     return todo
+
+
+# --- FR-14: strona „This book belongs to…” ------------------------------------------------------
+
+
+def front_raw_path(book_dir: Path) -> Path:
+    return book_dir / RAW_DIR / f"{FRONT_NAME}.png"
+
+
+def plan_front(book_dir: Path, front: FrontPage | None, prompt: str) -> str | None:
+    """Dlaczego krok 2 ma (ponownie) zrobić stronę FR-14; None, gdy jest aktualna."""
+    if front is None:
+        return None
+    if front.action == "regenerate":
+        return "action: regenerate"
+    if front.raw_sha256 is None or not front_raw_path(book_dir).is_file():
+        return "nieudana" if front.status == "failed" else "brak grafiki"
+    if front.status == "failed":
+        return "nieudana"
+    if front.prompt_sha256 != sha256_text(prompt):
+        return "zmieniony prompt"
+    return None
+
+
+def fallback_art(book_dir: Path, manifest: Manifest) -> tuple[str, Path] | None:
+    """Grafika do układu zapasowego FR-14: pierwsza strona książki z gotową surową grafiką."""
+    for page in manifest.pages:
+        raw = raw_path(book_dir, page)
+        if page.status in ("raw_ok", "ok") and page.raw_sha256 is not None and raw.is_file():
+            return page.name, raw
+    return None
+
+
+def front_needs_finalize(book_dir: Path, front: FrontPage | None, params_sha256: str) -> bool:
+    """Strona FR-14 ma surową grafikę, a gotowej strony brakuje albo jest nieaktualna."""
+    if front is None or front.raw_sha256 is None or front.layout is None:
+        return False
+    if front.status not in ("raw_ok", "ok", "failed") or not front_raw_path(book_dir).is_file():
+        return False
+    final = front.final
+    return (
+        front.status == "raw_ok"
+        or final is None
+        or final.raw_sha256 != front.raw_sha256
+        or final.postprocess_sha256 != params_sha256
+        or (front.status == "ok" and not (book_dir / f"{FRONT_NAME}.png").is_file())
+    )

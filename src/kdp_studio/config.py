@@ -36,6 +36,14 @@ class PostprocessParams(_Strict):
     potrace: PotraceParams
 
 
+class BelongsToAge(_Strict):
+    """Napis i miejsce na imię na stronie „This book belongs to…” dla wieku (FR-14)."""
+
+    font_pt: Annotated[float, Field(gt=0)] = 36
+    name_line_height_in: Annotated[float, Field(gt=0)] = 0.7
+    outline_text: bool = False
+
+
 class AgeProfile(_Strict):
     name: str
     description: str
@@ -46,6 +54,7 @@ class AgeProfile(_Strict):
     prompt_fragment: str
     # FR-03b: minimalny udział stron z 2+ postaciami; 0 wyłącza (np. jeden obiekt dla maluchów)
     multi_subject_share: Annotated[float, Field(ge=0, le=1)] = 0.0
+    belongs_to: BelongsToAge = BelongsToAge()
     postprocess: PostprocessParams
 
 
@@ -163,6 +172,45 @@ class ApiPricing(_Strict):
 
 
 DEFAULT_MAX_COST_USD = 5.0
+REPO_ROOT = DEFAULT_CONFIG_DIR.parent  # ścieżki zasobów (np. czcionek) są względne wobec repo
+Fraction = Annotated[float, Field(ge=0, le=1)]
+
+
+class TextBox(_Strict):
+    """Prostokąt względem obszaru treści strony, w ułamkach jego szerokości i wysokości."""
+
+    x: Fraction
+    y: Fraction
+    width: Annotated[float, Field(gt=0, le=1)]
+    height: Annotated[float, Field(gt=0, le=1)]
+
+    @model_validator(mode="after")
+    def _inside(self) -> Self:
+        if self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("text_box wychodzi poza obszar treści (x + width i y + height ≤ 1)")
+        return self
+
+
+class BelongsToSettings(_Strict):
+    """Strona „This book belongs to…” (FR-14)."""
+
+    enabled: bool = False
+    text: Annotated[str, Field(min_length=1)] = "This book belongs to:"
+    composition: Annotated[str, Field(min_length=1)] = (
+        "a decorative frame made of theme elements around a large empty blank plaque in the "
+        "center of the page, the plaque is completely empty with nothing written or drawn inside it"
+    )
+    text_box: TextBox = TextBox(x=0.2, y=0.37, width=0.6, height=0.3)
+    max_ink_ratio: Annotated[float, Field(ge=0, le=1)] = 0.005
+    max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    font: str = "assets/fonts/Fredoka-Variable.ttf"
+    font_variation: str | None = "SemiBold"  # nazwa wariantu fontu zmiennego; None: domyślny
+    fallback_art_height: Annotated[float, Field(gt=0.2, lt=0.9)] = 0.55
+
+    @property
+    def font_path(self) -> Path:
+        path = Path(self.font)
+        return path if path.is_absolute() else REPO_ROOT / path
 
 
 class Settings(_Strict):
@@ -179,6 +227,7 @@ class Settings(_Strict):
     qa: bool = False
     qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
     log_level: LogLevel = "info"
+    belongs_to_page: BelongsToSettings = BelongsToSettings()
     api_pricing: ApiPricing = ApiPricing()
     max_cost_usd: Annotated[float, Field(gt=0)] = DEFAULT_MAX_COST_USD
 
