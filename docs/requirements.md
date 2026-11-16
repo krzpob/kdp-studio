@@ -166,8 +166,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Manifest jest zapisywany przyrostowo po każdej stronie, żeby przerwanie nie gubiło postępu.
 
 ### FR-09: Wznawianie
-- `--resume <katalog>` wczytuje `manifest.json` i `ideas.json` i generuje tylko strony bez statusu `ok`.
-- Ponowne uruchomienie nie wywołuje ponownie LLM dla pomysłów ani nie generuje gotowych stron (idempotentność).
+Zastąpione przez FR-17. Wznowienie to ponowne uruchomienie przerwanego kroku: `kdp-studio images <katalog>` generuje tylko strony, których brakuje, i nie wywołuje ponownie LLM dla pomysłów (idempotentność).
 
 ### FR-10: Koszty i limit budżetu
 - Każde wywołanie API zapisuje szacowany koszt (z cennika w konfiguracji albo z `usage` zwracanego przez API).
@@ -175,7 +174,52 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Na końcu program wypisuje podsumowanie: liczbę stron ok/failed, łączny koszt i czas.
 
 ### FR-11: Tryb próbny (dry run)
-- `--dry-run` uruchamia tylko FR-01–FR-04: zapisuje `ideas.json` i prompty, bez generowania grafik. Służy do taniego strojenia profili.
+Zastąpione przez FR-17. Tryb próbny to sam krok 1: `kdp-studio ideas …` zapisuje pomysły i prompty bez generowania grafik, co służy do taniego strojenia profili.
+
+### FR-17: Generowanie krokowe z ręczną weryfikacją
+
+Generowanie dzieli się na trzy kroki, każdy jako osobna komenda. Między krokami użytkownik może sam przejrzeć i poprawić wynik, zamiast polegać tylko na weryfikacji modelem. `generate` uruchamia wszystkie trzy po kolei, z tymi samymi parametrami co dotąd.
+
+| Krok | Komenda | Wynik | Wywołania API |
+|---|---|---|---|
+| 1. Pomysły | `kdp-studio ideas --theme … --age … --style … --format … --pages …` | katalog książki, `ideas.json`, `prompts.json`, `manifest.json` (strony `pending`) | LLM: pomysły i weryfikacja pomysłów (FR-03, FR-03a) |
+| 2. Surowe grafiki | `kdp-studio images <katalog>` | `raw/page_XX.png`, z `--qa` po kontroli jakości i wymianie odrzuconych na zapas | model obrazu, opcjonalnie model z wizją (FR-05, FR-07) |
+| 3. Obróbka | `kdp-studio finalize <katalog>` | `page_XX.png` do Canvy, `svg/`, `canva.md` | brak (FR-06, FR-08) |
+
+**Stan w manifeście**
+- `manifest.json` powstaje już w kroku 1. Stan książki: `ideas_ready` → `raw_ready` → `completed` (albo `partial`/`failed` jak dotąd).
+- Każda strona ma: `idea_id`, `status` (`pending`, `raw_ok`, `ok`, `failed`), wynik QA, sumę kontrolną promptu (`prompt_sha256`), sumę kontrolną surowego pliku (`raw_sha256`) oraz pole `action` dla użytkownika.
+- Każdy krok sprawdza, czy poprzedni jest gotowy, i wykonuje tylko brakującą pracę. Bez zmian ponowne uruchomienie kroku nic nie robi.
+- Plik blokady w katalogu książki zapobiega dwóm równoczesnym uruchomieniom. Użytkownik edytuje pliki tylko między uruchomieniami.
+
+**Ręczna weryfikacja po kroku 1**
+- Użytkownik edytuje `ideas.json`: poprawia opis sceny (`scene`, `elements`), usuwa pomysły albo zmienia kolejność. Pierwsze `pages` pomysłów to strony, reszta to zapas.
+- `kdp-studio ideas <katalog> --redo idea_07,idea_19`: LLM wymyśla w miejsce wskazanych pomysłów nowe, różne od wszystkich pozostałych (mechanizm dogenerowania z FR-03a). Nowe pomysły przechodzą weryfikację i dostają te same `id`.
+- Krok 2 sprawdza `ideas.json` (schemat, wystarczająca liczba pomysłów, unikalne `id`) i buduje prompty od nowa. Błąd kończy się kodem 1, zanim powstanie jakakolwiek grafika.
+
+**Ręczna weryfikacja po kroku 2**
+
+Użytkownik przegląda `raw/` i zmienia `manifest.json`. Następne `kdp-studio images <katalog>` wykonuje:
+- `"action": "regenerate"`: nowa grafika z tego samego pomysłu;
+- zmieniony `idea_id` (np. na pomysł z zapasu): grafika z nowego pomysłu. Ten sam pomysł nie może trafić na dwie strony;
+- zmieniony opis sceny w `ideas.json`: program wykrywa zmianę promptu po `prompt_sha256` i generuje stronę ponownie, bez dodatkowego oznaczania;
+- usunięty plik z `raw/`: strona zostaje wygenerowana ponownie.
+
+Po wykonaniu program czyści `action`.
+
+Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Program wykrywa ją po `raw_sha256`, oznacza stronę jako `edited_by_user` i nie generuje jej ponownie.
+
+**QA w kroku 2**
+- Z `--qa` każda strona przechodzi kontrolę jakości w kroku 2, a odrzucone są wymieniane na zapas jak dotąd (FR-07). Użytkownik ogląda już przefiltrowany zestaw.
+- Kontrola ocenia stronę po obróbce, bo jest skalibrowana na tym, co idzie do druku. Krok 2 robi więc tymczasową obróbkę na potrzeby kontroli, a na dysk zapisuje tylko surowy plik. Obróbka jest deterministyczna, więc krok 3 daje ten sam wynik, który oceniała kontrola.
+
+**Krok 3**
+- `finalize` przetwarza tylko strony, których surowy plik albo parametry obróbki się zmieniły. Manifest zapisuje sumę kontrolną parametrów obróbki z profilu wieku, więc po zmianie `ages.yaml` przetwarza wszystkie strony ponownie.
+- Nie wywołuje API, więc można go powtarzać bez kosztu, np. przy strojeniu progowania.
+
+**Jakość grafik**
+- `--image-quality low|medium|high` w `images` i `generate` nadpisuje `image_quality` z `settings.yaml`. Wartość trafia do manifestu dla każdej strony.
+- Porównanie jakości (otwarte pytanie 5): krok 1 raz, potem krok 2 w dwóch kopiach katalogu, z `low` i z `medium`. Ocena po kroku 3: odsetek stron przyjętych przez QA i przegląd ręczny. Wektoryzacja (D6) i tak wygładza linie, więc `low` może wystarczyć.
 
 ### FR-12: Podgląd profili
 - Komenda `profiles` wypisuje dostępne wartości `age`, `style` i `format` z krótkimi opisami z YAML.
@@ -224,7 +268,7 @@ Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywi
 - `manifest.json` ma sekcję `front_matter.belongs_to` z polami jak wpis strony (prompt, status, próby, koszt, QA) oraz `layout`: `frame` albo `fallback`.
 - `canva.md` wskazuje, na której stronie wstępnej umieścić plik (domyślnie druga, po stronie tytułowej).
 - Koszt to jedna dodatkowa grafika plus ewentualne ponowienia; liczy się do `--max-cost` (FR-10).
-- Brak strony przy włączonym przełączniku (status `failed`) daje kod wyjścia 2, jak brakująca strona kolorowanki. `--resume` generuje ją ponownie, a `--dry-run` pokazuje jej prompt.
+- Brak strony przy włączonym przełączniku (status `failed`) daje kod wyjścia 2, jak brakująca strona kolorowanki. Kolejne `kdp-studio images` generuje ją ponownie, a krok `ideas` zapisuje jej prompt (FR-17).
 
 Konfiguracja (szkic):
 
@@ -344,7 +388,7 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - **`cover_preview.png`**: okładka z naniesionymi liniami cięcia i zgięcia, strefami bezpiecznymi, polem kodu i opcjonalnie szablonem KDP.
 - **`raw/`**: surowe wyniki modelu.
 - **Manifest:** `manifest.json` dostaje sekcję `cover` z geometrią (`pages_in_book`, `spine_in`, wymiary), wyborem stron, promptami, wynikami kontroli styku, kosztem i statusem.
-- **Nieaktualna okładka:** jeśli później zmieni się `pages_in_book` książki, `cover` i `generate --resume` ostrzegają, że okładka jest nieaktualna.
+- **Nieaktualna okładka:** jeśli później zmieni się `pages_in_book` książki, `cover` i `kdp-studio images` ostrzegają, że okładka jest nieaktualna.
 - **Koszt:** 2 grafiki (przód, tył z grzbietem) plus 1–3 wywołania oceny (wybór stron, horyzont, QA) i ponowienia; liczy się do `--max-cost` (FR-10).
 - **Kody wyjścia** jak w §9.3: brak okładki po wyczerpaniu ponowień to 2, błąd walidacji lub szablonu to 1.
 
@@ -632,7 +676,7 @@ Mapowanie rozmiarów dla OpenAI: `square` → `1024x1024`, `letter` → `1024x15
 ### 9.1 Komendy
 
 ```bash
-# Generowanie książki
+# Generowanie książki: wszystkie trzy kroki po kolei (FR-17)
 kdp-studio generate \
   --theme "Dinozaury" \
   --age przedszkole \
@@ -643,16 +687,22 @@ kdp-studio generate \
   [--concurrency 4] \
   [--max-cost 5.00] \
   [--qa] \
+  [--image-quality low|medium|high] \
   [--no-review-ideas] \
   [--belongs-to-page] \
-  [--dry-run] \
   [--strict] \
   [--image-provider openai] \
   [--seed 1234] \
   [--verbose]
 
-# Wznowienie przerwanego generowania
-kdp-studio generate --resume ./output/dinozaury_przedszkole_kawaii_square
+# Generowanie krokowe (FR-17)
+kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
+  [--output-dir ./output] [--no-review-ideas] [--strict]
+kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
+kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
+  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
+kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
+# Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
 
 # Lista dostępnych profili
 kdp-studio profiles [age|style|format]
@@ -785,7 +835,7 @@ kdp-studio/
 | Etap | Zakres | Kryterium wyjścia |
 |---|---|---|
 | 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
-| 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
+| 1. MVP CLI | FR-01–FR-13 i FR-17 (generowanie krokowe) z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
 | 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, przełącznik `--belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
 | 1b. Okładka | FR-15: komenda `cover`, geometria z wzorów KDP, przód z pokolorowanej strony z tytułem, tył z grzbietem dopasowany do przodu, miniatury w ramkach, PDF | Na 3 książkach (letter i kwadrat, różna liczba stron) PDF przechodzi kreator KDP bez błędów, a podgląd KDP nie pokazuje szwu na grzbiecie ani elementów w polu kodu |
 | 1c. Cena i tantiemy | FR-16: tabele kosztów druku i progów tantiem KDP w konfiguracji, komenda `price`, podsumowanie w `generate` i manifeście | Koszt druku i cena minimalna zgadzają się z kalkulatorem KDP dla letter i kwadratu przy 30, 54 i 100 grafikach na rynkach US, UK, DE i PL |
@@ -799,9 +849,29 @@ kdp-studio/
 2. Język metadanych książki (`title`, `description`, `keywords`): angielski (rynek US) czy parametr `--lang`?
 3. Czy QA ma być domyślnie włączone po etapie 0, gdy znany będzie jego koszt i skuteczność?
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
-5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
+5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
 7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
+
+## 14a. Pomysły na rozwój
+
+Kierunki do rozważenia po MVP, jeszcze bez wymagań.
+
+**`--humanize/--no-humanize`: uczłowieczone zwierzęta**
+- Zwierzęta stoją na tylnych łapkach, noszą ubranka pasujące do sceny, używają łapek jak rąk i robią ludzkie rzeczy (pieczenie, łyżwy, ubieranie choinki).
+- Reguła trafia do generatora pomysłów (FR-03), do weryfikacji pomysłów (FR-03a), do kontroli jakości (FR-07) i jako linia `Characters: …` do wspólnego bloku stylu (FR-04), więc obowiązuje jednakowo na każdej stronie. Jedna wartość na całą książkę, bo mieszanie zwierząt naturalnych i uczłowieczonych wygląda niespójnie.
+- Wartość domyślna w profilu stylu (`humanize` w `styles.yaml`), flaga ją nadpisuje.
+
+**`--character`: opis bohaterów**
+- Tekst albo plik (`--character @bohaterowie/lisek.md`), flaga powtarzalna: jedno wystąpienie to jeden bohater. Przykłady: konkretny bohater dla nastolatków, maskotka serii, postacie z własnych opowiadań.
+- Opis ma dwie warstwy. Wygląd (sylwetka, ubranie, znaki szczególne) trafia do każdego promptu obrazu. Imię i charakter trafiają tylko do generatora pomysłów, nigdy do promptu obrazu, bo model mógłby próbować napisać imię.
+- Generator umieszcza bohaterów na większości stron, a weryfikacja pomysłów sprawdza zgodność z opisem.
+- Ograniczenie: opis tekstowy zapewnia ten sam strój i znaki szczególne, ale twarz i proporcje różnią się między stronami. Pełną spójność dałaby karta postaci generowana raz i podawana jako `reference_image` do każdej strony.
+- Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
+
+**`--scenes`: własne sceny zamiast wymyślonych**
+- Plik z listą scen podanych przez użytkownika zastępuje generowanie pomysłów (FR-03). Weryfikacja, prompty i dalsze kroki działają bez zmian.
+- Zastosowanie: zbiór własnych opowiadań, w którym część stron to kolorowanki z wybranych scen, razem z `--character` dla bohaterów opowiadań.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
