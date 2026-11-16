@@ -23,7 +23,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-07 | ✅ | #14 | |
 | FR-08 | ✅ | #13, #23 | |
 | FR-09 | ↪ FR-17 | #23 | |
-| FR-10 | ✅ | | Cennik `api_pricing` w `settings.yaml`, limit na jedno uruchomienie komendy. |
+| FR-10 | ✅ | #29 | Cennik `api_pricing` w `settings.yaml`, limit na jedno uruchomienie komendy. |
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
