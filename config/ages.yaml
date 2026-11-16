@@ -21,7 +21,8 @@ przedszkole:
   fill_areas: large, closed
   prompt_fragment: >-
     very thick bold outlines, one large simple subject, minimal details,
-    no background, large closed areas, for toddlers
+    no background, large closed areas, the whole drawing fits inside the image with white space
+    on every side, for toddlers
   postprocess:
     threshold: otsu
     min_speck_area: 64
@@ -39,7 +40,8 @@ wczesnoszkolne:
   fill_areas: medium
   prompt_fragment: >-
     thick clean outlines, simple scene with 1-3 subjects, simple background,
-    for kids 6-8
+    the whole scene fits inside the image with white space on every side, nothing cut off
+    by the edges, for kids 6-8
   postprocess:
     threshold: otsu
     min_speck_area: 40
@@ -56,7 +58,8 @@ szkolne:
   background: "yes"
   fill_areas: more detail
   prompt_fragment: >-
-    medium outlines, full scene, moderate detail, for kids 9-12
+    medium outlines, full scene, moderate detail, background lines such as floor, walls or
+    horizon may run to the edges but no object is cut off, for kids 9-12
   postprocess:
     threshold: otsu
     min_speck_area: 24
@@ -73,7 +76,8 @@ nastolatki:
   background: full
   fill_areas: patterns
   prompt_fragment: >-
-    fine clean lines, detailed scene, decorative patterns, for teens
+    fine clean lines, detailed scene, decorative patterns, detailed background may extend
+    to the edges of the image, for teens
   postprocess:
     threshold: otsu
     min_speck_area: 12
@@ -91,7 +95,7 @@ dorosli:
   fill_areas: small
   prompt_fragment: >-
     fine intricate line work, highly detailed patterns, many small areas to color,
-    for adults
+    background and patterns may extend to the edges of the image, for adults
   postprocess:
     threshold: otsu
     min_speck_area: 6
