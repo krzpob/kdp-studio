@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kdp_studio.pipeline.belongs_to import FRONT_NAME
 from kdp_studio.pipeline.manifest import AI_DISCLOSURE, Manifest
 from kdp_studio.validation import plural
 
@@ -12,12 +13,27 @@ def _inches(value: float) -> str:
     return f"{value:g}"
 
 
+def belongs_to_position(manifest: Manifest) -> int | None:
+    """Numer strony wstępnej dla `front_belongs_to.png` (FR-14): druga, po tytułowej."""
+    if manifest.front_matter.belongs_to is None or manifest.input.front_matter_pages == 0:
+        return None
+    return min(2, manifest.input.front_matter_pages)
+
+
 def _page_order(manifest: Manifest) -> list[str]:
     """Kolejność stron książki: strony wstępne, potem grafika i pusta strona (D8)."""
     front = manifest.input.front_matter_pages
+    belongs = belongs_to_position(manifest)
     lines = []
-    if front:
-        lines.append(f"| 1–{front} | strony wstępne |" if front > 1 else "| 1 | strona wstępna |")
+    for number in range(1, front + 1):
+        if number == belongs:
+            lines.append(f"| {number} | `{FRONT_NAME}.png` |")
+        elif belongs is None and number == 1:
+            lines.append(
+                f"| 1–{front} | strony wstępne |" if front > 1 else "| 1 | strona wstępna |"
+            )
+        elif belongs is not None:
+            lines.append(f"| {number} | strona wstępna |")
     number = front
     for page in manifest.pages:
         number += 2
@@ -32,6 +48,10 @@ def render_canva_md(manifest: Manifest, title: str) -> str:
     width, height = layout.trim_in
     names = [p.name for p in manifest.pages]
     missing = [p.name for p in manifest.pages if p.status != "ok"]
+    belongs = belongs_to_position(manifest)
+    front_page = manifest.front_matter.belongs_to
+    if front_page is not None and front_page.status != "ok":
+        missing.insert(0, FRONT_NAME)
     count = len(names)
     front = manifest.input.front_matter_pages
     pages_in_book = layout.pages_in_book
@@ -55,9 +75,16 @@ def render_canva_md(manifest: Manifest, title: str) -> str:
         "## Kroki",
         "",
         f"1. Utwórz projekt o wymiarach własnych **{_inches(width)} × {_inches(height)} in**.",
-        f"2. Strony wstępne: **{front}** (domyślnie strona tytułowa i „This book belongs to…”).",
+        f"2. Strony wstępne: **{front}** (domyślnie strona tytułowa i „This book belongs to…”)."
+        + (
+            f" Gotowa strona „This book belongs to…” to `{FRONT_NAME}.png`: wstaw ją jako "
+            f"stronę wstępną nr {belongs}."
+            if belongs is not None
+            else ""
+        ),
         f"3. Prześlij wszystkie pliki `{names[0]}.png` … `{names[-1]}.png` naraz "
-        "(kolejność alfabetyczna to kolejność stron).",
+        "(kolejność alfabetyczna to kolejność stron)"
+        + (f"; `{FRONT_NAME}.png` będzie pierwszy na liście." if belongs is not None else "."),
         "4. Każdą grafikę wstaw na osobną stronę i rozciągnij na całą stronę. Marginesy "
         f"({_inches(layout.margin_in)} in z każdej strony, zgodnie z tabelą KDP dla "
         f"{pages_in_book} stron) są już w pliku, więc niczego nie skaluj ani nie przycinaj.",

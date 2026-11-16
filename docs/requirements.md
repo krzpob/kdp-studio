@@ -27,7 +27,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
-| FR-14 | ⬜ | | Poza MVP. Specyfikacja: #16. |
+| FR-14 | ✅ | | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
 | FR-15 | ⬜ | | Poza MVP. Specyfikacja: #17. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
@@ -314,7 +314,7 @@ Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Prog
 ### ✅ FR-13: Przypomnienie o ujawnieniu AI
 - `manifest.json` i podsumowanie w konsoli zawierają informację, że przy publikacji w KDP trzeba zaznaczyć *AI-generated content* (obrazy).
 
-### ⬜ FR-14: Strona „This book belongs to…” (poza MVP)
+### ✅ FR-14: Strona „This book belongs to…” (poza MVP)
 
 Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywie i stylu co kolorowanka (np. dinozaury kawaii wokół pustej tabliczki na imię).
 
@@ -367,10 +367,12 @@ belongs_to_page:
   composition: >-
     decorative frame made of theme elements around a large empty blank plaque in the center,
     the plaque is completely empty
-  text_box: {x: 0.15, y: 0.35, width: 0.7, height: 0.35}   # względem obszaru treści
+  text_box: {x: 0.2, y: 0.37, width: 0.6, height: 0.3}   # względem obszaru treści
   max_ink_ratio: 0.005
   max_retries: 2
-  font: assets/fonts/<czcionka-OFL>.ttf
+  font: assets/fonts/Fredoka-Variable.ttf
+  font_variation: SemiBold
+  fallback_art_height: 0.55      # część obszaru treści na grafikę w układzie zapasowym
 
 # ages.yaml (dla każdego profilu)
 przedszkole:
@@ -379,6 +381,18 @@ przedszkole:
     name_line_height_in: 1.0
     outline_text: true
 ```
+
+**Implementacja (16.11.2026)**
+- **Czcionka:** Fredoka (SIL OFL 1.1) w `assets/fonts/Fredoka-Variable.ttf` z licencją `assets/fonts/OFL.txt`, wariant `SemiBold` (`belongs_to_page.font_variation`). Litery konturowe rysuje program: biały środek i czarny obrys. Czcionka nie potrzebuje więc osobnej wersji konturowej. Domyślnie konturowe są dla `przedszkole` i `wczesnoszkolne`.
+- **Napis:** po angielsku, „This book belongs to:”. Inny język to zmiana `belongs_to_page.text` w `settings.yaml`. Za szeroki napis program zmniejsza, najwyżej do 40% rozmiaru z profilu wieku. Jeśli i tak się nie mieści, strona dostaje błąd obróbki.
+- **Elementy motywu w prompcie:** najczęstsza główna postać (`subject`) i najczęstsze przedmioty (`elements`) stron książki, liczone przez program, deterministycznie. Motyw to tytuł książki (`book.title`, w języku metadanych), bo prompt jest po angielsku.
+- **Pole na tekst:** domyślnie `x: 0.2, y: 0.37, width: 0.6, height: 0.3`. Jest nieco mniejsze niż w szkicu, żeby łatwiej mieściło się w tabliczce z modelu.
+- **Układ zapasowy:** grafika **pierwszej gotowej strony książki** (jej surowy plik, już po QA) w górnych 55% obszaru treści, a napis pod nią. Grafika „z motywem bez ramki” byłaby kolejnym wywołaniem API, a nieudana ramka mogła zawierać napis modelu. Strona książki jest tania, czysta i w tym samym stylu. Kosztem jest powtórzenie jednej ilustracji w książce. Bez żadnej gotowej strony (wszystkie nieudane) strona FR-14 też jest nieudana.
+- **Kolejność w kroku 2:** strona FR-14 powstaje po stronach książki, bo układ zapasowy potrzebuje ich grafik. Gdy limit budżetu jest już przekroczony, strona nie startuje (kod 3). Gdy limit zostanie przekroczony w trakcie prób, program przechodzi na układ zapasowy, który nic nie kosztuje.
+- **Przełącznik:** `--belongs-to-page/--no-belongs-to-page` działa w `ideas` i `generate`, które tworzą wpis w manifeście z promptem ramki. Działa też w `images`, które dodaje albo usuwa stronę w istniejącej książce. Bez flagi `images` robi to, co jest w manifeście. Usunięcie strony kasuje `front_belongs_to.png` z katalogu głównego, a surową grafikę zostawia.
+- **Krok 2 generuje stronę ponownie** przy `action: regenerate` we wpisie `front_matter.belongs_to`, przy braku surowej grafiki, po nieudanej próbie i po zmianie promptu ramki (np. po zmianie pomysłów albo `composition`).
+- **Krok 3 obrabia stronę ponownie**, gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Model nie jest wtedy wywoływany.
+- **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
 ### ⬜ FR-15: Okładka (poza MVP)
 
@@ -916,10 +930,11 @@ kdp-studio generate \
 
 # Generowanie krokowe (FR-17)
 kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
-  [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
+  [--output-dir ./output] [--no-review-ideas] [--strict] [--belongs-to-page] [--max-cost 5.00]
 kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
-  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
+  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00] \
+  [--belongs-to-page|--no-belongs-to-page]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # Każdy krok przyjmuje też --log-level info|debug (NFR-09)
 # Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
@@ -1073,7 +1088,7 @@ kdp-studio/
 | 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
-Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etapy 1a–1c mają gotową specyfikację, kod jeszcze nie powstał.
+Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etapy 1b–1c mają gotową specyfikację, kod jeszcze nie powstał.
 
 ## 14. Otwarte pytania
 
@@ -1082,7 +1097,7 @@ Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wy
 3. Czy QA ma być domyślnie włączone po etapie 0, gdy znany będzie jego koszt i skuteczność?
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
-6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
+6. ~~FR-14: wybór czcionki z licencją OFL i wariant polski napisu.~~ Rozstrzygnięte 16.11.2026: Fredoka, napis po angielsku, inny język przez `belongs_to_page.text`.
 7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (SWOP v2 czy GRACoL 2006) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
 8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
 

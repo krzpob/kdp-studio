@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kdp_studio import __version__
+from kdp_studio.pipeline.belongs_to import FRONT_NAME, BelongsToOutcome, Layout
 from kdp_studio.pipeline.cost import COST_DIGITS
 from kdp_studio.pipeline.output import write_json_atomic
 from kdp_studio.pipeline.qa import QAIssue, QAResult
@@ -161,6 +162,37 @@ class ManifestPage(_Model):
     rejected: list[ManifestRejected] = []
 
 
+class FrontPage(_Model):
+    """Strona „This book belongs to…” (FR-14): pola jak wpis strony plus wybrany układ."""
+
+    name: str = FRONT_NAME
+    status: PageStatus = "pending"
+    action: PageAction | None = None
+    attempts: int = 0
+    provider: str
+    model: str
+    quality: str | None = None
+    prompt: str
+    prompt_sha256: str | None = None
+    raw_sha256: str | None = None
+    final: FinalInfo | None = None
+    layout: Layout | None = None  # frame: ramka modelu; fallback: grafika strony + napis
+    fallback_source: str | None = None  # strona książki, której grafika jest w układzie zapasowym
+    elements: list[str] = []  # elementy motywu w prompcie
+    qa: QAResult | None = None
+    cost_usd: float | None = None
+    usage: Usage | None = None
+    qa_usage: Usage | None = None
+    duration_s: float | None = None
+    error: str | None = None
+    files: PageFilesInfo = Field(default_factory=PageFilesInfo)
+    rejected: list[ManifestRejected] = []
+
+
+class FrontMatter(_Model):
+    belongs_to: FrontPage | None = None  # tylko z --belongs-to-page
+
+
 class Manifest(_Model):
     tool: str = "kdp-studio"
     version: str = __version__
@@ -174,6 +206,7 @@ class Manifest(_Model):
     layout: ManifestLayout
     ideas: ManifestIdeas
     pages: list[ManifestPage]
+    front_matter: FrontMatter = Field(default_factory=FrontMatter)
     ai_disclosure: str = AI_DISCLOSURE
 
     @property
@@ -347,6 +380,72 @@ class ManifestWriter:
         )
         self.save()
 
+    @property
+    def front(self) -> FrontPage | None:
+        return self.manifest.front_matter.belongs_to
+
+    def set_front(self, front: FrontPage | None) -> None:
+        self.manifest.front_matter.belongs_to = front
+        self.save()
+
+    def record_front_raw(
+        self,
+        outcome: BelongsToOutcome,
+        *,
+        provider: str,
+        model: str,
+        quality: str,
+        cost_usd: float = 0.0,
+    ) -> None:
+        """Wynik kroku 2 dla strony FR-14: surowa grafika i układ albo błąd."""
+        front = self.front
+        assert front is not None
+        ok = outcome.status == "ok" and outcome.raw_file is not None
+        front.status = "raw_ok" if ok else "failed"
+        front.prompt = outcome.prompt
+        front.prompt_sha256 = sha256_text(outcome.prompt) if ok else None
+        front.raw_sha256 = sha256_file(outcome.raw_file) if ok and outcome.raw_file else None
+        front.layout = outcome.layout
+        front.fallback_source = outcome.fallback_source
+        front.action = None
+        front.final = None
+        front.provider, front.model, front.quality = provider, model, quality
+        front.attempts += outcome.attempts
+        front.duration_s = round(outcome.duration_s, 2)
+        front.usage = outcome.usage
+        front.qa = outcome.qa
+        front.qa_usage = outcome.qa_usage if outcome.qa is not None else None
+        front.error = outcome.error
+        front.cost_usd = round((front.cost_usd or 0.0) + cost_usd, COST_DIGITS)
+        self.manifest.cost_usd = round(self.manifest.cost_usd + cost_usd, COST_DIGITS)
+        front.rejected += [
+            ManifestRejected(
+                attempt=r.attempt,
+                idea_id=r.idea_id,
+                file=_relative(r.file, self.book_dir) or "",
+                issues=r.issues,
+            )
+            for r in outcome.rejected
+        ]
+        front.files = PageFilesInfo(raw=_relative(outcome.raw_file, self.book_dir))
+        self.save()
+
+    def record_front_final(
+        self, *, png: Path | None, svg: Path | None, final: FinalInfo, error: str | None
+    ) -> None:
+        """Wynik kroku 3 dla strony FR-14; jak w record_final, `final` zostaje po błędzie."""
+        front = self.front
+        assert front is not None
+        front.status = "ok" if error is None else "failed"
+        front.error = error
+        front.final = final
+        front.files = PageFilesInfo(
+            png=_relative(png, self.book_dir) if error is None else None,
+            svg=_relative(svg, self.book_dir) if error is None else None,
+            raw=front.files.raw,
+        )
+        self.save()
+
     def update_status(
         self, fatal_error: str | None = None, *, budget_error: str | None = None
     ) -> BookStatus:
@@ -354,6 +453,8 @@ class ManifestWriter:
         a przekroczony limit kosztu (FR-10) `budget_exceeded`."""
         manifest = self.manifest
         statuses = {p.status for p in manifest.pages}
+        if self.front is not None:  # FR-14: strona wstępna liczy się jak strona książki
+            statuses.add(self.front.status)
         manifest.error = fatal_error or budget_error
         if fatal_error is not None:
             manifest.status = "failed"

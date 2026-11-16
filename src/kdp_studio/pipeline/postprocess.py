@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -45,13 +45,40 @@ def page_margin_in(fmt: FormatProfile, margins: KdpMargins, pages_in_book: int) 
     return max(fmt.safe_margin_in, margins.outside_min_in, gutter)
 
 
+FULL_AREA = (0.0, 0.0, 1.0, 1.0)
+
+
 @dataclass(frozen=True)
 class PageGeometry:
-    """Pełna strona `page_px` i obszar treści pomniejszony o margines z każdej strony."""
+    """Pełna strona `page_px` i obszar treści pomniejszony o margines z każdej strony.
+
+    `art` to część obszaru treści na grafikę (x, y, szerokość, wysokość w ułamkach); strony
+    kolorowanki zajmują całość, a układ zapasowy strony FR-14 tylko górną część. Pole nie
+    wchodzi do `repr`, więc suma parametrów obróbki stron (FR-17) się nie zmienia.
+    """
 
     page_px: tuple[int, int]
     dpi: int
     margin_in: float
+    art: tuple[float, float, float, float] = field(default=FULL_AREA, repr=False)
+
+    def with_art(self, x: float, y: float, width: float, height: float) -> PageGeometry:
+        return replace(self, art=(x, y, width, height))
+
+    def area(self, x: float, y: float, width: float, height: float) -> tuple[int, int, int, int]:
+        """Prostokąt (left, top, right, bottom) w pikselach z ułamków obszaru treści."""
+        left, top, right, bottom = self.content_box
+        box_w, box_h = right - left, bottom - top
+        return (
+            left + round(x * box_w),
+            top + round(y * box_h),
+            left + round((x + width) * box_w),
+            top + round((y + height) * box_h),
+        )
+
+    @property
+    def art_box(self) -> tuple[int, int, int, int]:
+        return self.area(*self.art)
 
     @classmethod
     def for_format(cls, fmt: FormatProfile, margin_in: float) -> PageGeometry:
@@ -69,8 +96,8 @@ class PageGeometry:
         return m, m, width - m, height - m
 
     def fit(self, width: float, height: float) -> tuple[float, float, float]:
-        """Skala i przesunięcie, które wpasowują grafikę w obszar treści i ją centrują."""
-        left, top, right, bottom = self.content_box
+        """Skala i przesunięcie, które wpasowują grafikę w obszar grafiki i ją centrują."""
+        left, top, right, bottom = self.art_box
         box_w, box_h = right - left, bottom - top
         scale = min(box_w / width, box_h / height)
         return scale, left + (box_w - width * scale) / 2, top + (box_h - height * scale) / 2
@@ -208,13 +235,14 @@ def archive_svg(data: str, width: int, height: int) -> str:
 
 
 def page_svg(data: str, geometry: PageGeometry, scale: float, dx: float, dy: float) -> str:
-    """Pełna strona: grafika wpasowana w obszar treści i do niego przycięta.
+    """Pełna strona: grafika wpasowana w obszar grafiki (zwykle cały obszar treści) i do
+    niego przycięta.
 
     Krzywe potrace potrafią wyjść ułamek piksela poza obraz źródłowy; po skalowaniu
-    to kilka pikseli w marginesie, więc render jest przycinany do obszaru treści.
+    to kilka pikseli w marginesie, więc render jest przycinany do obszaru grafiki.
     """
     width, height = geometry.page_px
-    left, top, right, bottom = geometry.content_box
+    left, top, right, bottom = geometry.art_box
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{width}" height="{height}" viewBox="0 0 {width} {height}">'

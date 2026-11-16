@@ -4,6 +4,25 @@
 # Strony przed grafikami: strona tytułowa i „This book belongs to…” (FR-02).
 front_matter_pages: 2
 
+# Strona „This book belongs to…” (FR-14), jedna ze stron wstępnych: --belongs-to-page włącza.
+# Model obrazu rysuje tylko ramkę z motywem książki wokół pustej tabliczki, a napis i linię na
+# imię wpisuje program czcionką z assets/fonts (SIL OFL). Gdy pole na tekst (text_box, ułamki
+# obszaru treści) ma więcej tuszu niż max_ink_ratio, strona jest generowana ponownie, najwyżej
+# max_retries razy; potem układ zapasowy: grafika pierwszej strony książki w górnej części
+# (fallback_art_height) i napis pod nią.
+belongs_to_page:
+  enabled: false
+  text: "This book belongs to:"
+  composition: >-
+    a decorative frame made of theme elements around a large empty blank plaque in the center
+    of the page, the plaque is completely empty with nothing written or drawn inside it
+  text_box: {x: 0.2, y: 0.37, width: 0.6, height: 0.3}
+  max_ink_ratio: 0.005
+  max_retries: 2
+  font: assets/fonts/Fredoka-Variable.ttf
+  font_variation: SemiBold
+  fallback_art_height: 0.55
+
 # Zapas pomysłów na strony odrzucone przez QA: pages + ceil(pages * reserve_ratio) (FR-03).
 reserve_ratio: 0.2
 

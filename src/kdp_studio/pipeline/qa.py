@@ -61,13 +61,13 @@ illustration on the page.
 - shading: shading, hatching, stippling, cross-hatching, grey-tone texture, or large solid \
 black filled areas used as shadows or fills that a child cannot color. Small solid details \
 such as pupils, noses or a cat's nose are fine.
-- text: any letters, words, numbers, signatures, logos or watermarks.
+- text: {text_rule}
 - open_contours: outlines of the main shapes have gaps or are broken, so that colored areas \
 would "leak" into each other. Tiny breaks in decorative lines do not count.
 - detail_level: clearly too much or too little detail for this audience. Expected for this \
 book: line weight {line}; subjects {subjects}; background {background}; color-in areas \
 {fill_areas}.
-- scene_mismatch: the main subject or key elements of the scene below are missing or wrong.
+- scene_mismatch: {scene_rule}
 - other: any other defect that would make a buyer return the book (cut-off subject, \
 deformed anatomy that looks broken, mostly empty page).
 
@@ -87,7 +87,30 @@ Key elements: {elements}
 """
 
 
-def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea) -> str:
+PAGE_TEXT_RULE = "any letters, words, numbers, signatures, logos or watermarks."
+PAGE_SCENE_RULE = "the main subject or key elements of the scene below are missing or wrong."
+# FR-14: napis i linię na imię dokłada program, więc kryteria text i scene_mismatch się zmieniają.
+BELONGS_TO_TEXT_RULE = (
+    "any letters, words, numbers, signatures, logos or watermarks other than the printed line "
+    '"{text}" and the empty line for the owner\'s name below it, which the program adds on '
+    "purpose."
+)
+BELONGS_TO_SCENE_RULE = (
+    "the decorative elements do not match the theme of the book (key elements below), or "
+    "there is no clear empty space around the printed line and the name line."
+)
+
+
+def _format(
+    spec: BookSpec,
+    config: AppConfig,
+    *,
+    title: str,
+    scene: str,
+    elements: list[str],
+    text_rule: str = PAGE_TEXT_RULE,
+    scene_rule: str = PAGE_SCENE_RULE,
+) -> str:
     age = config.ages[spec.age]
     return QA_INSTRUCTIONS.format(
         audience=age.name,
@@ -96,9 +119,29 @@ def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea) -> str:
         background=age.background,
         fill_areas=age.fill_areas,
         style=" ".join(config.styles[spec.style].prompt_fragment.split()),
-        title=idea.title,
-        scene=idea.scene,
-        elements=", ".join(idea.elements) or "-",
+        title=title,
+        scene=scene,
+        elements=", ".join(elements) or "-",
+        text_rule=text_rule,
+        scene_rule=scene_rule,
+    )
+
+
+def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea) -> str:
+    return _format(spec, config, title=idea.title, scene=idea.scene, elements=idea.elements)
+
+
+def belongs_to_instructions(spec: BookSpec, config: AppConfig, elements: list[str]) -> str:
+    """Kryteria FR-07 dla strony „This book belongs to…” (FR-14)."""
+    settings = config.settings.belongs_to_page
+    return _format(
+        spec,
+        config,
+        title=f'Front page "{settings.text}" with a space for the owner\'s name',
+        scene=" ".join(settings.composition.split()),
+        elements=elements,
+        text_rule=BELONGS_TO_TEXT_RULE.format(text=settings.text),
+        scene_rule=BELONGS_TO_SCENE_RULE,
     )
 
 
@@ -117,9 +160,14 @@ class QAChecker:
 
     def check(self, image_png: bytes, idea_id: str) -> tuple[QAResult, Usage]:
         idea = self._by_id[idea_id]
-        verdict, usage = self.vision.assess(
-            image_png, qa_instructions(self.spec, self.config, idea), _LLMVerdict
-        )
+        return self._assess(image_png, qa_instructions(self.spec, self.config, idea))
+
+    def check_belongs_to(self, image_png: bytes, elements: list[str]) -> tuple[QAResult, Usage]:
+        """Strona „This book belongs to…” z napisem programu (FR-14)."""
+        return self._assess(image_png, belongs_to_instructions(self.spec, self.config, elements))
+
+    def _assess(self, image_png: bytes, instructions: str) -> tuple[QAResult, Usage]:
+        verdict, usage = self.vision.assess(image_png, instructions, _LLMVerdict)
         issues = list(verdict.issues)
         if not verdict.passed and not issues:
             issues = [QAIssue(criterion="other", detail="model odrzucił stronę bez podania powodu")]

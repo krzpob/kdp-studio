@@ -17,6 +17,8 @@ FIXED_CONSTRAINTS = (
     "pure white background, closed outlines, no shading, no grayscale, no text, no grid, "
     "no multiple panels, no collage, no frame"
 )
+# FR-14: strona „This book belongs to…” to ramka wokół pustej tabliczki, więc bez „no frame”.
+FRAME_CONSTRAINTS = FIXED_CONSTRAINTS.removesuffix(", no frame")
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,10 @@ class PromptBuilder:
     @property
     def style_block(self) -> str:
         """Część promptu wspólna dla wszystkich stron książki."""
+        return self.style_block_with(FIXED_CONSTRAINTS)
+
+    def style_block_with(self, constraints: str) -> str:
+        """Blok stylu z podanymi stałymi ograniczeniami (FR-14 bez „no frame”)."""
         style = self.config.styles[self.spec.style]
         age = self.config.ages[self.spec.age]
         fmt = self.config.formats[self.spec.format]
@@ -34,7 +40,7 @@ class PromptBuilder:
             f"Style: {_sentence(style.prompt_fragment)}\n"
             f"Line work and detail: {_sentence(age.prompt_fragment)}\n"
             f"Composition: {_sentence(fmt.composition_hint)}\n"
-            f"Requirements: {_sentence(FIXED_CONSTRAINTS)}"
+            f"Requirements: {_sentence(constraints)}"
         )
 
     def page_prompt(self, idea: PageIdea) -> PagePrompt:
