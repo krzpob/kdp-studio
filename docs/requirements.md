@@ -29,6 +29,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 ### Poza zakresem MVP (roadmapa, sekcja 13)
 - Składanie PDF wnętrza książki w skrypcie. W MVP robi to użytkownik w Canvie (D9). Automatyczne składanie to opcjonalny etap 2.
 - Okładka (projektowana ręcznie w Canvie albo w pakiecie Adobe).
+- Strona „This book belongs to…” dopasowana do motywu kolorowanki, włączana przełącznikiem (FR-14). W MVP użytkownik robi ją ręcznie w Canvie.
 - Adapter Gemini API (Nano Banana). Architektura musi go umożliwiać od początku.
 - Adapter Adobe Firefly.
 - Interfejs graficzny (Streamlit, Gradio albo React).
@@ -157,7 +158,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`).
 - Zawartość: patrz sekcja 10.
 - Gotowe strony leżą w katalogu głównym książki jako `page_XX.png`, z numerem dopełnionym zerami do długości największego numeru (min. 2 cyfry, np. `page_01` … `page_30`). Kolejność alfabetyczna = kolejność stron, więc po przeciągnięciu całej paczki do Canvy strony są we właściwej kolejności.
-- W katalogu głównym nie ma innych plików PNG (surowe i odrzucone są w podkatalogach), żeby do Canvy dało się zaznaczyć i przesłać wszystkie pliki naraz.
+- W katalogu głównym nie ma innych plików PNG (surowe i odrzucone są w podkatalogach), żeby do Canvy dało się zaznaczyć i przesłać wszystkie pliki naraz. Jedyny wyjątek to strony wstępne z FR-14 (`front_*.png`), które też idą do Canvy i alfabetycznie stoją przed `page_*`.
 - Program zapisuje `canva.md`: instrukcję składania tej konkretnej książki (wymiar projektu, liczba grafik i stron książki, kolejność stron wstępnych i pustych, ustawienia eksportu). Treść według sekcji 10.1.
 - `manifest.json` zawiera parametry wejściowe, wersję narzędzia, użytych dostawców i modele, `pages_in_book` i użyty `margin_in` (FR-06) oraz dla każdej strony: id pomysłu, prompt, status, liczbę prób, koszt, czas, wynik QA.
 - Manifest jest zapisywany przyrostowo po każdej stronie, żeby przerwanie nie gubiło postępu.
@@ -179,6 +180,72 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 
 ### FR-13: Przypomnienie o ujawnieniu AI
 - `manifest.json` i podsumowanie w konsoli zawierają informację, że przy publikacji w KDP trzeba zaznaczyć *AI-generated content* (obrazy).
+
+### FR-14: Strona „This book belongs to…” (poza MVP)
+
+Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywie i stylu co kolorowanka (np. dinozaury kawaii wokół pustej tabliczki na imię).
+
+**Włączanie**
+- Przełącznik `--belongs-to-page/--no-belongs-to-page`, domyślnie z `settings.yaml` (`belongs_to_page.enabled`, domyślnie `false`).
+- Gdy przełącznik jest wyłączony, nic się nie zmienia: użytkownik robi tę stronę ręcznie w Canvie, jak w MVP.
+- Strona jest już wliczona w `front_matter_pages` (domyślnie 2: strona tytułowa i ta strona), więc `pages_in_book` i marginesy (FR-02, FR-06) się nie zmieniają.
+
+**Podział pracy: model rysuje ozdobę, program wpisuje tekst**
+- Modele obrazu źle radzą sobie z tekstem (literówki, krzywe litery), a stałe ograniczenia FR-04 zabraniają go w grafikach. Model rysuje więc wyłącznie **ramkę z elementami motywu wokół pustego pola na imię**, a napis i linię na imię dokłada program.
+- Prompt składa się z:
+  - motywu książki (`theme`) i 2–3 elementów z zaakceptowanych pomysłów (FR-03), żeby strona pasowała do zawartości;
+  - **tego samego bloku stylu** co strony (FR-04: styl, wiek, format), żeby grubość linii i charakter rysunku były spójne z resztą książki;
+  - opisu kompozycji z `belongs_to_page.composition` (np. `decorative frame made of theme elements around a large empty blank plaque in the center, the plaque is completely empty`);
+  - stałych ograniczeń FR-04 **bez** `no frame` (ramka jest tu celem). `no text` zostaje bez zmian.
+
+**Pole na tekst**
+- Pole tekstowe to prostokąt zdefiniowany względem obszaru treści (`belongs_to_page.text_box`, np. środkowe 70% szerokości i 35% wysokości).
+- Po obróbce FR-06 program sprawdza, czy pole jest puste: udział czarnych pikseli ≤ `max_ink_ratio` (np. 0.5%). Jeśli nie, generuje stronę ponownie (maks. `max_retries`, domyślnie 2).
+- Gdy próby się wyczerpią, program przechodzi na **układ zapasowy**: grafikę z motywem (bez ramki) w górnych 55% obszaru treści, a tekst i linię pod nią. Ta strona zawsze powstaje.
+
+**Tekst i miejsce na imię**
+- Program wpisuje napis `belongs_to_page.text` (domyślnie „This book belongs to:”, w języku `metadata_language`).
+- Pod napisem rysuje pustą linię albo ramkę na imię wpisywane ręcznie. Każdy egzemplarz drukowanej książki jest taki sam, więc imienia nie da się wydrukować.
+- Rozmiar napisu i wysokość miejsca na imię zależą od wieku: przedszkolaki piszą dużymi literami. W `ages.yaml` dochodzi blok `belongs_to` z `font_pt` i `name_line_height_in`.
+- Czcionka:
+  - plik z repozytorium (`assets/fonts/`) z licencją pozwalającą na komercyjne użycie w druku (np. SIL OFL), z dołączonym plikiem licencji;
+  - opcjonalnie litery konturowe (`outline_text: true`), które też można pokolorować; dla najmłodszych domyślnie włączone.
+- Gotowa strona przechodzi tę samą kontrolę co strony kolorowanki (NFR-07): wymiary, tryb `L`, tylko 0/255 i czarne piksele w obszarze treści.
+
+**QA i spójność**
+- Z `--qa` model z wizją ocenia stronę wg kryteriów FR-07. Kryterium `text` zamienia się na: „model nie dorysował żadnego tekstu poza napisem programu”, a `scene_mismatch` na: „elementy pasują do motywu książki”.
+- Gdy dostawca obsługuje `reference_image`, pierwsza zaakceptowana strona kolorowanki jest referencją stylu. Wtedy strona „belongs to” powstaje po stronach z grafikami.
+
+**Wynik**
+- Plik `front_belongs_to.png` w katalogu głównym książki: pełna strona, ten sam format i marginesy co `page_*.png`. Nazwa stoi alfabetycznie przed `page_*`, więc po przesłaniu do Canvy plik jest pierwszy na liście.
+- Archiwa jak dla stron: `svg/front_belongs_to.svg`, `raw/front_belongs_to.png`, a odrzucone próby w `rejected/`.
+- `manifest.json` ma sekcję `front_matter.belongs_to` z polami jak wpis strony (prompt, status, próby, koszt, QA) oraz `layout`: `frame` albo `fallback`.
+- `canva.md` wskazuje, na której stronie wstępnej umieścić plik (domyślnie druga, po stronie tytułowej).
+- Koszt to jedna dodatkowa grafika plus ewentualne ponowienia; liczy się do `--max-cost` (FR-10).
+- Brak strony przy włączonym przełączniku (status `failed`) daje kod wyjścia 2, jak brakująca strona kolorowanki. `--resume` generuje ją ponownie, a `--dry-run` pokazuje jej prompt.
+
+Konfiguracja (szkic):
+
+```yaml
+# settings.yaml
+belongs_to_page:
+  enabled: false                 # --belongs-to-page / --no-belongs-to-page
+  text: "This book belongs to:"
+  composition: >-
+    decorative frame made of theme elements around a large empty blank plaque in the center,
+    the plaque is completely empty
+  text_box: {x: 0.15, y: 0.35, width: 0.7, height: 0.35}   # względem obszaru treści
+  max_ink_ratio: 0.005
+  max_retries: 2
+  font: assets/fonts/<czcionka-OFL>.ttf
+
+# ages.yaml (dla każdego profilu)
+przedszkole:
+  belongs_to:
+    font_pt: 48
+    name_line_height_in: 1.0
+    outline_text: true
+```
 
 ## 7. Profile (konfiguracja YAML)
 
@@ -322,6 +389,7 @@ kdp-studio generate \
   [--max-cost 5.00] \
   [--qa] \
   [--no-review-ideas] \
+  [--belongs-to-page] \
   [--dry-run] \
   [--strict] \
   [--image-provider openai] \
@@ -356,6 +424,7 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── manifest.json
 ├── ideas.json
 ├── canva.md                        # instrukcja składania w Canvie (sekcja 10.1)
+├── front_belongs_to.png            # tylko z --belongs-to-page (FR-14, poza MVP)
 ├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
 ├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
@@ -385,7 +454,7 @@ Przykład wpisu strony w `manifest.json`:
 Treść `canva.md` (wartości w nawiasach wypełnia program):
 
 1. Utwórz projekt o wymiarach własnych `[trim_in]` cali (np. 8.5 × 11 in).
-2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”).
+2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”). Jeśli książka powstała z `--belongs-to-page` (FR-14), wstaw `front_belongs_to.png` na drugą stronę i rozciągnij na całą stronę, jak grafiki. W przeciwnym razie zaprojektuj tę stronę w Canvie.
 3. Prześlij wszystkie `page_XX.png` naraz.
 4. Każdą grafikę wstaw na osobną stronę i rozciągnij na całą stronę. Marginesy (`[margin_in]` cala z każdej strony, zgodnie z tabelą KDP dla `[pages_in_book]` stron) są już w pliku, więc niczego nie skaluj ani nie przycinaj.
 5. Po każdej grafice dodaj pustą stronę (druk jednostronny, D8). Razem `[pages_in_book]` stron.
@@ -445,6 +514,7 @@ kdp-studio/
 |---|---|---|
 | 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
 | 1. MVP CLI | FR-01–FR-13 z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
+| 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, przełącznik `--belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
 | 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
@@ -456,6 +526,7 @@ kdp-studio/
 3. Czy QA ma być domyślnie włączone po etapie 0, gdy znany będzie jego koszt i skuteczność?
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
+6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
