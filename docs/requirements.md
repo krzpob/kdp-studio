@@ -431,7 +431,8 @@ Przykład (Amazon.com, letter albo kwadrat):
 
 **Zastrzeżenia**
 - To szacunek z tabel; wiążący jest kalkulator KDP, a wynik zawiera link do niego.
-- Na rynkach z VAT Amazon dolicza podatek do ceny katalogowej, a klient widzi cenę z VAT. KDP nie pisze wprost, czy tantiemę liczy od ceny bez VAT. Program przyjmuje, jak w kalkulatorze KDP, że cena wpisana w KDP to cena przed doliczeniem VAT, i zaznacza to w wyniku.
+- **Cena w KDP to cena netto.** Na rynkach z VAT Amazon dolicza podatek do ceny wpisanej w KDP, a klient widzi cenę z VAT. Tantiema liczy się od ceny wpisanej przez wydawcę, czyli bez VAT. Program operuje więc wyłącznie cenami netto, a w wyniku dla rynków z VAT zaznacza, że klient zapłaci więcej.
+- **Promocje Amazona nie obniżają tantiemy.** Gdy Amazon sam obniża cenę (np. z okazji Black Friday), tantiema nadal liczy się od ceny wpisanej w KDP. Program liczy tylko na tej cenie i nie modeluje promocji.
 - Kolorowanki nie są przyjmowane do Expanded Distribution, więc program liczy tylko sprzedaż na Amazonie.
 - Twarda oprawa jest poza zakresem (FR-15), więc tabele obejmują tylko paperback.
 
@@ -783,7 +784,6 @@ kdp-studio/
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu po spike'u.
 6. FR-14: wybór czcionki z licencją OFL (czytelna dla dzieci, z wersją konturową) i czy napis „This book belongs to:” ma mieć wariant polski.
 7. FR-15: wybór czcionki tytułowej (OFL). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter.
-8. FR-16: czy na rynkach z VAT tantiema liczy się od ceny bez VAT (sprawdzić w kalkulatorze KDP dla jednego rynku UE przed implementacją).
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
