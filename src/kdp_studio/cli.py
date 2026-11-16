@@ -1859,7 +1859,7 @@ def _front_info(
             colorizer.errors,
             colorizer.usage,
         )
-        info.raw_files = [str(p.relative_to(target)) for p in colorizer.raw_files]
+        info.raw_files = [p.relative_to(target).as_posix() for p in colorizer.raw_files]
     if build is not None:
         info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
         info.title_thumb_px, info.title_contrast = build.title_thumb_px, build.title_contrast
