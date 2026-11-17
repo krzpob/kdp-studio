@@ -292,6 +292,23 @@ class CoverSettings(_Strict):
     back_text: bool = False
     title_font: str = "assets/fonts/Fredoka-Variable.ttf"
     title_font_variation: str | None = "Bold"
+    title_fill_rgb: tuple[int, int, int] = (255, 255, 255)
+    subtitle_fill_rgb: tuple[int, int, int] = (255, 230, 120)
+    title_outline_pt: Annotated[float, Field(ge=0)] = 3.0
+    thumbnail_min_text_px: Annotated[float, Field(gt=0)] = 6.0
+    title_min_contrast: Annotated[float, Field(ge=1, le=21)] = 3.0
+    colorize: bool = True  # etap 2: model koloruje szkic przodu (--color/--no-color)
+    color_prompt: Annotated[str, Field(min_length=1)] = (
+        "Color this black-and-white coloring book page as the front cover of a children's "
+        "coloring book. Keep every black outline exactly where it is: do not move, redraw, "
+        "remove or add lines. Fill all shapes with vivid but print-friendly colors (no neon, "
+        "no fluorescent colors). Fill the empty band at the top with a calm, simple background "
+        "such as sky or a soft gradient that continues the scene, with no objects in it. "
+        "Extend the background to all four edges of the image. No text, no letters, no title, "
+        "no logos, no frame, no border."
+    )
+    contour_match_min: Annotated[float, Field(ge=0, le=1)] = 0.85
+    contour_search_in: Annotated[float, Field(gt=0)] = 0.02
     cmyk: CmykSettings = CmykSettings()
     template_colors: TemplateColors = TemplateColors()
     template_tolerance_in: Annotated[float, Field(gt=0)] = 0.01

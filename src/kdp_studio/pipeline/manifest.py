@@ -221,6 +221,25 @@ class CoverFiles(_Model):
     preview: str
 
 
+class CoverFrontInfo(_Model):
+    """Przód okładki: kolorowanie modelem (etap 2) i czytelność tytułu."""
+
+    colorized: bool
+    provider: str | None = None
+    model: str | None = None
+    quality: str | None = None
+    aspect: str | None = None
+    prompt: str | None = None
+    attempts: int = 0
+    raw_files: list[str] = []
+    errors: list[str] = []
+    usage: Usage | None = None
+    contour_match: float | None = None  # zgodność konturów modelu ze szkicem
+    contours_overlay: bool = True  # nałożono ostre kontury 300 DPI (K100)
+    title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze (thumbnail_check_px)
+    title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
+
+
 class CoverInfo(_Model):
     """Okładka paperback (FR-15, `kdp-studio cover`)."""
 
@@ -235,6 +254,7 @@ class CoverInfo(_Model):
     spine_text: bool
     placements: dict[str, tuple[int, int, int, int]] = {}  # px, kontrola rozmieszczenia
     template: CoverTemplateInfo | None = None
+    front: CoverFrontInfo | None = None
     cmyk: CoverCmykInfo | None = None
     files: CoverFiles | None = None
     warnings: list[str] = []

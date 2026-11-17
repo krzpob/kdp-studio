@@ -45,7 +45,7 @@ Z flagą `--belongs-to-page` (w `generate`, `ideas` albo później w `images <ka
 
 Jeśli tabliczka z modelu nie jest pusta, program generuje ramkę ponownie, najwyżej 2 razy. Potem przechodzi na układ zapasowy: grafika pierwszej strony książki u góry i napis pod nią. Wynik to `front_belongs_to.png` w katalogu książki, który w Canvie jest pierwszy na liście. `canva.md` mówi, że to druga strona wstępna. Napis, pole na tekst i czcionkę ustawisz w `config/settings.yaml` (`belongs_to_page`), a wielkość liter i miejsca na imię w profilach wieku (`belongs_to`). Strona kosztuje jedną grafikę plus ewentualne ponowienia.
 
-### Okładka (FR-15, etap 1)
+### Okładka (FR-15, etapy 1–2)
 
 ```bash
 uv run kdp-studio cover output/<książka> --cover-page 07 --thumbnails 03,12,21 \
@@ -54,7 +54,9 @@ uv run kdp-studio cover output/<książka> --cover-page 07 --thumbnails 03,12,21
 
 `cover` składa okładkę paperback do KDP w `output/<książka>/cover/`. Wymiary (grzbiet z liczby stron, spad, linie zgięcia, strefy bezpieczne, pole kodu kreskowego) liczy wzorami KDP. Opcjonalny szablon z kalkulatora okładek KDP tylko je sprawdza: szablon dla innej liczby stron albo innego formatu to błąd.
 
-Przód to na razie szkic: grafika wybranej strony i tytuł z podtytułem, które wpisuje program czcionką Fredoka. Na tyle są miniatury stron w ramkach, z dala od pola kodu, a na grzbiecie tytuł, gdy książka ma co najmniej 100 stron. Kolor z modelu obrazu dojdzie w kolejnych etapach.
+Przód powstaje ze szkicu: grafika wybranej strony z pustym pasem u góry trafia do modelu obrazu jako referencja. Model ją koloruje i dorysowuje tło do krawędzi spadu. Program nakłada na kolor ostre kontury 300 DPI, jeśli kontury modelu się nie przesunęły, a potem wpisuje tytuł i podtytuł czcionką Fredoka: kolorowe litery z czarnym obrysem. Sprawdza też, czy tytuł jest czytelny w miniaturze 160 px z wyników Amazon. Kolorowanie to jedna płatna grafika (plus ponowienia przy błędach) i liczy się do `--max-cost`. `--no-color` daje bezpłatny szkic.
+
+Na tyle są miniatury stron w ramkach, z dala od pola kodu, a na grzbiecie tytuł, gdy książka ma co najmniej 100 stron. Tło tyłu z modelu dojdzie w etapie 3.
 
 Wynik:
 - `cover.pdf` w CMYK do przesłania do KDP;

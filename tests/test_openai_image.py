@@ -30,6 +30,9 @@ class FakeImages:
             raise outcome
         return outcome
 
+    def edit(self, **kwargs: Any) -> Any:
+        return self.generate(endpoint="edit", **kwargs)
+
 
 def _provider(images: FakeImages) -> OpenAIImageProvider:
     client = cast(openai.OpenAI, SimpleNamespace(images=images))
@@ -191,3 +194,17 @@ def test_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_png_dimensions_rejects_non_png() -> None:
     with pytest.raises(ValueError, match="nie są obrazem PNG"):
         png_dimensions(b"\x89PNG\r\n\x1a\nshort")
+
+
+def test_reference_image_uses_the_edit_endpoint() -> None:
+    images = FakeImages(_response(make_png(1024, 1024), size="1024x1024"))
+    reference = make_png(64, 64, frame=True)
+    result = _provider(images).generate(
+        ImageRequest(prompt="color it", aspect="1:1", quality="low", reference_image=reference)
+    )
+    assert (result.width, result.height) == (1024, 1024)
+    (call,) = images.calls
+    assert call["endpoint"] == "edit"
+    assert call["image"] == ("reference.png", reference, "image/png")
+    assert call["input_fidelity"] == "high"
+    assert (call["size"], call["quality"], call["background"]) == ("1024x1024", "low", "opaque")
