@@ -27,8 +27,8 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
-| FR-14 | ✅ | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
-| FR-15 | 🟡 | #31, #32 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. |
+| FR-14 | 🟡 | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Zmiana z 17.11: osobne polecenie `belongs-to` i krok w `generate` (dziś strona powstaje w krokach `images` i `finalize`). |
+| FR-15 | 🟡 | #31, #32 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. Do zrobienia też `generate --cover` (zmiana z 17.11). |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -314,13 +314,18 @@ Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Prog
 ### ✅ FR-13: Przypomnienie o ujawnieniu AI
 - `manifest.json` i podsumowanie w konsoli zawierają informację, że przy publikacji w KDP trzeba zaznaczyć *AI-generated content* (obrazy).
 
-### ✅ FR-14: Strona „This book belongs to…” (poza MVP)
+### 🟡 FR-14: Strona „This book belongs to…” (poza MVP)
 
 Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywie i stylu co kolorowanka (np. dinozaury kawaii wokół pustej tabliczki na imię).
 
-**Włączanie**
-- Przełącznik `--belongs-to-page/--no-belongs-to-page`, domyślnie z `settings.yaml` (`belongs_to_page.enabled`, domyślnie `false`).
-- Gdy przełącznik jest wyłączony, nic się nie zmienia: użytkownik robi tę stronę ręcznie w Canvie, jak w MVP.
+**Polecenie i krok w `generate`** (zmiana z 17.11.2026)
+- Stronę tworzy osobne polecenie `kdp-studio belongs-to <katalog-książki>`. Jego uruchomienie jest decyzją, więc nie potrzebuje żadnej flagi. Dzięki temu stronę można dodać do książki, która jest już gotowa, bez generowania czegokolwiek od nowa.
+- Polecenie robi całą stronę: ramkę z modelu, obróbkę jak w FR-06, kontrolę pustego pola, wpisanie tekstu i kontrolę druku (NFR-07).
+- Wymaga kroku 2 (FR-17): gotowych surowych stron książki, bo układ zapasowy używa grafiki pierwszej gotowej strony. Bez nich kończy się błędem walidacji (kod 1).
+- `generate --belongs-to-page` uruchamia to polecenie jako dodatkowy krok: `ideas` → `images` → `belongs-to` → `finalize`. Krok `finalize` pisze wtedy `canva.md` już z tą stroną. Wartość domyślna flagi pochodzi z `settings.yaml` (`belongs_to_page.enabled`, domyślnie `false`). Flaga występuje tylko w `generate`.
+- Samodzielne `belongs-to` na książce po kroku 3 odświeża `canva.md`, który powstaje z manifestu i nie wymaga wywołań API.
+- Opcje: `--qa`, `--image-quality`, `--max-cost` (jak w `images`) oraz `--remove`, które usuwa stronę z książki: kasuje `front_belongs_to.png` z katalogu głównego i wpis z manifestu, a surową grafikę zostawia.
+- Bez tej strony nic się nie zmienia: użytkownik robi ją ręcznie w Canvie, jak w MVP.
 - Strona jest już wliczona w `front_matter_pages` (domyślnie 2: strona tytułowa i ta strona), więc `pages_in_book` i marginesy (FR-02, FR-06) się nie zmieniają.
 
 **Podział pracy: model rysuje ozdobę, program wpisuje tekst**
@@ -355,14 +360,14 @@ Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywi
 - `manifest.json` ma sekcję `front_matter.belongs_to` z polami jak wpis strony (prompt, status, próby, koszt, QA) oraz `layout`: `frame` albo `fallback`.
 - `canva.md` wskazuje, na której stronie wstępnej umieścić plik (domyślnie druga, po stronie tytułowej).
 - Koszt to jedna dodatkowa grafika plus ewentualne ponowienia; liczy się do `--max-cost` (FR-10).
-- Brak strony przy włączonym przełączniku (status `failed`) daje kod wyjścia 2, jak brakująca strona kolorowanki. Kolejne `kdp-studio images` generuje ją ponownie, a krok `ideas` zapisuje jej prompt (FR-17).
+- Nieudana strona (status `failed`) daje kod wyjścia 2, jak brakująca strona kolorowanki. Kolejne `kdp-studio belongs-to` próbuje ponownie.
 
 Konfiguracja (szkic):
 
 ```yaml
 # settings.yaml
 belongs_to_page:
-  enabled: false                 # --belongs-to-page / --no-belongs-to-page
+  enabled: false                 # domyślna wartość generate --belongs-to-page
   text: "This book belongs to:"
   composition: >-
     decorative frame made of theme elements around a large empty blank plaque in the center,
@@ -388,15 +393,23 @@ przedszkole:
 - **Elementy motywu w prompcie:** najczęstsza główna postać (`subject`) i najczęstsze przedmioty (`elements`) stron książki, liczone przez program, deterministycznie. Motyw to tytuł książki (`book.title`, w języku metadanych), bo prompt jest po angielsku.
 - **Pole na tekst:** domyślnie `x: 0.2, y: 0.37, width: 0.6, height: 0.3`. Jest nieco mniejsze niż w szkicu, żeby łatwiej mieściło się w tabliczce z modelu.
 - **Układ zapasowy:** grafika **pierwszej gotowej strony książki** (jej surowy plik, już po QA) w górnych 55% obszaru treści, a napis pod nią. Grafika „z motywem bez ramki” byłaby kolejnym wywołaniem API, a nieudana ramka mogła zawierać napis modelu. Strona książki jest tania, czysta i w tym samym stylu. Kosztem jest powtórzenie jednej ilustracji w książce. Bez żadnej gotowej strony (wszystkie nieudane) strona FR-14 też jest nieudana.
-- **Kolejność w kroku 2:** strona FR-14 powstaje po stronach książki, bo układ zapasowy potrzebuje ich grafik. Gdy limit budżetu jest już przekroczony, strona nie startuje (kod 3). Gdy limit zostanie przekroczony w trakcie prób, program przechodzi na układ zapasowy, który nic nie kosztuje.
-- **Przełącznik:** `--belongs-to-page/--no-belongs-to-page` działa w `ideas` i `generate`, które tworzą wpis w manifeście z promptem ramki. Działa też w `images`, które dodaje albo usuwa stronę w istniejącej książce. Bez flagi `images` robi to, co jest w manifeście. Usunięcie strony kasuje `front_belongs_to.png` z katalogu głównego, a surową grafikę zostawia.
-- **Krok 2 generuje stronę ponownie** przy `action: regenerate` we wpisie `front_matter.belongs_to`, przy braku surowej grafiki, po nieudanej próbie i po zmianie promptu ramki (np. po zmianie pomysłów albo `composition`).
-- **Krok 3 obrabia stronę ponownie**, gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Model nie jest wtedy wywoływany.
+- **Kolejność:** strona FR-14 powstaje po stronach książki, bo układ zapasowy potrzebuje ich grafik. Do 17.11 robił to krok 2 (`images`); po zmianie robi to polecenie `belongs-to`. Gdy limit budżetu jest już przekroczony, strona nie startuje (kod 3). Gdy limit zostanie przekroczony w trakcie prób, program przechodzi na układ zapasowy, który nic nie kosztuje.
+- **Przełącznik (stan z #30, do zmiany):** dziś `--belongs-to-page/--no-belongs-to-page` działa w `ideas`, `images` i `generate`. Po zmianie z 17.11 zostaje tylko w `generate`; wpis w manifeście tworzy polecenie `belongs-to`, a usuwa `belongs-to --remove`.
+- **Nowa ramka z modelu** (dziś w kroku 2, po zmianie w `belongs-to`) przy `action: regenerate` we wpisie `front_matter.belongs_to`, przy braku surowej grafiki, po nieudanej próbie i po zmianie promptu ramki (np. po zmianie pomysłów albo `composition`).
+- **Ponowna obróbka bez modelu** (dziś w kroku 3, po zmianie w `belongs-to`), gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Dzięki temu zmiana napisu lub czcionki nie kosztuje nowej grafiki.
 - **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
 ### 🟡 FR-15: Okładka (poza MVP)
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
+
+**`generate --cover`** (zmiana z 17.11.2026)
+- `generate --cover` uruchamia `cover` jako ostatni krok, po `finalize`: `ideas` → `images` → (`belongs-to`) → `finalize` → `cover`. Jedno polecenie daje wtedy cały pakiet do KDP: strony do Canvy i gotowy PDF okładki.
+- Działa jak `cover` **bez wskazania stron**: stronę na przód i miniatury tyłu proponuje model z wizją (patrz „Wybór grafik”). `--template`, kolor i jakość pochodzą z `settings.yaml`.
+- Okładka startuje tylko wtedy, gdy wszystkie strony książki są `ok`. W przeciwnym razie `generate` pomija ją z komunikatem i kończy się kodem 2 jak dotąd; okładkę robi się potem samodzielnym `cover`.
+- `generate` tworzy wszystkich dostawców, także model z wizją do wyboru stron, przed pierwszym wywołaniem API. Koszt okładki liczy się do tego samego `--max-cost` co reszta uruchomienia (FR-10).
+- Wartość domyślna flagi: `cover.in_generate` w `settings.yaml` (domyślnie `false`).
+
 
 **Stałe założenia produkcyjne**
 - Kolorowanki mają zawsze miękką okładkę (paperback), wnętrze czarno-białe i zwykły biały papier.
@@ -969,6 +982,7 @@ kdp-studio generate \
   [--image-quality low|medium|high] \
   [--no-review-ideas] \
   [--belongs-to-page] \
+  [--cover] \
   [--strict] \
   [--image-provider openai|comfyui] \
   [--seed 1234] \
@@ -976,11 +990,10 @@ kdp-studio generate \
 
 # Generowanie krokowe (FR-17)
 kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
-  [--output-dir ./output] [--no-review-ideas] [--strict] [--belongs-to-page] [--max-cost 5.00]
+  [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
 kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
-  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00] \
-  [--belongs-to-page|--no-belongs-to-page]
+  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # Każdy krok przyjmuje też --log-level info|debug (NFR-09)
 # Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
@@ -988,7 +1001,11 @@ kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # Lista dostępnych profili
 kdp-studio profiles [age|style|format]
 
-# Okładka do gotowej książki (FR-15, poza MVP)
+# Strona „This book belongs to…” (FR-14, poza MVP), po kroku images
+kdp-studio belongs-to ./output/dinozaury_przedszkole_kawaii_square \
+  [--qa] [--image-quality low|medium|high] [--max-cost 1.00] [--remove]
+
+# Okładka do gotowej książki (FR-15, poza MVP); generate --cover robi to samo bez --cover-page i --thumbnails
 kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
   [--cover-page 07] \
   [--thumbnails 03,12,21] \
@@ -1023,7 +1040,7 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── manifest.json
 ├── ideas.json
 ├── canva.md                        # instrukcja składania w Canvie (sekcja 10.1)
-├── front_belongs_to.png            # tylko z --belongs-to-page (FR-14, poza MVP)
+├── front_belongs_to.png            # po `belongs-to` albo `generate --belongs-to-page` (FR-14, poza MVP)
 ├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
 ├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
 ├── raw/page_01.png …               # surowe wyniki z modelu
@@ -1067,7 +1084,7 @@ Przykład wpisu strony w `manifest.json`:
 Treść `canva.md` (wartości w nawiasach wypełnia program):
 
 1. Utwórz projekt o wymiarach własnych `[trim_in]` cali (np. 8.5 × 11 in).
-2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”). Jeśli książka powstała z `--belongs-to-page` (FR-14), wstaw `front_belongs_to.png` na drugą stronę i rozciągnij na całą stronę, jak grafiki. W przeciwnym razie zaprojektuj tę stronę w Canvie.
+2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”). Jeśli książka ma stronę z FR-14 (`front_belongs_to.png`), wstaw `front_belongs_to.png` na drugą stronę i rozciągnij na całą stronę, jak grafiki. W przeciwnym razie zaprojektuj tę stronę w Canvie.
 3. Prześlij wszystkie `page_XX.png` naraz.
 4. Każdą grafikę wstaw na osobną stronę i rozciągnij na całą stronę. Marginesy (`[margin_in]` cala z każdej strony, zgodnie z tabelą KDP dla `[pages_in_book]` stron) są już w pliku, więc niczego nie skaluj ani nie przycinaj.
 5. Po każdej grafice dodaj pustą stronę (druk jednostronny, D8). Razem `[pages_in_book]` stron.
@@ -1127,7 +1144,7 @@ kdp-studio/
 |---|---|---|
 | 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
 | 1. MVP CLI | FR-01–FR-13 i FR-17 (generowanie krokowe) z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
-| 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, przełącznik `--belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
+| 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, polecenie `belongs-to` i krok `generate --belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
 | 1b. Okładka | FR-15: komenda `cover`, geometria z wzorów KDP, przód z pokolorowanej strony z tytułem, tył z grzbietem dopasowany do przodu, miniatury w ramkach, PDF | Na 3 książkach (letter i kwadrat, różna liczba stron) PDF przechodzi kreator KDP bez błędów, a podgląd KDP nie pokazuje szwu na grzbiecie ani elementów w polu kodu |
 | 1c. Cena i tantiemy | FR-16: tabele kosztów druku i progów tantiem KDP w konfiguracji, komenda `price`, podsumowanie w `generate` i manifeście | Koszt druku i cena minimalna zgadzają się z kalkulatorem KDP dla letter i kwadratu przy 30, 54 i 100 grafikach na rynkach US, UK, DE i PL |
 | 2. PDF w skrypcie (opcjonalnie) | Automatyczne składanie wnętrza (strony wstępne, puste strony po grafikach) zamiast ręcznego w Canvie | Uruchamiamy, gdy ręczne składanie w Canvie zacznie spowalniać wydawanie kolejnych książek |
