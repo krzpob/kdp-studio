@@ -20,7 +20,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-04 | ✅ | #8, #15, #20 | |
 | FR-05 | ✅ | #9 | |
 | FR-06 | ✅ | #11 | |
-| FR-07 | ✅ | #14 | |
+| FR-07 | ✅ | #14, #49 | Kryterium `theme_unclear` i ponowienie tego samego pomysłu przed rezerwą (`qa_max_ideas`). |
 | FR-08 | ✅ | #13, #23 | |
 | FR-09 | ↪ FR-17 | #23 | |
 | FR-10 | ✅ | #29 | Cennik `api_pricing` w `settings.yaml`, limit na jedno uruchomienie komendy. |
