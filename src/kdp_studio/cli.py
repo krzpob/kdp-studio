@@ -1897,7 +1897,7 @@ def _cover_run(
             provider=images,
             quality=setup.quality,
             style=book_style(spec, config),
-            title=ideas.book.title,
+            theme=ideas.theme_anchors,
             settings=settings.cover,
             geometry=geometry,
             raw_dir=raw_dir,
@@ -2134,7 +2134,7 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             ideas = {idea.id: idea for idea in run.ideas.pages}
             front_idea = ideas.get(pick.front.idea_id)
             colorizer.prompt = color_prompt(
-                run.spec, config, title, front_idea.scene if front_idea is not None else None
+                run.spec, config, front_idea.scene if front_idea is not None else None
             )
             typer.echo(
                 f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
@@ -2202,6 +2202,8 @@ def _make_cover(run: _CoverRun) -> ExitCode:
     warnings = list(build.warnings)
     if selection_info is not None:
         warnings += selection_info.warnings
+    if colorizer is not None:
+        warnings += colorizer.warnings
     if painter is not None:
         warnings += painter.warnings
     if area_pct > settings.cmyk.gamut_warn_area_pct:
@@ -2374,6 +2376,7 @@ def _front_info(
             colorizer.usage,
         )
         info.raw_files = [p.relative_to(target).as_posix() for p in colorizer.raw_files]
+        info.title_band_edges = colorizer.band_edges
     if build is not None:
         info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
         info.register_cc = build.register_cc

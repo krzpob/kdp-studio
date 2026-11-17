@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
+import numpy as np
 from PIL import Image
 
 from kdp_studio.config import AppConfig, CoverSettings
@@ -37,26 +39,41 @@ def book_style(spec: BookSpec, config: AppConfig) -> str:
     return " ".join(config.styles[spec.style].prompt_fragment.split()).rstrip(" .")
 
 
-def color_prompt(
-    spec: BookSpec, config: AppConfig, title: str | None = None, scene: str | None = None
-) -> str:
-    """Prompt kolorowania: polecenie z `cover.color_prompt`, styl, tytuł książki i scena strony.
+def color_prompt(spec: BookSpec, config: AppConfig, scene: str | None = None) -> str:
+    """Prompt kolorowania: polecenie z `cover.color_prompt`, styl książki i scena strony.
 
-    Same kontury nie mówią, czy brzeg jest pod śniegiem, czy to plaża: bez sceny i tytułu
-    model pokolorował zimową stronę („snowy shore, winter waves, ice”) jak letnią plażę.
-    Tytuł z metadanych jest po angielsku, jak prompt (temat książki bywa po polsku).
+    Same kontury nie mówią, czy brzeg jest pod śniegiem, czy to plaża: bez sceny model
+    pokolorował zimową stronę („snowy shore, winter waves, ice”) jak letnią plażę. Tytułu
+    książki prompt nie zawiera: z linią „Book title” model dopisał go nad rysunkiem, mimo
+    zakazu tekstu.
     """
     lines = [" ".join(config.settings.cover.color_prompt.split())]
     lines.append(f"Style of the book: {book_style(spec, config)}.")
-    if title:
-        lines.append(f"Book title: {title.strip()}.")
     if scene:
         lines.append(
             f"The picture shows: {scene.strip().rstrip('.')}. Choose colors that fit this "
-            "description and the book title (place, season, weather, time of day), not a "
-            "different setting."
+            "description (place, season, weather, time of day), not a different setting."
         )
     return "\n".join(lines)
+
+
+TITLE_BAND_CHECK_PX = 800  # szerokość, przy której liczy się krawędzie w pasie tytułu
+TITLE_BAND_GAP = 0.02  # odstęp pasa od góry rysunku (ułamek wysokości)
+
+
+def title_band_edges(sketch: Image.Image, colored: Image.Image) -> float:
+    """Udział pikseli krawędzi (Canny) w obrazie modelu nad rysunkiem szkicu, czyli w pasie,
+    który ma zostać spokojnym tłem pod tytuł programu. Napis z modelu daje ok. 7%, gładkie
+    niebo ok. 0,2% (próby z 17.11). 0, gdy szkic nie ma pustego pasu u góry."""
+    size = (TITLE_BAND_CHECK_PX, round(TITLE_BAND_CHECK_PX * sketch.height / sketch.width))
+    ink = np.asarray(sketch.convert("L").resize(size, Image.Resampling.BILINEAR)) < 128
+    rows = np.nonzero(ink.any(axis=1))[0]
+    band = (rows.min() if len(rows) else size[1]) - round(TITLE_BAND_GAP * size[1])
+    if band <= 0:
+        return 0.0
+    gray = np.asarray(colored.convert("L").resize(size, Image.Resampling.BILINEAR))
+    edges = cv2.Canny(gray, 80, 160)
+    return round(float((edges[:band] > 0).mean()), 4)
 
 
 def model_aspect(size: tuple[int, int], aspects: list[str]) -> str:
@@ -95,12 +112,16 @@ class FrontColorizer:
     usage: Usage = field(default_factory=Usage)
     raw_files: list[Path] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     aspect: str | None = None
+    band_edges: list[float] = field(default_factory=list)  # krawędzie w pasie tytułu, próby
 
     def __call__(self, sketch: Image.Image) -> Image.Image:
         self.aspect = model_aspect(sketch.size, self.provider.supported_aspects())
         reference = reference_png(sketch, self.aspect)
         write_bytes_atomic(self.raw_dir / "front_sketch.png", reference)
+        best: tuple[float, Image.Image] | None = None
+        limit = self.settings.title_band_max_edges
         for _ in range(1 + self.settings.max_retries):
             if self.over_budget is not None and self.over_budget():
                 raise CoverBudgetError("przekroczony limit kosztu przed kolorowaniem przodu")
@@ -127,9 +148,26 @@ class FrontColorizer:
             self.raw_files.append(path)
             try:
                 with Image.open(io.BytesIO(result.png_bytes)) as img:
-                    return img.convert("RGB")
+                    colored = img.convert("RGB")
             except OSError as e:
                 self.errors.append(f"niepoprawny obraz z modelu: {e}")
-        raise CoverColorError(
-            "model nie pokolorował przodu: " + ("; ".join(self.errors) or "brak wyniku")
+                continue
+            edges = title_band_edges(sketch, colored)
+            self.band_edges.append(edges)
+            if best is None or edges < best[0]:
+                best = (edges, colored)
+            if edges <= limit:
+                return colored
+            self.errors.append(
+                f"próba {self.attempts}: napis albo obiekt w pasie tytułu (krawędzie "
+                f"{edges:.1%}, próg {limit:.1%})"
+            )
+        if best is None:
+            raise CoverColorError(
+                "model nie pokolorował przodu: " + ("; ".join(self.errors) or "brak wyniku")
+            )
+        self.warnings.append(
+            f"w pasie tytułu przodu zostało coś z modelu (krawędzie {best[0]:.1%} po "
+            f"{self.attempts} próbach); tytuł programu może na to nachodzić, obejrzyj cover.png"
         )
+        return best[1]

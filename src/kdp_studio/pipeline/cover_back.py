@@ -268,7 +268,7 @@ def back_prompt(
     scene: FrontScene | None,
     edge: list[str],
     horizon: float | None,
-    title: str = "",
+    theme: list[str] | None = None,
 ) -> str:
     """Prompt tyłu z grzbietem: horyzont, kolory lewej krawędzi przodu i strefy kompozycji."""
     width = geometry.folds_x[1]
@@ -291,11 +291,15 @@ def back_prompt(
         spine_pct=spine_pct,
         margin_pct=margin_pct,
     )
-    return f"{text}\nStyle of the book: {style}.{_title_line(title)}"
+    return f"{text}\nStyle of the book: {style}.{_theme_line(theme or [])}"
 
 
 def outpaint_prompt(
-    settings: CoverSettings, style: str, geometry: CoverGeometry, area: float, title: str = ""
+    settings: CoverSettings,
+    style: str,
+    geometry: CoverGeometry,
+    area: float,
+    theme: list[str] | None = None,
 ) -> str:
     """Prompt dorysowania tyłu: `area` to część płótna do wypełnienia (tył z grzbietem)."""
     width = geometry.folds_x[1]
@@ -304,12 +308,19 @@ def outpaint_prompt(
         spine_pct=round((geometry.spine_in + SPINE_SLACK_IN) / width * 100),
         margin_pct=max(1, round(settings.key_margin_in / width * 100)),
     )
-    return f"{text}\nStyle of the book: {style}.{_title_line(title)}"
+    return f"{text}\nStyle of the book: {style}.{_theme_line(theme or [])}"
 
 
-def _title_line(title: str) -> str:
-    """Tytuł książki w promptach tyłu: model trzyma porę roku i miejsce całej okładki."""
-    return f"\nBook title: {title.strip()}." if title.strip() else ""
+def _theme_line(theme: list[str]) -> str:
+    """Słowa kluczowe tematu w promptach tyłu, żeby model trzymał porę roku i miejsce całej
+    okładki. Nie tytuł: z linią „Book title” model dopisał tytuł na przodzie."""
+    words = [w.strip() for w in theme if w.strip()]
+    if not words:
+        return ""
+    return (
+        f"\nThe book is about {', '.join(words)}; keep the same place, season and weather as "
+        "the front cover."
+    )
 
 
 # --- Dorysowanie ---------------------------------------------------------------------------
@@ -419,7 +430,7 @@ class BackPainter:
     settings: CoverSettings
     geometry: CoverGeometry
     raw_dir: Path
-    title: str = ""  # tytuł książki z metadanych (do promptu)
+    theme: list[str] = field(default_factory=list)  # słowa kluczowe tematu (theme_anchors)
     analyze: Callable[[Image.Image], FrontScene] | None = None
     over_budget: Callable[[], bool] | None = None
     spend: Callable[[Usage], None] | None = None
@@ -479,7 +490,7 @@ class BackPainter:
                 self.style,
                 geometry,
                 size[0] / (size[0] + plan.overlap_px),
-                self.title,
+                self.theme,
             )
             reference, mask = outpaint_canvas(front_px, size, plan)
         else:
@@ -493,7 +504,7 @@ class BackPainter:
                 self.scene,
                 self.edge_colors,
                 front_horizon,
-                self.title,
+                self.theme,
             )
             reference = reference_png(front, front_aspect(front.size))
         best: tuple[float, np.ndarray, int] | None = None

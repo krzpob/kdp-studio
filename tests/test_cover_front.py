@@ -6,7 +6,7 @@ import io
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -33,6 +33,7 @@ from kdp_studio.pipeline.cover_front import (
     color_prompt,
     model_aspect,
     reference_png,
+    title_band_edges,
 )
 from kdp_studio.pipeline.cover_geometry import CoverGeometry
 from kdp_studio.providers.base import ImageRequest, ImageResult, ProviderError, Usage
@@ -141,19 +142,17 @@ def test_color_prompt_has_style_and_no_text(repo_config: AppConfig) -> None:
     assert "Keep every black outline exactly where it is" in prompt
     assert "No text, no letters, no title" in prompt
     assert prompt.splitlines()[-1].startswith("Style of the book: ")
-    # Kontury nie mówią, czy brzeg jest pod śniegiem: scena strony i tytuł idą do promptu.
+    # Kontury nie mówią, czy brzeg jest pod śniegiem: scena strony idzie do promptu.
     full = color_prompt(
         spec,
         repo_config,
-        "Winter Unicorn Ponies Coloring Book",
         "A unicorn pony stands on a snowy shore near winter waves and a patch of ice.",
     )
-    lines = full.splitlines()
-    assert lines[-2] == "Book title: Winter Unicorn Ponies Coloring Book."
-    assert lines[-1].startswith(
+    assert full.splitlines()[-1].startswith(
         "The picture shows: A unicorn pony stands on a snowy shore near winter waves and a "
         "patch of ice. Choose colors that fit this description"
     )
+    assert "title:" not in full.lower()  # tytuł w prompcie model wpisał na przód
 
 
 def _colorizer(
@@ -182,6 +181,66 @@ def test_colorizer_sends_reference_and_keeps_raw(tmp_path: Path, repo_config: Ap
     assert [p.name for p in colorizer.raw_files] == ["front_color_try1.png"]
     assert spent == [Usage(input_tokens=10, output_tokens=100)]
     assert colorizer.attempts == 1
+
+
+def _band_sketch() -> Image.Image:
+    """Szkic przodu z pustym pasem na tytuł u góry i rysunkiem niżej."""
+    sketch = Image.new("RGB", (863, 875), "white")
+    ImageDraw.Draw(sketch).rectangle((200, 350, 660, 800), outline="black", width=6)
+    return sketch
+
+
+def _with_band_text(text: bool) -> Image.Image:
+    img = Image.new("RGB", (512, 512), (120, 180, 240))
+    if text:  # „napis” modelu: dużo ostrych krawędzi nad rysunkiem
+        draw = ImageDraw.Draw(img)
+        for x in range(40, 470, 22):
+            draw.rectangle((x, 40, x + 12, 120), fill=(20, 30, 90), outline="white", width=3)
+    return img
+
+
+@dataclass
+class _Sequence:
+    images: list[Image.Image]
+    name: str = "fake"
+    model: str = "fake-image"
+    requests: list[ImageRequest] = field(default_factory=list)
+
+    def supported_aspects(self) -> list[str]:
+        return ["1:1"]
+
+    def generate(self, req: ImageRequest) -> ImageResult:
+        self.requests.append(req)
+        img = self.images[len(self.requests) - 1]
+        return ImageResult(_png(img), img.width, img.height, Usage(output_tokens=100))
+
+
+def test_title_band_edges_see_model_text() -> None:
+    sketch = _band_sketch()
+    assert title_band_edges(sketch, _with_band_text(False)) < 0.01
+    assert title_band_edges(sketch, _with_band_text(True)) > 0.03
+    assert title_band_edges(Image.new("RGB", (100, 100), "black"), _with_band_text(True)) == 0
+
+
+def test_colorizer_retries_text_in_title_band(tmp_path: Path, repo_config: AppConfig) -> None:
+    provider = _Sequence([_with_band_text(True), _with_band_text(False)])
+    colorizer = _colorizer(tmp_path, repo_config, cast(ColoringProvider, provider))
+    colorizer(_band_sketch())
+    assert colorizer.attempts == 2 and not colorizer.warnings
+    assert "napis albo obiekt w pasie tytułu" in colorizer.errors[0]
+    assert colorizer.band_edges[0] > 0.03 and colorizer.band_edges[1] < 0.01
+
+
+def test_colorizer_keeps_cleanest_try_with_warning(tmp_path: Path, repo_config: AppConfig) -> None:
+    noisy = _with_band_text(True)
+    lighter = noisy.copy()
+    ImageDraw.Draw(lighter).rectangle((0, 0, 512, 80), fill=(120, 180, 240))  # pół napisu
+    provider = _Sequence([noisy, lighter, noisy])
+    colorizer = _colorizer(tmp_path, repo_config, cast(ColoringProvider, provider))
+    result = colorizer(_band_sketch())
+    assert colorizer.attempts == 3
+    assert np.array_equal(np.asarray(result), np.asarray(lighter.convert("RGB")))
+    assert "w pasie tytułu przodu zostało coś z modelu" in colorizer.warnings[0]
 
 
 def test_colorizer_retries_non_fatal_errors(tmp_path: Path, repo_config: AppConfig) -> None:
@@ -351,9 +410,9 @@ def test_cover_colorizes_front(
     ideas = json.loads((BOOK / "ideas.json").read_text(encoding="utf-8"))
     page = next(p for p in _manifest()["pages"] if p["name"] == cover["front_page"])
     scene = next(i["scene"] for i in ideas["pages"] if i["id"] == page["idea_id"])
-    assert f"Book title: {ideas['book']['title']}." in req.prompt
     assert f"The picture shows: {scene.rstrip('.')}." in req.prompt
-    assert f"Book title: {ideas['book']['title']}." in back.prompt
+    assert ideas["book"]["title"] not in req.prompt and ideas["book"]["title"] not in back.prompt
+    assert cover["front"]["title_band_edges"] and cover["front"]["title_band_edges"][0] <= 0.01
     assert cover["front"]["prompt"] == req.prompt
     assert req.reference_image is not None and req.aspect == "3:4"
     assert back.prompt.startswith("Extend this picture") and back.mask is not None
