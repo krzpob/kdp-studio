@@ -286,6 +286,15 @@ QaOpt = Annotated[
         "ponownie z zapasowych pomysłów (FR-07). Domyślnie z settings.yaml.",
     ),
 ]
+GenerateCoverOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--cover/--no-cover",
+        help="Okładka (FR-15) jako ostatni krok, gdy wszystkie strony są gotowe: strony wybiera "
+        "model z wizją, reszta ustawień z settings.yaml (cover). Liczy się do --max-cost. "
+        "Domyślnie cover.in_generate.",
+    ),
+]
 BookArg = Annotated[Path, typer.Argument(help="Katalog książki (z kroku kdp-studio ideas).")]
 BelongsToOpt = Annotated[
     bool | None,
@@ -436,9 +445,9 @@ def _text_provider(config: AppConfig) -> TextProvider:
 
 
 def _image_providers(
-    config: AppConfig, fmt: str, image_provider: str | None, do_qa: bool
+    config: AppConfig, fmt: str, image_provider: str | None, need_vision: bool
 ) -> tuple[ImageProvider, VisionProvider | None]:
-    """Dostawcy kroku 2, tworzeni przed pierwszym wywołaniem API."""
+    """Dostawcy kroku 2 (i okładki w generate), tworzeni przed pierwszym wywołaniem API."""
     settings = config.settings
     aspect = config.formats[fmt].aspect
     vision: VisionProvider | None = None
@@ -446,7 +455,7 @@ def _image_providers(
         images = create_image_provider(
             image_provider or settings.providers.image, settings.models.image
         )
-        if do_qa:
+        if need_vision:
             vision = create_vision_provider(settings.providers.vision, settings.models.vision)
     except ConfigError as e:
         raise _fail([str(e)]) from e
@@ -1346,10 +1355,12 @@ def generate(
     review_ideas: ReviewOpt = None,
     qa: QaOpt = None,
     belongs_to_page: BelongsToOpt = None,
+    cover_: GenerateCoverOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
-    """Generuje kolorowankę: kroki ideas, images i finalize po kolei (FR-17)."""
+    """Generuje kolorowankę: kroki ideas, images i finalize po kolei (FR-17), opcjonalnie
+    okładkę (FR-15)."""
     timer = StepTimer()
     config = _config()
     level = _log_level(config, log_level)
@@ -1359,9 +1370,12 @@ def generate(
     target = _new_book_dir(output_dir, spec)
     do_qa = config.settings.qa if qa is None else qa
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
+    do_cover = config.settings.cover.in_generate if cover_ is None else cover_
+    cover_setup = _generate_cover_setup(config, spec) if do_cover else None
     # Wszyscy dostawcy przed pierwszym wywołaniem API: zły klucz albo proporcja wychodzą od razu.
     provider = _text_provider(config)
-    images_provider, vision = _image_providers(config, spec.format, image_provider, do_qa)
+    need_vision = do_qa or (cover_setup is not None and cover_setup.needs_vision)
+    images_provider, vision = _image_providers(config, spec.format, image_provider, need_vision)
     costs = _cost_tracker(config, max_cost, [provider.model, *_models(images_provider, vision)])
     belongs = _belongs(config, belongs_to_page)
 
@@ -1374,14 +1388,78 @@ def generate(
         else:
             with _timed(timer, "images", costs):
                 code = _step_images(
-                    config, target, images_provider, vision, workers, quality, costs
+                    config,
+                    target,
+                    images_provider,
+                    vision if do_qa else None,
+                    workers,
+                    quality,
+                    costs,
                 )
         # Po błędzie krytycznym albo przekroczonym limicie krok 3 czeka na dokończenie kroku 2.
         if code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
             with _timed(timer, "finalize"):
                 code = max(code, _step_finalize(config, target))
+        if cover_setup is not None:
+            cover_code = _step_cover(
+                config, target, cover_setup, images_provider, vision, costs, timer
+            )
+            code = code if cover_code is None else max(code, cover_code)
         _report_summary(target, timer, costs, ExitCode(code))
     raise typer.Exit(code)
+
+
+def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:
+    """`generate --cover`: kontrole okładki przed pierwszym wywołaniem API. Strony wybiera
+    model z wizją (cover.select_pages), więc nie ma tu --cover-page ani --thumbnails."""
+    count = config.settings.cover.thumbnails
+    if spec.pages <= count:
+        raise _fail(
+            [f"--cover: okładka potrzebuje co najmniej {count + 1} stron (przód i miniatury)"]
+        )
+    return _cover_setup(config, None, None, None, None, _quality(config, None))
+
+
+def _step_cover(
+    config: AppConfig,
+    target: Path,
+    setup: _CoverSetup,
+    images: ImageProvider,
+    vision: VisionProvider | None,
+    costs: CostTracker,
+    timer: StepTimer,
+) -> ExitCode | None:
+    """Ostatni krok `generate --cover`. Tylko gdy wszystkie strony są `ok`; inaczej pominięty
+    z komunikatem (None: kod wyjścia zostaje z poprzednich kroków)."""
+    writer = _open_book(target)
+    manifest = writer.manifest
+    missing = [p.name for p in manifest.pages if p.status != "ok"]
+    if missing:
+        shown = ", ".join(missing[:5]) + (", …" if len(missing) > 5 else "")
+        _warn(
+            [
+                f"okładka pominięta: nie wszystkie strony są gotowe ({shown})",
+                f"po dokończeniu książki: kdp-studio cover {target}",
+            ]
+        )
+        return None
+    try:
+        pick = _cover_pages(target, manifest, None, None, config.settings.cover.thumbnails)
+        run = _cover_run(
+            target,
+            writer,
+            config,
+            _cover_geometry(config, manifest),
+            setup,
+            pick,
+            images if setup.color else None,
+            vision if setup.needs_vision else None,
+            costs,
+        )
+        with _timed(timer, "cover", costs):
+            return _make_cover(run)
+    except typer.Exit as e:  # błąd okładki już wypisany; podsumowanie generate i tak powstaje
+        return ExitCode(e.exit_code)
 
 
 def _models(images: ImageProvider, vision: VisionProvider | None) -> list[str]:
@@ -1584,6 +1662,127 @@ class _CoverRun:
     qa: bool = False
     back_text: bool = False
     costs: CostTracker | None = None
+    cost_start: float = 0.0  # wydatki uruchomienia przed okładką (generate --cover)
+
+
+@dataclass
+class _CoverSetup:
+    """Ustawienia okładki sprawdzane przed pierwszym wywołaniem API (czcionka, profil CMYK)."""
+
+    converter: cmyk.CmykConverter
+    color: bool
+    select: bool
+    qa: bool
+    back_text: bool
+    quality: str
+
+    @property
+    def needs_vision(self) -> bool:
+        """Model z wizją: ocena przodu do tła tyłu (przy kolorze), wybór stron, QA."""
+        return self.color or self.select or self.qa
+
+
+def _cover_setup(
+    config: AppConfig,
+    color: bool | None,
+    select_pages: bool | None,
+    qa: bool | None,
+    back_text: bool | None,
+    quality: str,
+    manual: bool = False,
+) -> _CoverSetup:
+    """Flagi okładki (domyślnie z settings.yaml) i kontrole bez wywołań API."""
+    settings = config.settings.cover
+    if not settings.title_font_path.is_file():
+        raise _fail([f"brak czcionki tytułu {settings.title_font_path} (cover.title_font)"])
+    try:
+        converter = cmyk_converter(settings.cmyk)
+    except cmyk.CmykError as e:
+        raise _fail([str(e)]) from e
+    return _CoverSetup(
+        converter=converter,
+        color=settings.colorize if color is None else color,
+        select=(settings.select_pages if select_pages is None else select_pages) and not manual,
+        qa=settings.qa if qa is None else qa,
+        back_text=settings.back_text if back_text is None else back_text,
+        quality=quality,
+    )
+
+
+def _cover_geometry(config: AppConfig, manifest: Manifest) -> CoverGeometry:
+    layout = manifest.layout
+    return CoverGeometry(
+        trim_in=layout.trim_in,
+        pages_in_book=layout.pages_in_book,
+        kdp=config.settings.kdp_cover,
+        key_margin_in=config.settings.cover.key_margin_in,
+        dpi=layout.dpi,
+    )
+
+
+def _cover_run(
+    target: Path,
+    writer: ManifestWriter,
+    config: AppConfig,
+    geometry: CoverGeometry,
+    setup: _CoverSetup,
+    pick: _CoverPick,
+    images: ImageProvider | None,
+    vision: VisionProvider | None,
+    costs: CostTracker | None,
+    template: Path | None = None,
+    template_info: CoverTemplateInfo | None = None,
+) -> _CoverRun:
+    """Złożenie okładki z gotowymi (opakowanymi w log) dostawcami; bez wywołań API."""
+    settings = config.settings
+    try:
+        ideas = load_ideas(target)
+    except BookError as e:
+        raise _fail(e.errors) from e
+    spec = spec_from_manifest(writer.manifest)
+    run = _CoverRun(
+        target=target,
+        writer=writer,
+        geometry=geometry,
+        config=config,
+        converter=setup.converter,
+        pick=pick,
+        ideas=ideas,
+        spec=spec,
+        template=template,
+        template_info=template_info,
+        vision=vision,
+        select=setup.select,
+        qa=setup.qa,
+        back_text=setup.back_text,
+        costs=costs,
+        cost_start=costs.spent if costs is not None else 0.0,
+    )
+    if images is not None and costs is not None:
+        raw_dir = target / COVER_DIR / RAW_DIR
+        spend = partial(_spend, costs, images.model)
+        run.colorizer = FrontColorizer(
+            provider=images,
+            quality=setup.quality,
+            prompt=color_prompt(spec, config),
+            settings=settings.cover,
+            raw_dir=raw_dir,
+            over_budget=costs.over_budget,
+            spend=spend,
+        )
+        assert vision is not None
+        run.painter = BackPainter(
+            provider=images,
+            quality=setup.quality,
+            style=book_style(spec, config),
+            settings=settings.cover,
+            geometry=geometry,
+            raw_dir=raw_dir,
+            analyze=partial(_analyze_front, vision, settings.cover.seam_bands, costs),
+            over_budget=costs.over_budget,
+            spend=spend,
+        )
+    return run
 
 
 SelectPagesOpt = Annotated[
@@ -1651,100 +1850,57 @@ def cover(
     settings = config.settings
     writer = _open_book(book)
     manifest = writer.manifest
-    layout = manifest.layout
-    geometry = CoverGeometry(
-        trim_in=layout.trim_in,
-        pages_in_book=layout.pages_in_book,
-        kdp=settings.kdp_cover,
-        key_margin_in=settings.cover.key_margin_in,
-        dpi=layout.dpi,
-    )
+    geometry = _cover_geometry(config, manifest)
     previous = manifest.cover
-    if previous is not None and previous.geometry.get("pages_in_book") != layout.pages_in_book:
+    pages_in_book = manifest.layout.pages_in_book
+    if previous is not None and previous.geometry.get("pages_in_book") != pages_in_book:
         _warn(
             [
                 f"poprzednia okładka była dla {previous.geometry.get('pages_in_book')} stron, "
-                f"a książka ma {layout.pages_in_book}: powstaje nowa"
+                f"a książka ma {pages_in_book}: powstaje nowa"
             ]
         )
     pick = _cover_pages(book, manifest, cover_page, thumbnails, settings.cover.thumbnails)
     template_info = _cover_template(template, geometry, config) if template else None
-    if not settings.cover.title_font_path.is_file():
-        raise _fail([f"brak czcionki tytułu {settings.cover.title_font_path} (cover.title_font)"])
-    try:
-        converter = cmyk_converter(settings.cover.cmyk)
-    except cmyk.CmykError as e:
-        raise _fail([str(e)]) from e
-    try:
-        ideas = load_ideas(book)
-    except BookError as e:
-        raise _fail(e.errors) from e
+    setup = _cover_setup(
+        config,
+        color,
+        select_pages,
+        qa,
+        back_text,
+        _quality(config, image_quality),
+        manual=bool(cover_page and thumbnails),
+    )
     if manifest.status != "completed":
         _warn([f"książka nie jest gotowa (status {manifest.status}); okładka z gotowych stron"])
 
-    spec = spec_from_manifest(manifest)
-    do_color = settings.cover.colorize if color is None else color
-    do_select = (settings.cover.select_pages if select_pages is None else select_pages) and not (
-        cover_page and thumbnails
-    )
-    do_qa = settings.cover.qa if qa is None else qa
-    run = _CoverRun(
-        target=book,
-        writer=writer,
-        geometry=geometry,
-        config=config,
-        converter=converter,
-        pick=pick,
-        ideas=ideas,
-        spec=spec,
-        template=template,
-        template_info=template_info,
-        select=do_select,
-        qa=do_qa,
-        back_text=settings.cover.back_text if back_text is None else back_text,
-    )
     images: ImageProvider | None = None
+    vision: VisionProvider | None = None
     try:
-        if do_color:
+        if setup.color:
             images = create_image_provider(
                 image_provider or settings.providers.image, settings.models.image
             )
-        if do_color or do_select or do_qa:  # ocena przodu do tła tyłu, wybór stron, QA
-            run.vision = create_vision_provider(settings.providers.vision, settings.models.vision)
+        if setup.needs_vision:
+            vision = create_vision_provider(settings.providers.vision, settings.models.vision)
     except ConfigError as e:
         raise _fail([str(e)]) from e
+    models = [p.model for p in (images, vision) if p is not None]
+    costs = _cost_tracker(config, max_cost, models) if models else None
     prices = settings.api_pricing.models
-    models = [p.model for p in (images, run.vision) if p is not None]
-    if models:
-        run.costs = _cost_tracker(config, max_cost, models)
-    if run.vision is not None:
-        run.vision = LoggedVisionProvider(run.vision, prices.get(run.vision.model))
-    if images is not None and run.costs is not None:
-        quality = _quality(config, image_quality)
-        logged = LoggedImageProvider(images, prices.get(images.model))
-        raw_dir = book / COVER_DIR / RAW_DIR
-        spend = partial(_spend, run.costs, images.model)
-        run.colorizer = FrontColorizer(
-            provider=logged,
-            quality=quality,
-            prompt=color_prompt(spec, config),
-            settings=settings.cover,
-            raw_dir=raw_dir,
-            over_budget=run.costs.over_budget,
-            spend=spend,
-        )
-        assert run.vision is not None
-        run.painter = BackPainter(
-            provider=logged,
-            quality=quality,
-            style=book_style(spec, config),
-            settings=settings.cover,
-            geometry=geometry,
-            raw_dir=raw_dir,
-            analyze=partial(_analyze_front, run.vision, settings.cover.seam_bands, run.costs),
-            over_budget=run.costs.over_budget,
-            spend=spend,
-        )
+    run = _cover_run(
+        book,
+        writer,
+        config,
+        geometry,
+        setup,
+        pick,
+        None if images is None else LoggedImageProvider(images, prices.get(images.model)),
+        None if vision is None else LoggedVisionProvider(vision, prices.get(vision.model)),
+        costs,
+        template,
+        template_info,
+    )
 
     with _locked(book, level), _timed(StepTimer(), "cover", run.costs):
         code = _make_cover(run)
@@ -1874,7 +2030,7 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             if isinstance(e, ProviderError)
             else ExitCode.PARTIAL
         )
-        cost = costs.spent if costs is not None else 0.0
+        cost = costs.spent - run.cost_start if costs is not None else 0.0
         writer.manifest.cover = CoverInfo(
             status="failed",
             error=str(e),
@@ -1982,7 +2138,7 @@ def _make_cover(run: _CoverRun) -> ExitCode:
         ),
         files=files,
         warnings=warnings,
-        cost_usd=round(costs.spent, 6) if costs is not None else 0.0,
+        cost_usd=round(costs.spent - run.cost_start, 6) if costs is not None else 0.0,
     )
     writer.manifest.cover = info
     writer.manifest.cost_usd = round(writer.manifest.cost_usd + info.cost_usd, 6)

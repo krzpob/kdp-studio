@@ -153,6 +153,7 @@ cover:
   # Etap 3: bez --cover-page/--thumbnails strony proponuje model z wizją (arkusz kontaktowy).
   select_pages: true
   qa: false                     # --qa: model z wizją sprawdza gotową okładkę
+  in_generate: false            # generate --cover: okładka jako ostatni krok (wybór stron modelem)
   # Tło tyłu i grzbietu (przy --color): jedno wywołanie, przód jako referencja. Pola wypełnia
   # program: {horizon} (zdanie o horyzoncie), {colors} (kolory przy lewej krawędzi przodu),
   # {spine_pct} (szerokość grzbietu z zapasem, % obrazu), {margin_pct} (key_margin_in, %).
