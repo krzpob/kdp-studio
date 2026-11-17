@@ -120,3 +120,43 @@ def review_response(user: str, **verdicts: dict[str, Any]) -> dict[str, Any]:
 
 def approve_all(system: str, user: str) -> dict[str, Any]:
     return review_response(user)
+
+
+# --- FR-15 etap 3: model z wizją przy okładce ---------------------------------------------
+
+
+class CoverVision:
+    """Odpowiedzi modelu z wizją dla `cover`: wybór stron, scena przodu, QA okładki.
+
+    Rozpoznaje wywołanie po instrukcjach. `selection`, `scene` i `verdict` można zmienić
+    w teście; `calls` to rodzaje kolejnych wywołań.
+    """
+
+    def __init__(self) -> None:
+        self.selection: dict[str, Any] = {
+            "front": 3,
+            "thumbnails": [1, 5, 6],
+            "reason": "wyraźny motyw na przodzie",
+        }
+        self.scene: dict[str, Any] = {
+            "has_horizon": False,
+            "horizon": 0.0,
+            "band_colors": ["#FFFFFF"] * 8,
+            "background": "plain white background",
+        }
+        self.verdict: dict[str, Any] = {"passed": True, "issues": []}
+        self.calls: list[str] = []
+        self.images: list[bytes] = []
+
+    def __call__(self, image_png: bytes, instructions: str) -> dict[str, Any]:
+        self.images.append(image_png)
+        if "contact sheet" in instructions:
+            self.calls.append("select")
+            return self.selection
+        if "paperback cover" in instructions:  # przed sceną: QA też wspomina przód
+            self.calls.append("qa")
+            return self.verdict
+        if "front cover illustration" in instructions:
+            self.calls.append("scene")
+            return self.scene
+        raise AssertionError(f"nieznane wywołanie modelu z wizją: {instructions[:80]}")

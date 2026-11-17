@@ -36,7 +36,8 @@ from kdp_studio.pipeline.cover_front import (
 )
 from kdp_studio.pipeline.cover_geometry import CoverGeometry
 from kdp_studio.providers.base import ImageRequest, ImageResult, ProviderError, Usage
-from tests.conftest import FAKE_PRICES
+from kdp_studio.providers.fake import FakeVisionProvider
+from tests.conftest import FAKE_PRICES, CoverVision
 from tests.test_cli import fake_text_provider  # noqa: F401  (autouse: fałszywi dostawcy)
 
 GENERATE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
@@ -95,7 +96,11 @@ class ColoringProvider:
             return ImageResult(b"not a png", 1, 1, usage)
         assert req.reference_image is not None
         with Image.open(io.BytesIO(req.reference_image)) as ref:
-            colored = _tinted(ref)
+            if req.prompt.startswith("Paint the back cover"):  # tło tyłu w kolorze krawędzi przodu
+                edge = np.median(np.asarray(ref.convert("RGB"))[:, :4].reshape(-1, 3), axis=0)
+                colored = Image.new("RGB", (64, 48), tuple(int(v) for v in edge))
+            else:
+                colored = _tinted(ref)
         return ImageResult(_png(colored), colored.width, colored.height, usage)
 
 
@@ -264,6 +269,8 @@ def test_readability_warnings(repo_config: AppConfig, tmp_path: Path) -> None:
 @pytest.fixture
 def coloring(monkeypatch: pytest.MonkeyPatch) -> ColoringProvider:
     monkeypatch.setattr(cli, "cmyk_converter", lambda settings: NaiveConverter())
+    vision = FakeVisionProvider(CoverVision())
+    monkeypatch.setattr(cli, "create_vision_provider", lambda name, model: vision)
     provider = ColoringProvider()
     assert main([*GENERATE, "--pages", "6"]) == ExitCode.OK
     monkeypatch.setattr(cli, "create_image_provider", lambda name, model: provider)
@@ -281,21 +288,24 @@ def test_cover_colorizes_front(
 ) -> None:
     before = _manifest()["cost_usd"]
     capsys.readouterr()
-    assert main(["cover", ARG, "--image-quality", "low"]) == ExitCode.OK
+    assert main(["cover", ARG, "--image-quality", "low", "--no-select-pages"]) == ExitCode.OK
     out = capsys.readouterr().out
     assert "Koloruję przód (fake, fake-image, jakość low, limit $5.00)" in out
     assert "Przód pokolorowany (1 próba, zgodność konturów 100%, nałożone kontury 300 DPI)" in out
     assert "Tytuł w miniaturze 160 px: litery " in out
-    (req,) = coloring.requests
+    req, back = coloring.requests
     assert req.reference_image is not None and req.aspect == "3:4"
+    assert back.prompt.startswith("Paint the back cover")
     data = _manifest()
     cover = data["cover"]
     front = cover["front"]
     assert (front["colorized"], front["attempts"], front["contours_overlay"]) == (True, 1, True)
     assert front["raw_files"] == ["cover/raw/front_color_try1.png"]
     assert front["quality"] == "low" and front["aspect"] == "3:4"
-    price = FAKE_PRICES["fake-image"]
-    expected = (10 * price["input_per_1m"] + 100 * price["output_per_1m"]) / 1e6
+    price, vision = FAKE_PRICES["fake-image"], FAKE_PRICES["fake-vision"]
+    image_cost = (10 * price["input_per_1m"] + 100 * price["output_per_1m"]) / 1e6
+    scene_cost = (1000 * vision["input_per_1m"] + 20 * vision["output_per_1m"]) / 1e6
+    expected = 2 * image_cost + scene_cost  # przód, tył z grzbietem, ocena przodu
     assert cover["cost_usd"] == pytest.approx(expected)
     assert data["cost_usd"] == pytest.approx(before + expected)
     assert (BOOK / "cover" / "raw" / "front_sketch.png").is_file()
@@ -308,7 +318,7 @@ def test_no_color_makes_a_sketch_without_api(
         raise AssertionError("--no-color nie tworzy dostawcy obrazu")
 
     monkeypatch.setattr(cli, "create_image_provider", no_provider)
-    assert main(["cover", ARG, "--no-color"]) == ExitCode.OK
+    assert main(["cover", ARG, "--no-color", "--no-select-pages"]) == ExitCode.OK
     assert "Przód: szkic bez koloru (--no-color)." in capsys.readouterr().out
     cover = _manifest()["cover"]
     assert cover["front"]["colorized"] is False and cover["cost_usd"] == 0
@@ -334,6 +344,8 @@ def test_cover_fatal_error_exits_4(coloring: ColoringProvider) -> None:
 
 def test_cover_budget_exits_3(coloring: ColoringProvider) -> None:
     coloring.junk = True
-    assert main(["cover", ARG, "--max-cost", "0.001"]) == ExitCode.BUDGET_EXCEEDED
+    assert main(["cover", ARG, "--max-cost", "0.001", "--no-select-pages"]) == (
+        ExitCode.BUDGET_EXCEEDED
+    )
     assert len(coloring.requests) == 1
     assert "limit kosztu" in _manifest()["cover"]["error"]

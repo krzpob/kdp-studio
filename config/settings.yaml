@@ -150,6 +150,27 @@ cover:
     image. No text, no letters, no title, no logos, no frame, no border.
   contour_match_min: 0.85       # tyle konturów szkicu musi mieć ciemny piksel modelu w pobliżu,
   contour_search_in: 0.02       # w tym promieniu, żeby nałożyć ostre kontury 300 DPI
+  # Etap 3: bez --cover-page/--thumbnails strony proponuje model z wizją (arkusz kontaktowy).
+  select_pages: true
+  qa: false                     # --qa: model z wizją sprawdza gotową okładkę
+  # Tło tyłu i grzbietu (przy --color): jedno wywołanie, przód jako referencja. Pola wypełnia
+  # program: {horizon} (zdanie o horyzoncie), {colors} (kolory przy lewej krawędzi przodu),
+  # {spine_pct} (szerokość grzbietu z zapasem, % obrazu), {margin_pct} (key_margin_in, %).
+  back_prompt: >-
+    Paint the back cover and spine of the same children's coloring book as the reference
+    image, which is its front cover. Make one wide background picture in the same style,
+    palette and lighting, as if the world of the front cover continued to the left.
+    {horizon} Along the right edge, where it joins the front cover, the background colors
+    from top to bottom are: {colors}. The right {spine_pct}% of the picture is the spine:
+    only plain background there, no objects. Keep the bottom right corner calm and plain.
+    Keep any objects at least {margin_pct}% away from every edge and keep the middle mostly
+    calm background, because thumbnails of inner pages will be placed on it. Use vivid but
+    print-friendly colors (no neon, no fluorescent colors). No text, no letters, no title,
+    no logos, no frame, no border.
+  seam_bands: 8                 # pasy poziome przy kontroli styku grzbiet/przód (ΔE)
+  back_text_pt: 16              # opis z metadanych na tyle (back_text: true)
+  back_text_min_pt: 10
+  back_text_max_height: 0.3     # opis zajmuje najwyżej tyle wysokości strefy tyłu
   cmyk:
     # Profil ICC do konwersji RGB → CMYK (nie trafia do PDF). KDP żadnego nie wskazuje; poradniki
     # podają U.S. Web Coated (SWOP) v2, alternatywnie GRACoL 2006 Coated. Plik pobierasz sam
