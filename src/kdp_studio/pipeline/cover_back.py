@@ -49,6 +49,10 @@ ALIGN_ROWS = 256  # rozdzielczość profilu przy dopasowaniu wierszy tyłu do pr
 ALIGN_STEP_PENALTY = 2.0  # ΔE za krok poza przekątną: bez potrzeby tył się nie odkształca
 ALIGN_SMOOTH = 0.03  # okno wygładzenia mapy wierszy (ułamek wysokości)
 OUTPAINT_HEIGHT = 1024  # wysokość płótna do dorysowania; model i tak skaluje je do siebie
+REGISTER_DOWNSCALE = 4  # rejestracja pasa przodu na zmniejszonym obrazie (szybciej, stabilniej)
+REGISTER_MIN_CC = 0.5  # słabsza zgodność (ECC) to nieudana rejestracja
+REGISTER_MAX_SCALE = 0.15  # dopuszczalna zmiana skali przy rejestracji (±)
+REGISTER_MAX_SHIFT = 0.1  # dopuszczalne przesunięcie przy rejestracji (ułamek wysokości)
 
 
 # --- Próbki pikseli --------------------------------------------------------------------------
@@ -112,6 +116,7 @@ class SeamCheck:
     horizon_ok: bool
     passed: bool
     align_shift: float | None = None  # największe przesunięcie wierszy tyłu przed kontrolą
+    register_cc: float | None = None  # zgodność pasa przodu z płótna po rejestracji (ECC)
 
     @property
     def score(self) -> float:
@@ -343,15 +348,78 @@ def outpaint_canvas(
     return _png_bytes(canvas), _png_bytes(mask)
 
 
-def outpainted_back(
-    painted: Image.Image, back_size: tuple[int, int], plan: OutpaintPlan
-) -> np.ndarray:
-    """Tył z grzbietem wycięty z dorysowanego płótna, w pikselach okładki."""
-    width, height = back_size
-    full = painted.convert("RGB").resize(
-        (width + plan.overlap_px, height), Image.Resampling.LANCZOS
+def register_canvas(
+    canvas: np.ndarray, front_strip: np.ndarray, split: int
+) -> tuple[np.ndarray, float] | None:
+    """Płótno z modelu dopasowane do prawdziwego przodu; (płótno, zgodność ECC) albo None.
+
+    Maska w modelach obrazu jest „miękka”: model przerysowuje też znany pas przodu, lekko
+    przesunięty i przeskalowany (na próbie z 17.11: o ~30 px i 3%), więc deski i listwa
+    rozjeżdżają się na styku. Przekształcenie afiniczne, które nakłada pas z modelu na
+    prawdziwy przód, program stosuje do całego płótna, zanim wytnie z niego tył.
+    """
+    overlap = front_strip.shape[1]
+    k = REGISTER_DOWNSCALE
+
+    def gray(img: np.ndarray) -> np.ndarray:
+        small = cv2.resize(
+            cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2GRAY),
+            None,
+            fx=1 / k,
+            fy=1 / k,
+            interpolation=cv2.INTER_AREA,
+        )
+        return np.asarray(small, dtype=np.float32)
+
+    warp = np.eye(2, 3, dtype=np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    try:
+        cc, found = cv2.findTransformECC(
+            gray(front_strip),
+            gray(canvas[:, split : split + overlap]),
+            warp,
+            cv2.MOTION_AFFINE,
+            criteria,
+            None,
+        )
+    except cv2.error:
+        return None
+    matrix = np.asarray(found, dtype=np.float64)
+    matrix[:, 2] *= k
+    linear, offset = matrix[:, :2], matrix[:, 2]
+    height = canvas.shape[0]
+    if (
+        cc < REGISTER_MIN_CC
+        or np.abs(linear - np.eye(2)).max() > REGISTER_MAX_SCALE
+        or np.abs(offset).max() > REGISTER_MAX_SHIFT * height
+    ):
+        return None
+    # Przekształcenie liczone we współrzędnych pasa; na płótnie pas zaczyna się w `split`.
+    origin = np.array([split, 0.0])
+    full = np.hstack([linear, (offset + origin - linear @ origin)[:, None]])
+    out = cv2.warpAffine(
+        canvas,
+        full,
+        (canvas.shape[1], height),
+        flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REPLICATE,
     )
-    return np.asarray(full)[:, :width]
+    return np.asarray(out, dtype=np.uint8), round(float(cc), 3)
+
+
+def outpainted_back(
+    painted: Image.Image, back_size: tuple[int, int], plan: OutpaintPlan, front: np.ndarray
+) -> tuple[np.ndarray, float | None]:
+    """Tył z grzbietem wycięty z dorysowanego płótna (piksele okładki), po rejestracji pasa
+    przodu; (tył, zgodność ECC albo None, gdy rejestracja się nie udała)."""
+    width, height = back_size
+    size = (width + plan.overlap_px, height)
+    canvas = np.asarray(painted.convert("RGB").resize(size, Image.Resampling.LANCZOS))
+    registered = register_canvas(canvas, front[:, : plan.overlap_px], width)
+    if registered is None:
+        return canvas[:, :width], None
+    canvas, cc = registered
+    return canvas[:, :width], cc
 
 
 # --- Malowanie --------------------------------------------------------------------------------
@@ -464,19 +532,22 @@ class BackPainter:
             self.raw_files.append(path)
             try:
                 with Image.open(io.BytesIO(result.png_bytes)) as img:
+                    cc = None
                     if plan is not None:
-                        painted = outpainted_back(img, size, plan)
+                        back, cc = outpainted_back(img, size, plan, front_px)
                     else:
-                        painted = np.asarray(
-                            img.convert("RGB").resize(size, Image.Resampling.LANCZOS)
-                        )
+                        back = np.asarray(img.convert("RGB").resize(size, Image.Resampling.LANCZOS))
             except OSError as e:
                 self.errors.append(f"niepoprawny obraz z modelu: {e}")
                 continue
-            back, shift = align_to_front(
-                painted, front_px[:, :strip_px], strip_px, settings.seam_align_max
+            shift = None
+            if cc is None:  # zarejestrowany tył już pasuje; DTW tylko by go zniekształciło
+                back, shift = align_to_front(
+                    back, front_px[:, :strip_px], strip_px, settings.seam_align_max
+                )
+            seam = replace(
+                seam_check(back, front_px, strip_px, settings), align_shift=shift, register_cc=cc
             )
-            seam = replace(seam_check(back, front_px, strip_px, settings), align_shift=shift)
             self.seams.append(seam)
             if best is None or seam.score < best[0]:
                 best = (seam.score, back, self.attempts)

@@ -248,6 +248,7 @@ class CoverSeamInfo(_Model):
     horizon_front: float | None = None
     horizon_back: float | None = None
     align_shift: float | None = None  # największe przesunięcie wierszy tyłu do przodu (ułamek)
+    register_cc: float | None = None  # dorysowanie: zgodność pasa przodu po rejestracji (ECC)
     passed: bool
 
 

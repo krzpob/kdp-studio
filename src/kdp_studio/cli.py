@@ -2407,6 +2407,7 @@ def _back_info(
                 horizon_front=s.horizon_front,
                 horizon_back=s.horizon_back,
                 align_shift=s.align_shift,
+                register_cc=s.register_cc,
                 passed=s.passed,
             )
             for s in painter.seams

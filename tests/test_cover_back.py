@@ -26,6 +26,7 @@ from kdp_studio.pipeline.cover_back import (
     outpaint_canvas,
     outpaint_plan,
     pixel_horizon,
+    register_canvas,
     seam_check,
 )
 from kdp_studio.pipeline.cover_front import CoverBudgetError, CoverColorError
@@ -308,6 +309,49 @@ def test_outpaint_canvas_keeps_front_strip_and_masks_the_back() -> None:
     assert pixel_horizon(pixels[:, -20:]) == pytest.approx(0.6, abs=0.01)  # pas przodu
 
 
+def _boards(
+    size: tuple[int, int], *, scale: float = 1.0, shift: tuple[float, float] = (0, 0)
+) -> np.ndarray:
+    """Ściana nad podłogą z desek (poziome deski, pionowe łączenia), opcjonalnie przeskalowana
+    i przesunięta, jak przerysowanie przez model z „miękką” maską."""
+    width, height = size
+    ys, xs = np.mgrid[0:height, 0:width].astype(np.float64)
+    y = (ys - shift[1]) / scale
+    x = (xs - shift[0]) / scale
+    img = np.empty((height, width, 3), np.uint8)
+    wall = y < height * 0.45
+    board = np.floor((y - height * 0.45) / 37).astype(int)
+    joint = ((x + board * 29) % 113) < 4
+    seam = ((y - height * 0.45) % 37) < 3
+    img[:] = WOOD
+    img[(board % 2 == 1) & ~wall] = (185, 105, 50)
+    img[(joint | seam) & ~wall] = (110, 60, 30)
+    img[wall] = SKY
+    img[(y >= height * 0.42) & wall] = CREAM
+    return img
+
+
+def test_register_canvas_undoes_model_shift_and_scale() -> None:
+    truth = _boards((600, 360))
+    split = 400
+    drawn = _boards((600, 360), scale=0.97, shift=(4, 18))  # model przerysował wszystko
+    registered = register_canvas(drawn, truth[:, split:], split)
+    assert registered is not None
+    canvas, cc = registered
+    assert cc > 0.9
+    # Po rejestracji kolumna tuż przed zgięciem zgadza się z prawdziwą sceną w tym miejscu.
+    diff = np.abs(canvas[:, split - 1].astype(int) - truth[:, split - 1].astype(int)).sum(axis=1)
+    assert (diff > 60).mean() < 0.05
+    before = np.abs(drawn[:, split - 1].astype(int) - truth[:, split - 1].astype(int)).sum(axis=1)
+    assert (before > 60).mean() > 0.1  # bez rejestracji deski się rozjeżdżają
+
+
+def test_register_canvas_gives_up_on_unrelated_strip() -> None:
+    truth = _boards((600, 360))
+    noise = np.random.default_rng(0).integers(0, 255, (360, 600, 3), dtype=np.uint8)
+    assert register_canvas(noise, truth[:, 400:], 400) is None
+
+
 def test_back_painter_outpaints_and_skips_scene_analysis(
     repo_config: AppConfig, tmp_path: Path
 ) -> None:
@@ -329,6 +373,25 @@ def test_back_painter_outpaints_and_skips_scene_analysis(
     assert painter.prompt is not None and painter.prompt.startswith("Extend this picture")
     assert "Style of the book: kawaii." in painter.prompt and "{" not in painter.prompt
     assert analyzed == [] and painter.seams[0].passed
+
+
+def test_back_painter_registers_outpainted_canvas(repo_config: AppConfig, tmp_path: Path) -> None:
+    geometry = _geometry()
+    left, _, right, bottom = geometry.px(geometry.front_panel)
+    scene = _boards((right, bottom))  # tył z grzbietem i przód obok siebie
+    front = Image.fromarray(np.ascontiguousarray(scene[:, left:]))
+    plan_width = round(bottom * 4 / 3)  # kwadratowa okładka: płótno 4:3
+    drawn = _boards((plan_width, bottom), scale=0.97, shift=(4, 9))
+    # Płótno z modelu: scena od lewej krawędzi tyłu do pasa przodu, przerysowana z przesunięciem.
+    provider = Painter([drawn])
+    painter = _painter(repo_config, tmp_path, provider, outpaint=True)
+    back = np.asarray(painter(front))
+    (seam,) = painter.seams
+    assert seam.register_cc is not None and seam.register_cc > 0.9
+    assert seam.align_shift is None and seam.passed
+    edge = back[:, left - 40]  # przed pasem wygładzenia styku
+    diff = np.abs(edge.astype(int) - scene[:, left - 40].astype(int)).sum(axis=1)
+    assert (diff > 60).mean() < 0.05
 
 
 def test_back_painter_falls_back_to_reference_without_fitting_aspect(
