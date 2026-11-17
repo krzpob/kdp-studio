@@ -19,7 +19,14 @@ from kdp_studio.models import (
     PagePrompt,
 )
 from kdp_studio.pipeline.postprocess import PageFiles, PagePostprocessor, PostprocessError
-from kdp_studio.pipeline.qa import QAChecker, QAIssue, QAResult, qa_instructions
+from kdp_studio.pipeline.qa import (
+    QAChecker,
+    QAIssue,
+    QAResult,
+    belongs_to_instructions,
+    book_theme,
+    qa_instructions,
+)
 from kdp_studio.pipeline.worker import PageJob, PageWorker, ReservePool
 from kdp_studio.providers.base import ProviderError, Usage
 from kdp_studio.providers.fake import FakeImageProvider, FakeVisionProvider
@@ -84,6 +91,34 @@ def test_instructions_carry_criteria_age_profile_and_scene(repo_config: AppConfi
     assert "in Polish" in text
 
 
+def test_instructions_ask_whether_the_theme_shows_without_colors(repo_config: AppConfig) -> None:
+    ideas = _ideas(1).model_copy(update={"theme_anchors": ["kittens", "christmas"]})
+    assert book_theme(ideas) == "Cozy Kittens (kittens, christmas)"
+    assert book_theme(_ideas(1)) == "Cozy Kittens"
+    text = qa_instructions(SPEC, repo_config, ideas.pages[0], book_theme(ideas))
+    assert "- theme_unclear: from the black-and-white line art alone" in text
+    assert "Theme of the book: Cozy Kittens (kittens, christmas)" in text
+    assert "One clearly drawn hint of the theme is enough" in text
+    # Strona FR-14 ma temat w scene_mismatch; theme_unclear jej nie dotyczy.
+    front = belongs_to_instructions(SPEC, repo_config, ["kitten"])
+    assert "- theme_unclear: not used for this page" in front
+
+
+def test_checker_sends_the_book_theme(repo_config: AppConfig) -> None:
+    seen: list[str] = []
+
+    def respond(image_png: bytes, instructions: str) -> dict[str, Any]:
+        seen.append(instructions)
+        return {"passed": True, "issues": []}
+
+    _checker(repo_config, FakeVisionProvider(respond)).check(b"png", "idea_01")
+    assert "Theme of the book: Cozy Kittens" in seen[0]
+    verdict = QAResult.model_validate(
+        {"pass": False, "issues": [{"criterion": "theme_unclear", "detail": "brzeg jak plaża"}]}
+    )
+    assert verdict.summary() == "theme_unclear: brzeg jak plaża"
+
+
 def test_check_returns_verdict_and_usage(repo_config: AppConfig) -> None:
     vision = FakeVisionProvider(_reject({2}))
     checker = _checker(repo_config, vision)
@@ -136,6 +171,7 @@ def _worker(
     images: FakeImageProvider | None = None,
     reserve: ReservePool | None = None,
     max_retries: int = 2,
+    max_ideas: int = 2,
     concurrency: int = 1,
 ) -> PageWorker:
     return PageWorker(
@@ -147,10 +183,11 @@ def _worker(
         qa=_checker(repo_config, vision),
         reserve=reserve if reserve is not None else _pool(4, 5),
         max_retries=max_retries,
+        max_ideas=max_ideas,
     )
 
 
-def test_rejected_page_is_regenerated_from_reserve(tmp_path: Path, repo_config: AppConfig) -> None:
+def test_rejected_page_tries_same_idea_then_reserve(tmp_path: Path, repo_config: AppConfig) -> None:
     images = FakeImageProvider()
     reserve = _pool(4, 5)
     worker = _worker(tmp_path, repo_config, FakeVisionProvider(_reject({2})), images=images)
@@ -159,31 +196,60 @@ def test_rejected_page_is_regenerated_from_reserve(tmp_path: Path, repo_config: 
 
     assert [o.status for o in result.outcomes] == ["ok", "ok", "ok"]
     page = result.outcomes[1]
-    assert (page.idea_id, page.prompt, page.attempts) == ("idea_04", "prompt 4", 2)
+    # Pomysł 2: próba i dwa ponowienia, potem zapasowy pomysł 4.
+    assert (page.idea_id, page.prompt, page.attempts) == ("idea_04", "prompt 4", 4)
     assert page.qa is not None and page.qa.passed
-    assert page.usage == Usage(input_tokens=20, output_tokens=200)  # dwie grafiki
-    assert page.qa_usage == Usage(input_tokens=2000, output_tokens=40)
-    [rejected] = page.rejected
-    assert (rejected.attempt, rejected.idea_id) == (1, "idea_02")
-    assert rejected.file == tmp_path / "rejected" / "page_02_try1.png"
-    assert rejected.file.exists()
-    assert rejected.issues[0].criterion == "text"
+    assert page.usage == Usage(input_tokens=40, output_tokens=400)  # cztery grafiki
+    assert page.qa_usage == Usage(input_tokens=4000, output_tokens=80)
+    assert [(r.attempt, r.idea_id) for r in page.rejected] == [
+        (1, "idea_02"),
+        (2, "idea_02"),
+        (3, "idea_02"),
+    ]
+    assert [r.file.name for r in page.rejected] == [f"page_02_try{i}.png" for i in (1, 2, 3)]
+    assert all(r.file.exists() for r in page.rejected)
+    assert page.rejected[0].issues[0].criterion == "text"
     assert (tmp_path / "raw" / "page_02.png").exists()
-    assert [r.prompt for r in images.requests] == ["prompt 1", "prompt 2", "prompt 4", "prompt 3"]
+    assert [r.prompt for r in images.requests] == [
+        "prompt 1",
+        *["prompt 2"] * 3,
+        "prompt 4",
+        "prompt 3",
+    ]
     assert (reserve.used, reserve.remaining) == (1, 1)
-    assert result.rejected == 1
+    assert result.rejected == 3
     assert result.outcomes[0].attempts == 1 and result.outcomes[0].rejected == []
 
 
-def test_page_fails_after_max_retries(tmp_path: Path, repo_config: AppConfig) -> None:
+def test_retry_of_the_same_idea_can_pass(tmp_path: Path, repo_config: AppConfig) -> None:
+    calls: list[str] = []
+
+    def respond(image_png: bytes, instructions: str) -> dict[str, Any]:
+        match = SCENE.search(instructions)
+        assert match is not None
+        calls.append(match.group(1))
+        if calls.count("1") == 1 and match.group(1) == "1":  # tylko pierwsza próba
+            issue = {"criterion": "theme_unclear", "detail": "brzeg jak letnia plaża"}
+            return {"passed": False, "issues": [issue]}
+        return {"passed": True, "issues": []}
+
+    reserve = _pool(4, 5)
+    worker = _worker(tmp_path, repo_config, FakeVisionProvider(respond), reserve=reserve)
+    [page] = worker.run(_jobs(1)).outcomes
+    assert (page.status, page.idea_id, page.attempts) == ("ok", "idea_01", 2)
+    assert page.rejected[0].issues[0].criterion == "theme_unclear"
+    assert reserve.used == 0
+
+
+def test_page_fails_after_retries_on_every_idea(tmp_path: Path, repo_config: AppConfig) -> None:
     vision = FakeVisionProvider(_reject({1, 4, 5}))
     result = _worker(tmp_path, repo_config, vision, max_retries=1).run(_jobs(1))
     [page] = result.outcomes
     assert page.status == "failed"
-    assert page.attempts == 2
-    assert page.error is not None and page.error.startswith("QA odrzuciło 2 próby, ostatnio: text")
-    assert [r.file.name for r in page.rejected] == ["page_01_try1.png", "page_01_try2.png"]
-    assert [r.idea_id for r in page.rejected] == ["idea_01", "idea_04"]
+    assert page.attempts == 4  # 2 pomysły × (1 + 1 ponowienie)
+    assert page.error is not None and page.error.startswith("QA odrzuciło 4 próby, ostatnio: text")
+    assert [r.file.name for r in page.rejected] == [f"page_01_try{i}.png" for i in (1, 2, 3, 4)]
+    assert [r.idea_id for r in page.rejected] == ["idea_01", "idea_01", "idea_04", "idea_04"]
     assert page.raw_file is None  # odrzucona surowa grafika jest w rejected/
     assert page.qa is not None and not page.qa.passed
 
@@ -192,17 +258,26 @@ def test_page_fails_when_reserve_runs_out(tmp_path: Path, repo_config: AppConfig
     vision = FakeVisionProvider(_reject({1}))
     result = _worker(tmp_path, repo_config, vision, reserve=_pool(4, 3)).run(_jobs(1))
     [page] = result.outcomes
-    assert page.status == "failed" and page.attempts == 1
+    assert page.status == "failed" and page.attempts == 3
     assert page.error is not None and "brak zapasowych pomysłów" in page.error
 
 
-def test_zero_retries_never_touches_reserve(tmp_path: Path, repo_config: AppConfig) -> None:
+def test_one_idea_per_page_never_touches_reserve(tmp_path: Path, repo_config: AppConfig) -> None:
+    reserve = _pool(4, 5)
+    vision = FakeVisionProvider(_reject({1}))
+    worker = _worker(tmp_path, repo_config, vision, reserve=reserve, max_ideas=1)
+    [page] = worker.run(_jobs(1)).outcomes
+    assert page.status == "failed" and page.attempts == 3
+    assert reserve.used == 0
+
+
+def test_zero_retries_go_straight_to_reserve(tmp_path: Path, repo_config: AppConfig) -> None:
     reserve = _pool(4, 5)
     vision = FakeVisionProvider(_reject({1}))
     worker = _worker(tmp_path, repo_config, vision, reserve=reserve, max_retries=0)
     [page] = worker.run(_jobs(1)).outcomes
-    assert page.status == "failed" and page.attempts == 1
-    assert reserve.used == 0
+    assert (page.status, page.idea_id, page.attempts) == ("ok", "idea_04", 2)
+    assert reserve.used == 1
 
 
 def test_reserve_is_shared_between_pages(tmp_path: Path, repo_config: AppConfig) -> None:

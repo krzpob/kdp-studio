@@ -41,9 +41,13 @@ diversity:
   max_element_share: 0.35
 
 # Kontrola jakości grafik modelem z wizją (FR-07): --qa / --no-qa nadpisuje. Strona odrzucona
-# przez QA jest generowana ponownie z zapasowego pomysłu, najwyżej qa_max_retries razy (0–5).
+# przez QA (wada albo temat niewidoczny w samym rysunku) jest generowana ponownie z tego samego
+# pomysłu, najwyżej qa_max_retries razy (0–5). Gdy to nie pomoże, bierze zapasowy pomysł; łącznie
+# najwyżej qa_max_ideas pomysłów na stronę (1–5, 1: bez zapasowych). Najgorszy przypadek to
+# qa_max_ideas × (1 + qa_max_retries) grafik na stronę.
 qa: false
 qa_max_retries: 2
+qa_max_ideas: 2
 
 # Język metadanych książki (tytuł, opis, słowa kluczowe). Spec §14, pytanie 2: na razie rynek US.
 metadata_language: English
