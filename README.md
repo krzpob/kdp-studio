@@ -41,9 +41,14 @@ Każdy krok bez zmian nic nie robi, a przerwany krok wznawiasz, uruchamiając go
 
 ### Strona „This book belongs to…” (FR-14)
 
-Z flagą `--belongs-to-page` (w `generate`, `ideas` albo później w `images <katalog>`) książka dostaje stronę wstępną z miejscem na imię właściciela, w motywie i stylu kolorowanki. Model obrazu rysuje tylko ramkę z elementami motywu wokół pustej tabliczki. Napis „This book belongs to:” i linię na imię wpisuje program czcionką Fredoka (SIL OFL, `assets/fonts/`). Dla najmłodszych są to litery konturowe, które też można pokolorować.
+Polecenie `kdp-studio belongs-to <katalog>` dodaje do książki stronę wstępną z miejscem na imię właściciela, w motywie i stylu kolorowanki. Działa po kroku `images`, także na książce już gotowej, i wtedy odświeża `canva.md`. `generate --belongs-to-page` robi to samo jako krok między `images` a `finalize`. Model obrazu rysuje tylko ramkę z elementami motywu wokół pustej tabliczki. Napis „This book belongs to:” i linię na imię wpisuje program czcionką Fredoka (SIL OFL, `assets/fonts/`). Dla najmłodszych są to litery konturowe, które też można pokolorować.
 
-Jeśli tabliczka z modelu nie jest pusta, program generuje ramkę ponownie, najwyżej 2 razy. Potem przechodzi na układ zapasowy: grafika pierwszej strony książki u góry i napis pod nią. Wynik to `front_belongs_to.png` w katalogu książki, który w Canvie jest pierwszy na liście. `canva.md` mówi, że to druga strona wstępna. Napis, pole na tekst i czcionkę ustawisz w `config/settings.yaml` (`belongs_to_page`), a wielkość liter i miejsca na imię w profilach wieku (`belongs_to`). Strona kosztuje jedną grafikę plus ewentualne ponowienia.
+Jeśli tabliczka z modelu nie jest pusta, program generuje ramkę ponownie, najwyżej 2 razy. Potem przechodzi na układ zapasowy: grafika pierwszej strony książki u góry i napis pod nią. Wynik to `front_belongs_to.png` w katalogu książki, który w Canvie jest pierwszy na liście. `canva.md` mówi, że to druga strona wstępna. Napis, pole na tekst i czcionkę ustawisz w `config/settings.yaml` (`belongs_to_page`), a wielkość liter i miejsca na imię w profilach wieku (`belongs_to`). Strona kosztuje jedną grafikę plus ewentualne ponowienia. Po zmianie napisu albo czcionki wystarczy ponownie uruchomić `belongs-to`: program przerysuje tekst bez nowej grafiki. `belongs-to --remove` usuwa stronę z książki (surowa grafika zostaje), a `action: regenerate` we wpisie `front_matter.belongs_to` w manifeście zamawia nową ramkę.
+
+```bash
+uv run kdp-studio belongs-to output/<książka> [--qa] [--image-quality low] [--max-cost 1.00]
+uv run kdp-studio belongs-to output/<książka> --remove
+```
 
 ### Okładka (FR-15)
 

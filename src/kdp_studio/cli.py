@@ -139,7 +139,6 @@ from kdp_studio.pipeline.postprocess import (
 from kdp_studio.pipeline.prompts import PromptBuilder
 from kdp_studio.pipeline.qa import QAChecker
 from kdp_studio.pipeline.worker import (
-    ImagesResult,
     PageOutcome,
     PageWorker,
     ReservePool,
@@ -178,6 +177,7 @@ STEP_LABELS = {
     "redo": "nowe pomysły",
     "images": "grafiki",
     "finalize": "obróbka",
+    "belongs-to": "strona „belongs to”",
     "cover": "okładka",
 }
 COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA"}
@@ -300,9 +300,9 @@ BelongsToOpt = Annotated[
     bool | None,
     typer.Option(
         "--belongs-to-page/--no-belongs-to-page",
-        help="Strona „This book belongs to…” w motywie książki (FR-14): ramka z modelu obrazu, "
-        "napis wpisuje program. Domyślnie z settings.yaml (ideas, generate) albo z manifestu "
-        "(images).",
+        help="Strona „This book belongs to…” w motywie książki (FR-14) jako krok po images, "
+        "jak kdp-studio belongs-to: ramka z modelu obrazu, napis wpisuje program. "
+        "Domyślnie belongs_to_page.enabled z settings.yaml.",
     ),
 ]
 MaxCostOpt = Annotated[
@@ -397,7 +397,7 @@ def _log_level(config: AppConfig, level: str | None) -> LogLevel:
 
 
 def _belongs(config: AppConfig, flag: bool | None) -> bool:
-    """Przełącznik FR-14 z flagą albo z settings.yaml; włączony wymaga czcionki."""
+    """`generate --belongs-to-page` z flagą albo z settings.yaml; włączony wymaga czcionki."""
     belongs = config.settings.belongs_to_page.enabled if flag is None else flag
     if belongs:
         _check_font(config)
@@ -507,7 +507,6 @@ def _step_ideas(
     provider: TextProvider,
     do_review: bool,
     costs: CostTracker,
-    belongs: bool = False,
 ) -> BookIdeas:
     """Pomysły, weryfikacja, prompty i manifest ze stronami `pending` (FR-17 krok 1)."""
     settings = config.settings
@@ -616,13 +615,6 @@ def _step_ideas(
             cost_usd=cost,
         ),
     )
-    if belongs:
-        front = _new_front(config, spec, ideas, settings.providers.image, settings.models.image)
-        manifest.set_front(front)
-        typer.echo(
-            f"Strona „This book belongs to…”: prompt ramki w manifeście (elementy motywu: "
-            f"{', '.join(front.elements) or '-'})."
-        )
     typer.echo(f"Manifest: {manifest.path} (status: {manifest.manifest.status})")
     log_event(
         _log,
@@ -726,7 +718,6 @@ def ideas(
             "wymaga katalogu książki."
         ),
     ] = None,
-    belongs_to_page: BelongsToOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
@@ -739,8 +730,6 @@ def ideas(
             raise _fail(["z katalogiem książki podaj --redo idea_XX,…"])
         if theme is not None or age is not None or style is not None:
             raise _fail(["--redo działa na istniejącej książce: nie podawaj --theme/--age/--style"])
-        if belongs_to_page is not None:
-            raise _fail(["--belongs-to-page dla istniejącej książki: kdp-studio images <katalog>"])
         ids = [i.strip() for i in redo.split(",") if i.strip()]
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
@@ -757,9 +746,8 @@ def ideas(
     provider = _text_provider(config)
     costs = _cost_tracker(config, max_cost, [provider.model])
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
-    belongs = _belongs(config, belongs_to_page)
     with _locked(target, level), _timed(timer, "ideas", costs):
-        _step_ideas(config, spec, target, provider, do_review, costs, belongs)
+        _step_ideas(config, spec, target, provider, do_review, costs)
     typer.echo(f"Przejrzyj {target / IDEAS_FILE}, a potem: kdp-studio images {target}")
 
 
@@ -774,13 +762,8 @@ def _step_images(
     workers: int,
     quality: str,
     costs: CostTracker,
-    belongs: bool | None = None,
 ) -> ExitCode:
-    """Surowe grafiki stron, których brakuje albo które trzeba wygenerować ponownie.
-
-    Po stronach powstaje strona „This book belongs to…” (FR-14), jeśli książka ją ma:
-    układ zapasowy potrzebuje gotowej grafiki strony książki.
-    """
+    """Surowe grafiki stron, których brakuje albo które trzeba wygenerować ponownie."""
     settings = config.settings
     writer = _open_book(target)
     manifest = writer.manifest
@@ -813,8 +796,7 @@ def _step_images(
         None if vision is None else ProviderInfo(provider=vision.name, model=vision.model)
     )
     jobs = plan.jobs
-    front_prompt, front_reason = _sync_front(config, spec, writer, ideas, target, images, belongs)
-    if not jobs and front_reason is None:
+    if not jobs:
         status = writer.update_status()
         typer.echo(f"Surowe grafiki są aktualne, nic do zrobienia (status: {status}).")
         return ExitCode.OK
@@ -926,40 +908,15 @@ def _step_images(
         over_budget=costs.over_budget,
         on_spent=spend,
     )
-    result = ImagesResult(outcomes=[])
-    if jobs:
-        with progress_bar("Grafiki", len(jobs)) as advance:
-            result = worker.run(jobs, on_done=lambda outcome: report(outcome, advance))
+    with progress_bar("Grafiki", len(jobs)) as advance:
+        result = worker.run(jobs, on_done=lambda outcome: report(outcome, advance))
     usage = result.usage
-    front_budget = False
-    front_failed = False
     fatal_error = result.fatal_error
-    if front_reason is not None and fatal_error is None and not result.budget_exceeded:
-        if costs.over_budget():
-            front_budget = True
-        else:
-            try:
-                front_ok = _step_front(
-                    config,
-                    spec,
-                    writer,
-                    target,
-                    images,
-                    quality,
-                    costs,
-                    checker,
-                    front_prompt,
-                    front_reason,
-                )
-                front_failed = not front_ok
-            except ProviderError as e:
-                fatal_error = str(e)
-    if jobs:
-        typer.echo(
-            f"Surowe grafiki: {len(result.ok)}/{len(jobs)} ok, tokeny: "
-            f"{usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
-            f"koszt {format_usd(costs.by_kind.get('images', 0.0))}. Zapisano: {target / RAW_DIR}"
-        )
+    typer.echo(
+        f"Surowe grafiki: {len(result.ok)}/{len(jobs)} ok, tokeny: "
+        f"{usage.input_tokens} wejście / {usage.output_tokens} wyjście, "
+        f"koszt {format_usd(costs.by_kind.get('images', 0.0))}. Zapisano: {target / RAW_DIR}"
+    )
     if checker is not None:
         qa_usage = result.qa_usage
         typer.echo(
@@ -969,9 +926,9 @@ def _step_images(
             f"tokeny: {qa_usage.input_tokens} wejście / {qa_usage.output_tokens} wyjście, "
             f"koszt {format_usd(costs.by_kind.get('qa', 0.0))}."
         )
-    skipped = len(jobs) - len(result.outcomes) + int(front_budget)
+    skipped = len(jobs) - len(result.outcomes)
     budget_error = None
-    if result.budget_exceeded or front_budget:
+    if result.budget_exceeded:
         budget_error = (
             f"przekroczony limit kosztu {format_usd(costs.limit_usd)} (wydano "
             f"{format_usd(costs.spent)}), pominięto "
@@ -1008,9 +965,10 @@ def _step_images(
             ]
         )
         return ExitCode.BUDGET_EXCEEDED
+    regenerated = {o.name for o in result.ok}
     cover = manifest.cover
     if cover is not None:
-        redone = sorted({o.name for o in result.ok} & {cover.front_page, *cover.thumbnails})
+        redone = sorted(regenerated & {cover.front_page, *cover.thumbnails})
         if redone:
             _warn(
                 [
@@ -1018,38 +976,19 @@ def _step_images(
                     f"odśwież ją: kdp-studio cover {target}"
                 ]
             )
-    if result.failed or front_failed:
-        failed = ", ".join([FRONT_NAME] * front_failed + [o.name for o in result.failed])
+    front = writer.front
+    if front is not None and front.layout == "fallback" and front.fallback_source in regenerated:
+        _warn(
+            [
+                f"{FRONT_NAME} używa grafiki {front.fallback_source} sprzed ponownego "
+                f"generowania; odśwież ją: kdp-studio belongs-to {target}"
+            ]
+        )
+    if result.failed:
+        failed = ", ".join(o.name for o in result.failed)
         _warn([f"nieudane strony: {failed}; ponów: kdp-studio images {target}"])
         return ExitCode.PARTIAL
     return ExitCode.OK
-
-
-def _sync_front(
-    config: AppConfig,
-    spec: BookSpec,
-    writer: ManifestWriter,
-    ideas: BookIdeas,
-    target: Path,
-    images: ImageProvider,
-    belongs: bool | None,
-) -> tuple[str, str | None]:
-    """Wpis strony FR-14 zgodny z przełącznikiem; (prompt ramki, powód generowania albo None)."""
-    prompt, elements = belongs_to_prompt(spec, config, ideas)
-    front = writer.front
-    if belongs is False and front is not None:
-        writer.set_front(None)
-        for path in (target / f"{FRONT_NAME}.png", target / SVG_DIR / f"{FRONT_NAME}.svg"):
-            path.unlink(missing_ok=True)
-        typer.echo(f"Bez strony „This book belongs to…”: usunięto {FRONT_NAME}.png z książki.")
-        return prompt, None
-    if belongs is True and front is None:
-        front = _new_front(config, spec, ideas, images.name, images.model)
-        writer.set_front(front)
-    if front is None:
-        return prompt, None
-    front.elements = elements
-    return prompt, plan_front(target, front, prompt)
 
 
 def _step_front(
@@ -1064,9 +1003,8 @@ def _step_front(
     prompt: str,
     reason: str,
 ) -> bool:
-    """Strona „This book belongs to…” w kroku 2 (FR-14); False, gdy się nie udała.
-
-    ProviderError z fatal=True przechodzi wyżej (kod 4).
+    """Ramka strony „This book belongs to…” z modelu albo układ zapasowy (FR-14); False, gdy
+    się nie udała. ProviderError z fatal=True przechodzi wyżej (kod 4).
     """
     front = writer.front
     assert front is not None
@@ -1148,7 +1086,6 @@ def images(
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
     qa: QaOpt = None,
-    belongs_to_page: BelongsToOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
@@ -1163,13 +1100,8 @@ def images(
         config, writer.manifest.input.format, image_provider, do_qa
     )
     costs = _cost_tracker(config, max_cost, _models(images_provider, vision))
-    has_front = writer.manifest.front_matter.belongs_to is not None
-    if belongs_to_page is True or (belongs_to_page is None and has_front):
-        _check_font(config)
     with _locked(book, level), _timed(StepTimer(), "images", costs):
-        code = _step_images(
-            config, book, images_provider, vision, workers, quality, costs, belongs_to_page
-        )
+        code = _step_images(config, book, images_provider, vision, workers, quality, costs)
     if code == ExitCode.OK and _open_book(book).manifest.status != "completed":
         typer.echo(f"Przejrzyj {book / RAW_DIR}, a potem: kdp-studio finalize {book}")
     raise typer.Exit(code)
@@ -1211,8 +1143,7 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
         for i, page in enumerate(todo, start=1):
             _finalize_page(writer, postprocessor, target, page, params_sha, f"[{i}/{len(todo)}]")
             advance()
-    front_done = _finalize_front(config, spec, writer, target, geometry)
-    if not todo and not front_done:
+    if not todo:
         typer.echo("Gotowe strony są aktualne, nic do obróbki.")
 
     status = writer.update_status()
@@ -1228,15 +1159,28 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     typer.echo(f"Instrukcja składania w Canvie: {canva}")
     typer.echo(f"Pamiętaj: {AI_DISCLOSURE}")
     missing = [p.name for p in manifest.pages if p.status != "ok"]
-    if writer.front is not None and writer.front.status != "ok":
-        missing.insert(0, FRONT_NAME)
     if missing:
         _warn([f"brakujące strony: {', '.join(missing)}; ponów: kdp-studio images {target}"])
+    front = writer.front
+    if front is not None and front.status != "ok":
+        _warn([f"brakuje strony {FRONT_NAME}; ponów: kdp-studio belongs-to {target}"])
+    elif front is not None and front_needs_finalize(
+        target, front, _front_params_sha256(config, spec, geometry, front.layout)
+    ):
+        _warn(
+            [
+                f"{FRONT_NAME} nie odpowiada obecnym ustawieniom (obróbka, napis albo czcionka); "
+                f"odśwież ją bez nowej grafiki: kdp-studio belongs-to {target}"
+            ]
+        )
+    if missing or (front is not None and front.status != "ok"):
         return ExitCode.PARTIAL
     return ExitCode.OK
 
 
-def _front_params_sha256(config: AppConfig, spec: BookSpec, geometry: PageGeometry) -> str:
+def _front_params_sha256(
+    config: AppConfig, spec: BookSpec, geometry: PageGeometry, layout: str | None
+) -> str:
     """Suma wszystkiego, co zmienia gotową stronę FR-14: obróbka, napis, czcionka, układ."""
     age = config.ages[spec.age]
     settings = config.settings.belongs_to_page
@@ -1247,7 +1191,7 @@ def _front_params_sha256(config: AppConfig, spec: BookSpec, geometry: PageGeomet
         settings.model_dump_json(exclude={"enabled", "composition", "max_retries"}),
         sha256_bytes(font),
     ]
-    return postprocess_sha256("|".join(parts), geometry)
+    return postprocess_sha256("|".join(parts), geometry) + f"|{layout}"
 
 
 def _finalize_front(
@@ -1261,7 +1205,7 @@ def _finalize_front(
     front = writer.front
     if front is None or front.layout is None or front.raw_sha256 is None:
         return False
-    params_sha = _front_params_sha256(config, spec, geometry) + f"|{front.layout}"
+    params_sha = _front_params_sha256(config, spec, geometry, front.layout)
     if not front_needs_finalize(target, front, params_sha):
         return False
     final = FinalInfo(raw_sha256=front.raw_sha256, postprocess_sha256=params_sha)
@@ -1337,6 +1281,153 @@ def finalize(book: BookArg, log_level: LogLevelOpt = None) -> None:
     raise typer.Exit(code)
 
 
+# --- Strona „This book belongs to…” (FR-14) ----------------------------------------------------
+
+
+def _belongs_to_blocker(target: Path, manifest: Manifest) -> str | None:
+    """Powód, dla którego strony FR-14 nie da się zrobić: brak gotowych surowych grafik stron
+    (układ zapasowy używa pierwszej z nich)."""
+    if never_generated(manifest) or fallback_art(target, manifest) is None:
+        return f"brak gotowych surowych grafik stron książki: najpierw kdp-studio images {target}"
+    return None
+
+
+def _step_belongs_to(
+    config: AppConfig,
+    target: Path,
+    images: ImageProvider,
+    vision: VisionProvider | None,
+    quality: str,
+    costs: CostTracker,
+    *,
+    refresh_canva: bool,
+) -> ExitCode:
+    """Cała strona „This book belongs to…” (FR-14): ramka z modelu, gdy jej brakuje albo jest
+    nieaktualna, potem napis i kontrola druku. Zmiana napisu czy czcionki nie kosztuje grafiki."""
+    writer = _open_book(target)
+    manifest = writer.manifest
+    spec = spec_from_manifest(manifest)
+    try:
+        ideas = load_ideas(target)
+    except BookError as e:
+        raise _fail(e.errors) from e
+    prompt, elements = belongs_to_prompt(spec, config, ideas)
+    front = writer.front
+    if front is None:
+        front = _new_front(config, spec, ideas, images.name, images.model)
+        writer.set_front(front)
+        typer.echo(
+            f"Strona „This book belongs to…”: nowy wpis w manifeście (elementy motywu: "
+            f"{', '.join(elements) or '-'})."
+        )
+    front.elements = elements
+    reason = plan_front(target, front, prompt)
+    if reason is not None:
+        if costs.over_budget():
+            message = (
+                f"przekroczony limit kosztu {format_usd(costs.limit_usd)} (wydano "
+                f"{format_usd(costs.spent)}), pominięto {FRONT_NAME}"
+            )
+            writer.update_status(budget_error=message)
+            _fail_lines(
+                [message, f"z wyższym limitem: kdp-studio belongs-to {target} --max-cost …"]
+            )
+            return ExitCode.BUDGET_EXCEEDED
+        checker = None if vision is None else QAChecker(vision, spec, config, ideas)
+        try:
+            _step_front(
+                config, spec, writer, target, images, quality, costs, checker, prompt, reason
+            )
+        except ProviderError as e:
+            writer.update_status(str(e))
+            _fail_lines([str(e), f"po usunięciu przyczyny: kdp-studio belongs-to {target}"])
+            return ExitCode.PROVIDER_ERROR
+    _, geometry = _layout(config, spec)
+    rendered = _finalize_front(config, spec, writer, target, geometry)
+    if reason is None and not rendered:
+        typer.echo(f"{FRONT_NAME} jest aktualna, nic do zrobienia.")
+    canva = target / CANVA_FILE
+    if refresh_canva and canva.is_file():
+        write_bytes_atomic(canva, render_canva_md(manifest, ideas.book.title).encode("utf-8"))
+        typer.echo(f"Odświeżono instrukcję składania w Canvie: {canva}")
+    status = writer.update_status()
+    typer.echo(f"Manifest: {writer.path} (status: {status})")
+    if front.status != "ok":
+        _warn([f"nieudana strona {FRONT_NAME}: {front.error}"])
+        return ExitCode.PARTIAL
+    return ExitCode.OK
+
+
+def _remove_front(target: Path) -> None:
+    """`belongs-to --remove`: strona znika z książki i z canva.md, surowa grafika zostaje."""
+    writer = _open_book(target)
+    if writer.front is None:
+        typer.echo("Książka nie ma strony „This book belongs to…”, nic do usunięcia.")
+        return
+    writer.set_front(None)
+    for path in (target / f"{FRONT_NAME}.png", target / SVG_DIR / f"{FRONT_NAME}.svg"):
+        path.unlink(missing_ok=True)
+    typer.echo(
+        f"Usunięto stronę „This book belongs to…” ({FRONT_NAME}.png i wpis w manifeście); "
+        f"surowa grafika zostaje w {front_raw_path(target)}."
+    )
+    canva = target / CANVA_FILE
+    if canva.is_file():
+        try:
+            title = load_ideas(target).book.title
+        except BookError as e:
+            raise _fail(e.errors) from e
+        write_bytes_atomic(canva, render_canva_md(writer.manifest, title).encode("utf-8"))
+        typer.echo(f"Odświeżono instrukcję składania w Canvie: {canva}")
+    status = writer.update_status()
+    typer.echo(f"Manifest: {writer.path} (status: {status})")
+
+
+@app.command("belongs-to")
+def belongs_to(
+    book: Annotated[Path, typer.Argument(help="Katalog książki po kroku kdp-studio images.")],
+    image_quality: QualityOpt = None,
+    qa: QaOpt = None,
+    remove: Annotated[
+        bool,
+        typer.Option(
+            "--remove",
+            help=f"Usuwa stronę z książki: {FRONT_NAME}.png i wpis w manifeście (surowa "
+            "grafika zostaje).",
+        ),
+    ] = False,
+    max_cost: MaxCostOpt = None,
+    log_level: LogLevelOpt = None,
+) -> None:
+    """Strona „This book belongs to…” w motywie książki (FR-14): ramka z modelu obrazu, napis
+    i miejsce na imię wpisuje program. Po kroku images; po finalize odświeża też canva.md."""
+    config = _config()
+    level = _log_level(config, log_level)
+    if remove:
+        if image_quality is not None or qa is not None or max_cost is not None:
+            raise _fail(["--remove nie łączy się z --image-quality, --qa ani --max-cost"])
+        with _locked(book, level):
+            _remove_front(book)
+        return
+    _check_font(config)
+    writer = _open_book(book)
+    blocker = _belongs_to_blocker(book, writer.manifest)
+    if blocker is not None:
+        raise _fail([blocker])
+    quality = _quality(config, image_quality)
+    do_qa = config.settings.qa if qa is None else qa
+    manifest = writer.manifest
+    images_provider, vision = _image_providers(
+        config, manifest.input.format, manifest.providers.image.provider, do_qa
+    )
+    costs = _cost_tracker(config, max_cost, _models(images_provider, vision))
+    with _locked(book, level), _timed(StepTimer(), "belongs-to", costs):
+        code = _step_belongs_to(
+            config, book, images_provider, vision, quality, costs, refresh_canva=True
+        )
+    raise typer.Exit(code)
+
+
 # --- Wszystkie kroki -----------------------------------------------------------------------
 
 
@@ -1360,7 +1451,7 @@ def generate(
     log_level: LogLevelOpt = None,
 ) -> None:
     """Generuje kolorowankę: kroki ideas, images i finalize po kolei (FR-17), opcjonalnie
-    okładkę (FR-15)."""
+    stronę „This book belongs to…” przed finalize (FR-14) i okładkę na końcu (FR-15)."""
     timer = StepTimer()
     config = _config()
     level = _log_level(config, log_level)
@@ -1382,7 +1473,7 @@ def generate(
     with _locked(target, level):
         log_event(_log, logging.INFO, "run_start", command="generate", book=str(target))
         with _timed(timer, "ideas", costs):
-            _step_ideas(config, spec, target, provider, do_review, costs, belongs)
+            _step_ideas(config, spec, target, provider, do_review, costs)
         if costs.over_budget():
             code = _stop_after_ideas(target, costs)
         else:
@@ -1396,6 +1487,19 @@ def generate(
                     quality,
                     costs,
                 )
+        if belongs and code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
+            code = max(
+                code,
+                _generate_belongs_to(
+                    config,
+                    target,
+                    images_provider,
+                    vision if do_qa else None,
+                    quality,
+                    costs,
+                    timer,
+                ),
+            )
         # Po błędzie krytycznym albo przekroczonym limicie krok 3 czeka na dokończenie kroku 2.
         if code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
             with _timed(timer, "finalize"):
@@ -1407,6 +1511,24 @@ def generate(
             code = code if cover_code is None else max(code, cover_code)
         _report_summary(target, timer, costs, ExitCode(code))
     raise typer.Exit(code)
+
+
+def _generate_belongs_to(
+    config: AppConfig,
+    target: Path,
+    images: ImageProvider,
+    vision: VisionProvider | None,
+    quality: str,
+    costs: CostTracker,
+    timer: StepTimer,
+) -> ExitCode:
+    """`generate --belongs-to-page`: krok między images a finalize; canva.md pisze finalize."""
+    blocker = _belongs_to_blocker(target, _open_book(target).manifest)
+    if blocker is not None:
+        _warn([f"strona „This book belongs to…” pominięta: {blocker}"])
+        return ExitCode.PARTIAL
+    with _timed(timer, "belongs-to", costs):
+        return _step_belongs_to(config, target, images, vision, quality, costs, refresh_canva=False)
 
 
 def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:

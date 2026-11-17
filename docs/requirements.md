@@ -27,7 +27,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
-| FR-14 | 🟡 | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Zmiana z 17.11: osobne polecenie `belongs-to` i krok w `generate` (dziś strona powstaje w krokach `images` i `finalize`). |
+| FR-14 | ✅ | #30, #46 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Polecenie `belongs-to` i krok `generate --belongs-to-page` między `images` a `finalize` (zmiana z 17.11). |
 | FR-15 | ✅ | #31, #32, #39, #40, #41 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
@@ -316,14 +316,14 @@ Własna poprawiona wersja pliku w `raw/` (np. z Photoshopa) jest dozwolona. Prog
 ### ✅ FR-13: Przypomnienie o ujawnieniu AI
 - `manifest.json` i podsumowanie w konsoli zawierają informację, że przy publikacji w KDP trzeba zaznaczyć *AI-generated content* (obrazy).
 
-### 🟡 FR-14: Strona „This book belongs to…” (poza MVP)
+### ✅ FR-14: Strona „This book belongs to…” (poza MVP)
 
 Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywie i stylu co kolorowanka (np. dinozaury kawaii wokół pustej tabliczki na imię).
 
-**Polecenie i krok w `generate`** (zmiana z 17.11.2026)
+**Polecenie i krok w `generate`** (zmiana z 17.11.2026, zrobiona)
 - Stronę tworzy osobne polecenie `kdp-studio belongs-to <katalog-książki>`. Jego uruchomienie jest decyzją, więc nie potrzebuje żadnej flagi. Dzięki temu stronę można dodać do książki, która jest już gotowa, bez generowania czegokolwiek od nowa.
 - Polecenie robi całą stronę: ramkę z modelu, obróbkę jak w FR-06, kontrolę pustego pola, wpisanie tekstu i kontrolę druku (NFR-07).
-- Wymaga kroku 2 (FR-17): gotowych surowych stron książki, bo układ zapasowy używa grafiki pierwszej gotowej strony. Bez nich kończy się błędem walidacji (kod 1).
+- Wymaga kroku 2 (FR-17): gotowych surowych stron książki, bo układ zapasowy używa grafiki pierwszej gotowej strony. Bez nich kończy się błędem walidacji (kod 1). W `generate` bez żadnej gotowej strony krok jest pominięty z ostrzeżeniem.
 - `generate --belongs-to-page` uruchamia to polecenie jako dodatkowy krok: `ideas` → `images` → `belongs-to` → `finalize`. Krok `finalize` pisze wtedy `canva.md` już z tą stroną. Wartość domyślna flagi pochodzi z `settings.yaml` (`belongs_to_page.enabled`, domyślnie `false`). Flaga występuje tylko w `generate`.
 - Samodzielne `belongs-to` na książce po kroku 3 odświeża `canva.md`, który powstaje z manifestu i nie wymaga wywołań API.
 - Opcje: `--qa`, `--image-quality`, `--max-cost` (jak w `images`) oraz `--remove`, które usuwa stronę z książki: kasuje `front_belongs_to.png` z katalogu głównego i wpis z manifestu, a surową grafikę zostawia.
@@ -395,10 +395,10 @@ przedszkole:
 - **Elementy motywu w prompcie:** najczęstsza główna postać (`subject`) i najczęstsze przedmioty (`elements`) stron książki, liczone przez program, deterministycznie. Motyw to tytuł książki (`book.title`, w języku metadanych), bo prompt jest po angielsku.
 - **Pole na tekst:** domyślnie `x: 0.2, y: 0.37, width: 0.6, height: 0.3`. Jest nieco mniejsze niż w szkicu, żeby łatwiej mieściło się w tabliczce z modelu.
 - **Układ zapasowy:** grafika **pierwszej gotowej strony książki** (jej surowy plik, już po QA) w górnych 55% obszaru treści, a napis pod nią. Grafika „z motywem bez ramki” byłaby kolejnym wywołaniem API, a nieudana ramka mogła zawierać napis modelu. Strona książki jest tania, czysta i w tym samym stylu. Kosztem jest powtórzenie jednej ilustracji w książce. Bez żadnej gotowej strony (wszystkie nieudane) strona FR-14 też jest nieudana.
-- **Kolejność:** strona FR-14 powstaje po stronach książki, bo układ zapasowy potrzebuje ich grafik. Do 17.11 robił to krok 2 (`images`); po zmianie robi to polecenie `belongs-to`. Gdy limit budżetu jest już przekroczony, strona nie startuje (kod 3). Gdy limit zostanie przekroczony w trakcie prób, program przechodzi na układ zapasowy, który nic nie kosztuje.
-- **Przełącznik (stan z #30, do zmiany):** dziś `--belongs-to-page/--no-belongs-to-page` działa w `ideas`, `images` i `generate`. Po zmianie z 17.11 zostaje tylko w `generate`; wpis w manifeście tworzy polecenie `belongs-to`, a usuwa `belongs-to --remove`.
-- **Nowa ramka z modelu** (dziś w kroku 2, po zmianie w `belongs-to`) przy `action: regenerate` we wpisie `front_matter.belongs_to`, przy braku surowej grafiki, po nieudanej próbie i po zmianie promptu ramki (np. po zmianie pomysłów albo `composition`).
-- **Ponowna obróbka bez modelu** (dziś w kroku 3, po zmianie w `belongs-to`), gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Dzięki temu zmiana napisu lub czcionki nie kosztuje nowej grafiki.
+- **Kolejność:** strona FR-14 powstaje po stronach książki, bo układ zapasowy potrzebuje ich grafik. Do 17.11 robił to krok 2 (`images`); teraz robi to polecenie `belongs-to`. Gdy limit budżetu jest już przekroczony, strona nie startuje (kod 3). Gdy limit zostanie przekroczony w trakcie prób, program przechodzi na układ zapasowy, który nic nie kosztuje.
+- **Przełącznik:** `--belongs-to-page/--no-belongs-to-page` jest tylko w `generate` (w #30 był też w `ideas` i `images`). Wpis w manifeście tworzy polecenie `belongs-to`, a usuwa `belongs-to --remove`. `images` nie rusza strony FR-14, ale ostrzega, gdy wygenerował ponownie stronę, której grafika jest w układzie zapasowym. `finalize` jej nie obrabia, tylko przypomina o `belongs-to`, gdy strony brakuje albo nie odpowiada obecnym ustawieniom.
+- **Nowa ramka z modelu** (w `belongs-to`) przy `action: regenerate` we wpisie `front_matter.belongs_to`, przy braku surowej grafiki, po nieudanej próbie i po zmianie promptu ramki (np. po zmianie pomysłów albo `composition`). Nieudany napis przy aktualnej surowej grafice (np. za długi tekst) nie daje nowej ramki, bo ta by go nie naprawiła: strona zostaje `failed`, dopóki nie zmienią się ustawienia napisu.
+- **Ponowna obróbka bez modelu** (w `belongs-to`, bez wywołań API), gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Dzięki temu zmiana napisu lub czcionki nie kosztuje nowej grafiki.
 - **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
 ### ✅ FR-15: Okładka (poza MVP)

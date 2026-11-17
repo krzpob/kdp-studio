@@ -266,15 +266,17 @@ def front_raw_path(book_dir: Path) -> Path:
 
 
 def plan_front(book_dir: Path, front: FrontPage | None, prompt: str) -> str | None:
-    """Dlaczego krok 2 ma (ponownie) zrobić stronę FR-14; None, gdy jest aktualna."""
+    """Dlaczego `belongs-to` ma (ponownie) wygenerować ramkę FR-14; None, gdy jest aktualna.
+
+    Nieudany napis przy aktualnej surowej grafice (`failed` z `raw_sha256`) to sprawa obróbki,
+    nie modelu: nowa grafika by go nie naprawiła.
+    """
     if front is None:
         return None
     if front.action == "regenerate":
         return "action: regenerate"
     if front.raw_sha256 is None or not front_raw_path(book_dir).is_file():
         return "nieudana" if front.status == "failed" else "brak grafiki"
-    if front.status == "failed":
-        return "nieudana"
     if front.prompt_sha256 != sha256_text(prompt):
         return "zmieniony prompt"
     return None
