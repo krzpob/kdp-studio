@@ -28,7 +28,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30, #46 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Polecenie `belongs-to` i krok `generate --belongs-to-page` między `images` a `finalize` (zmiana z 17.11). |
-| FR-15 | ✅ | #31, #32, #39, #40, #41 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
+| FR-15 | ✅ | #31, #32, #39, #40, #41, #47 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -472,7 +472,8 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 
 **Tył i grzbiet: jeden obraz, dopasowany do przodu**
 - Tył i grzbiet powstają **razem, jednym wywołaniem modelu**, w proporcji (tył + spad + grzbiet) : wysokość. Daje to ok. 0.78 dla letter i ok. 1.0 dla kwadratu, czyli proporcje dobrze obsługiwane przez modele. Między tyłem a grzbietem nie ma więc szwu, a grzbiet to ciąg dalszy tła tyłu.
-- Spójność z przodem:
+- **Dorysowanie do przodu** (zmiana z 17.11.2026, domyślne, `cover.outpaint`): tył nie powstaje jako nowy, podobny obraz, tylko jako ciąg dalszy przodu. Program składa płótno w proporcjach obsługiwanych przez model: po prawej lewy pas gotowego przodu (bez tytułu), po lewej puste miejsce na tył z grzbietem. Model dostaje je razem z maską, która jest przezroczysta tylko na pustym miejscu, i promptem `cover.outpaint_prompt` („przedłuż obraz w lewo”, z tymi samymi regułami kompozycji). Listwa, deski czy śnieg ciągną się wtedy dalej zamiast powstawać od nowa: na próbach z 17.11 nowy, podobny obraz miał cieńszą listwę i inny układ desek. Program wybiera proporcje z najwęższym pasem przodu, który ma co najmniej `outpaint_overlap_min` (0.2) jego szerokości (kwadrat: 4:3, ok. 1/3 przodu). Maska jest „miękka”: model przerysowuje też znany pas przodu, lekko przesunięty i przeskalowany (pierwsza próba 17.11: listwa ciągła, ΔE 3,5, ale pas przesunięty o ~30 px i pomniejszony o 3%, więc deski rozjeżdżały się na styku). Program nakłada więc pas z modelu na prawdziwy przód przekształceniem afinicznym (`cv2.findTransformECC`, na obrazie zmniejszonym 4×; zgodność co najmniej 0.5, skala ±15%, przesunięcie do 10% wysokości) i to samo przekształcenie stosuje do całego płótna. Dopiero potem bierze z niego część tył + grzbiet; przód na okładce zostaje programowy. Zarejestrowany tył nie przechodzi już dopasowania DTW (nieliniowe odkształcenie tylko by go popsuło) ani warunku horyzontu w kontroli styku, bo wiersz największej zmiany koloru potrafi wskazać po obu stronach różne krawędzie tej samej listwy (druga próba z 17.11 odpadła tak przy ΔE 5,5 i zgodności 0,97); decyduje wtedy sam ΔE. DTW i warunek horyzontu działają, gdy rejestracja się nie uda. Manifest zapisuje zgodność w `seams[].register_cc`. Opis przodu modelem z wizją nie jest wtedy potrzebny. Gdy żadne proporcje nie pasują albo `outpaint: false`, tył powstaje jak niżej, z przodem jako referencją.
+- Spójność z przodem bez dorysowania:
   - przód jest obrazem referencyjnym;
   - program analizuje gotowy przód modelem z wizją: zwraca wysokość **linii horyzontu** jako ułamek wysokości (albo jej brak, np. przy tle-wzorze) i kolory tła w pasach poziomych przy lewej krawędzi przodu. Program uzupełnia to próbkami pikseli z lewej krawędzi;
   - prompt narzuca horyzont na tej samej wysokości, te kolory tła i styl przodu.
@@ -481,6 +482,7 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
   - prawy pas szerokości grzbietu plus zapas to wyłącznie tło;
   - dolny róg przy grzbiecie (pole kodu kreskowego) to spokojne tło;
   - bez tekstu.
+- **Dopasowanie tyłu do przodu:** model nie trzyma się podanej wysokości horyzontu (na próbach z 17.11 listwa podłogi wyszła o 14% wyżej i była cieńsza niż na przodzie, a linia śniegu przesunęła się o 0,7%). Dlatego przed kontrolą styku program dopasowuje tył w pionie do przodu: pionowy profil kolorów pasa przy grzbiecie wyrównuje do profilu lewej krawędzi przodu (DTW z nachyleniem 1/2–2 i karą za odkształcenie, przesunięcie najwyżej `seam_align_max` wysokości). Tę samą, wygładzoną mapę wierszy stosuje do całej szerokości tyłu, więc listwa czy linia śniegu zostają proste. Tył przesuwa się tylko w pionie; obiekty na nim mogą się nieco rozciągnąć albo ścisnąć.
 - **Kontrola styku z przodem:** program porównuje kolory w pasach poziomych po obu stronach zgięcia grzbiet/przód (ΔE w przestrzeni Lab) i położenie horyzontu. Przekroczenie progu (`seam_max_delta_e`, `horizon_tolerance`) to ponowienie, maks. `max_retries`.
 - **Wygładzenie styku:** w pasie `seam_band_in` po stronie grzbietu program płynnie przechodzi z tła tyłu w kolory lewej krawędzi przodu. Przód zostaje nienaruszony, a przesunięcie przy oprawie nie odsłania szwu.
 - **Tekst na grzbiecie:** tylko gdy `pages_in_book ≥ spine_text_min_pages` (domyślnie 100; twarde minimum KDP to 79). Tytuł czytany z góry na dół, min. 0.0625" od linii zgięcia, rozmiar dopasowany do szerokości grzbietu, min. 7 pt. Gdy się nie mieści, program pomija tekst z ostrzeżeniem. Poniżej progu grzbiet to samo tło. Przy typowej książce z 30 grafikami (62 strony) grzbietu nie da się podpisać.
@@ -557,13 +559,13 @@ FR-15 powstaje w trzech PR-ach.
 - **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
 
 *Etap 2 (zrobiony):*
-- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`. Model, który tego parametru nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia, więc tył okładki idzie już bez parametru. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
+- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`, a z `mask` (dorysowanie tyłu) także z maską. Model, który któregoś z tych parametrów nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare` i `input_fidelity`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia. Bez maski model dostaje samo płótno z pustym białym miejscem, które prompt każe wypełnić. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
 - **Kolorowanie** (`pipeline/cover_front.py`):
   - szkic przodu ze spadem (kontury i pusty pas na tytuł) idzie do modelu jako referencja, rozciągnięty do najbliższych proporcji dostawcy (kwadrat → 1:1, letter → 3:4);
   - wynik wraca rozciągnięty z powrotem do przodu;
   - prompt `cover.color_prompt` z blokiem stylu książki;
   - ponowienia przy błędach niekrytycznych (`max_retries`).
-- **Kontury:** program mierzy, jaka część konturów szkicu ma w pobliżu ciemny piksel modelu (`contour_search_in`, 0,02"). Przy zgodności ≥ `contour_match_min` (85%) nakłada ostre kontury K100. Przy przesunięciu używa samego obrazu modelu i ostrzega.
+- **Kontury:** program mierzy, jaka część konturów szkicu ma w pobliżu ciemny piksel modelu (`contour_search_in`, 0,02"). Model przerysowuje cały szkic, lekko przesunięty i przeskalowany (próba z 17.11: ~4% wysokości i 2%, zgodność tylko 46%). Dlatego program najpierw dopasowuje obraz modelu do szkicu przekształceniem afinicznym (`pipeline/registration.py`, OpenCV ECC na rozmytych maskach konturów, te same granice co przy tyle) i zostawia dopasowanie tylko wtedy, gdy podnosi zgodność (na tej próbie do 99,7%). Dopasowanie idzie w dwóch krokach, dla przodu i tyłu: najpierw samo przesunięcie na mocno rozmytym obrazie (1% szerokości), potem pełne przekształcenie afiniczne. Trzecia próba z 17.11 przesunęła przód o ~6% wysokości i powiększyła o 3,5%; ECC startujące od tożsamości utknęło wtedy przy zgodności 0,44 (kontury odrzucone, 43%), a dwa kroki dają 99%. Manifest zapisuje zgodność dopasowania w `cover.front.register_cc`. Przy zgodności ≥ `contour_match_min` (85%) nakłada ostre kontury K100. Przy przesunięciu, którego dopasowanie nie naprawia, używa samego obrazu modelu i ostrzega.
 - **Tytuł i podtytuł:** wypełnienie w kolorze (`title_fill_rgb`, `subtitle_fill_rgb`) przez profil ICC, obrys czarny K100 (`title_outline_pt`). Wpisywane po kolorowaniu, więc model ich nie widzi.
 - **Czytelność:** wysokość liter tytułu w miniaturze `thumbnail_check_px` (≥ `thumbnail_min_text_px`) i kontrast WCAG tytułu z tłem (lepszy z wypełnienia i obrysu, ≥ `title_min_contrast`). Niespełnione to ostrzeżenie.
 - **`cover`:** opcje `--color/--no-color` (domyślnie `cover.colorize`), `--image-quality`, `--image-provider` i `--max-cost`. Koszt trafia do `cover.cost_usd` i do łącznego kosztu książki.
@@ -576,7 +578,8 @@ FR-15 powstaje w trzech PR-ach.
 - **Tył i grzbiet** (`pipeline/cover_back.py`), tylko przy pokolorowanym przodzie:
   - model z wizją podaje horyzont i kolory tła przy lewej krawędzi przodu; program dodaje próbki pikseli i własny pomiar horyzontu (wiersz największej zmiany koloru w pionie, ΔE ≥ 15), które zastępują ocenę modelu, gdy ta się nie uda;
   - prompt `cover.back_prompt` z polami `{horizon}`, `{colors}`, `{spine_pct}` (grzbiet z zapasem 0.25"), `{margin_pct}`; nieznane pole to błąd konfiguracji;
-  - kontrola styku: mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
+  - dopasowanie w pionie (`align_to_front()`): profile Lab 256 wierszy po obu stronach zgięcia, DTW w pasie `seam_align_max` (domyślnie 0.2, 0 wyłącza), mapa wierszy wygładzona w oknie 3% wysokości i zastosowana do całego tyłu (`cv2.remap`); przesunięcie poniżej piksela zostawia tył bez zmian, a największe przesunięcie trafia do manifestu (`seams[].align_shift`);
+  - kontrola styku (po dopasowaniu): mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
   - po `max_retries` nieudanych kontrolach program bierze próbę z najmniejszym ΔE i ostrzega; wygładzenie styku i tak działa;
   - pliki prób: `cover/raw/back_tryN.png`; manifest: `cover.back` (prompt, ocena przodu, próbki krawędzi, wynik kontroli każdej próby, użyta próba).
 - **Opis na tyle** (`--back-text`, `cover.back_text`): najwięcej pełnych zdań opisu z metadanych, które mieszczą się w `back_text_max_height` (30%) strefy tyłu, w rozmiarze od `back_text_pt` (16 pt) do `back_text_min_pt` (10 pt); litery jak tytuł (kolor z czarnym obrysem K100). Miniatury przesuwają się pod opis. Gdy nie mieści się nawet jedno zdanie, tył jest bez opisu z ostrzeżeniem.
@@ -598,7 +601,7 @@ FR-15 powstaje w trzech PR-ach.
 
 **Wymagania wobec dostawców**
 - Adapter obrazu musi obsługiwać `reference_image` (OpenAI: endpoint edycji obrazu). Kontrakt już to przewiduje (§8.2).
-- Maska (dorysowanie tyłu na podstawie przodu) nie jest potrzebna w tym podejściu. Zostaje jako możliwe usprawnienie, gdyby kontrola styku zbyt często wymagała ponowień.
+- Maska (dorysowanie tyłu na podstawie przodu) jest od 17.11.2026 domyślnym sposobem malowania tyłu (`ImageRequest.mask`), bo sam prompt i referencja nie dawały ciągłej listwy ani desek.
 
 Konfiguracja (szkic):
 
@@ -622,6 +625,11 @@ cover:                          # nasze ustawienia
   seam_band_in: 0.1
   seam_max_delta_e: 12
   horizon_tolerance: 0.03       # ułamek wysokości
+  seam_align_max: 0.2           # największe przesunięcie wierszy tyłu przy dopasowaniu do przodu
+  outpaint: true                # tył jako dorysowanie przodu (płótno z pasem przodu + maska)
+  outpaint_overlap_min: 0.2     # najwęższy pas przodu na płótnie (część jego szerokości)
+  outpaint_prompt: >-           # pola {area_pct}, {spine_pct}, {margin_pct}
+    Extend this picture to the left. …
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
@@ -1112,7 +1120,8 @@ class ImageProvider(Protocol):
     name: str
     def supported_aspects(self) -> list[str]: ...
     def generate(self, req: ImageRequest) -> ImageResult: ...
-    # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie)
+    # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie),
+    #   mask (opcjonalnie, PNG z alfą: przezroczyste = do dorysowania; tylko z reference_image)
     #   + struktura promptu (scene, części stylu, negative) dla dostawców z osobnym promptem negatywnym (FR-18)
     # ImageResult: png_bytes, width, height, usage/cost, raw_response_meta
 

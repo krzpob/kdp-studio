@@ -73,6 +73,17 @@ def _png(img: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def _outpainted(canvas_png: bytes, mask_png: bytes) -> bytes:
+    """Płótno z wypełnionym miejscem pod przezroczystą maską (kolor pierwszej kolumny pasa
+    przodu w każdym wierszu), jak idealne dorysowanie."""
+    with Image.open(io.BytesIO(canvas_png)) as canvas, Image.open(io.BytesIO(mask_png)) as mask:
+        pixels = np.asarray(canvas.convert("RGB")).copy()
+        empty = np.asarray(mask.convert("RGBA"))[:, :, 3] == 0
+    split = int(empty[0].sum())
+    pixels[:, :split] = pixels[:, split : split + 1]
+    return _png(Image.fromarray(pixels))
+
+
 @dataclass
 class ColoringProvider:
     """Odpowiada pokolorowaną referencją; `fail` i `junk` symulują błędy."""
@@ -95,6 +106,8 @@ class ColoringProvider:
         if self.junk:
             return ImageResult(b"not a png", 1, 1, usage)
         assert req.reference_image is not None
+        if req.mask is not None:  # dorysowanie tyłu: puste miejsce w kolorze krawędzi przodu
+            return ImageResult(_outpainted(req.reference_image, req.mask), 64, 48, usage)
         with Image.open(io.BytesIO(req.reference_image)) as ref:
             if req.prompt.startswith("Paint the back cover"):  # tło tyłu w kolorze krawędzi przodu
                 edge = np.median(np.asarray(ref.convert("RGB"))[:, :4].reshape(-1, 3), axis=0)
@@ -214,18 +227,45 @@ def _layers_with_art(repo_config: AppConfig, tmp_path: Path) -> tuple[CoverLayer
 def test_aligned_color_keeps_k100_contours(repo_config: AppConfig, tmp_path: Path) -> None:
     layers, geometry = _layers_with_art(repo_config, tmp_path)
     colored = _tinted(front_sketch(layers, geometry))
-    match, overlay = apply_front_color(layers, geometry, repo_config.settings.cover, colored)
-    assert match >= 0.85 and overlay
+    match, overlay, register_cc = apply_front_color(
+        layers, geometry, repo_config.settings.cover, colored
+    )
+    assert match >= 0.85 and overlay and register_cc is None  # nic do poprawiania
     rect = geometry.px(geometry.front_panel)
     assert (np.asarray(layers.black.crop(rect)) == 0).any()
     assert layers.color.getpixel((rect[0] + 2, rect[1] + 2)) != (255, 255, 255)
 
 
-def test_shifted_color_drops_overlay(repo_config: AppConfig, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("zoom", "dx", "dy"),
+    [(0.98, 0.03, 0.035), (0.965, 0.005, 0.06)],  # druga: jak trzecia próba kotków z 17.11
+    ids=["small", "large"],
+)
+def test_shifted_color_is_registered_and_keeps_contours(
+    repo_config: AppConfig, tmp_path: Path, zoom: float, dx: float, dy: float
+) -> None:
+    # Model przerysował szkic przesunięty i powiększony: program cofa to przed konturami.
     layers, geometry = _layers_with_art(repo_config, tmp_path)
     sketch = front_sketch(layers, geometry)
-    shifted = _tinted(sketch).transform(sketch.size, Image.Transform.AFFINE, (1, 0, 40, 0, 1, 40))
-    match, overlay = apply_front_color(layers, geometry, repo_config.settings.cover, shifted)
+    tinted = _tinted(sketch)
+    width, height = sketch.size
+    shift = (zoom, 0, dx * width, 0, zoom, dy * height)
+    shifted = tinted.transform(sketch.size, Image.Transform.AFFINE, shift)
+    assert contour_match(np.asarray(sketch.convert("L")) < 128, shifted, 3) < 0.85
+    match, overlay, register_cc = apply_front_color(
+        layers, geometry, repo_config.settings.cover, shifted
+    )
+    assert match >= 0.85 and overlay
+    assert register_cc is not None and register_cc > 0.5
+    rect = geometry.px(geometry.front_panel)
+    assert (np.asarray(layers.black.crop(rect)) == 0).any()
+
+
+def test_unrelated_color_drops_overlay(repo_config: AppConfig, tmp_path: Path) -> None:
+    layers, geometry = _layers_with_art(repo_config, tmp_path)
+    sketch = front_sketch(layers, geometry)
+    flipped = _tinted(sketch).transpose(Image.Transpose.FLIP_TOP_BOTTOM)  # inny rysunek
+    match, overlay, _ = apply_front_color(layers, geometry, repo_config.settings.cover, flipped)
     assert match < 0.85 and not overlay
     rect = geometry.px(geometry.front_panel)
     assert (np.asarray(layers.black.crop(rect)) == 255).all()
@@ -295,17 +335,16 @@ def test_cover_colorizes_front(
     assert "Tytuł w miniaturze 160 px: litery " in out
     req, back = coloring.requests
     assert req.reference_image is not None and req.aspect == "3:4"
-    assert back.prompt.startswith("Paint the back cover")
+    assert back.prompt.startswith("Extend this picture") and back.mask is not None
     data = _manifest()
     cover = data["cover"]
     front = cover["front"]
     assert (front["colorized"], front["attempts"], front["contours_overlay"]) == (True, 1, True)
     assert front["raw_files"] == ["cover/raw/front_color_try1.png"]
     assert front["quality"] == "low" and front["aspect"] == "3:4"
-    price, vision = FAKE_PRICES["fake-image"], FAKE_PRICES["fake-vision"]
+    price = FAKE_PRICES["fake-image"]
     image_cost = (10 * price["input_per_1m"] + 100 * price["output_per_1m"]) / 1e6
-    scene_cost = (1000 * vision["input_per_1m"] + 20 * vision["output_per_1m"]) / 1e6
-    expected = 2 * image_cost + scene_cost  # przód, tył z grzbietem, ocena przodu
+    expected = 2 * image_cost  # przód i tył z grzbietem; dorysowanie nie potrzebuje opisu przodu
     assert cover["cost_usd"] == pytest.approx(expected)
     assert data["cost_usd"] == pytest.approx(before + expected)
     assert (BOOK / "cover" / "raw" / "front_sketch.png").is_file()

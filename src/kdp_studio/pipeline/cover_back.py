@@ -1,9 +1,18 @@
 """FR-15 etap 3: tło tyłu i grzbietu z modelu, dopasowane do przodu.
 
-Tył i grzbiet powstają razem, jednym wywołaniem, z gotowym przodem jako referencją. Prompt
-narzuca horyzont i kolory lewej krawędzi przodu (z oceny modelem z wizją, uzupełnionej
-próbkami pikseli). Program porównuje potem pasy poziome po obu stronach zgięcia grzbiet/przód
-(ΔE w Lab) i położenie horyzontu; przekroczenie progu to ponowienie. Na końcu w pasie
+Tył i grzbiet powstają razem, jednym wywołaniem. Domyślnie jako dorysowanie przodu
+(`outpaint`): program składa płótno z lewym pasem gotowego przodu po prawej i pustym miejscem
+na tył po lewej, a maska każe modelowi wypełnić tylko puste miejsce, więc listwy, deski czy
+śnieg ciągną się dalej zamiast powstawać od nowa. Bez proporcji modelu, która zostawia na
+płótnie dość przodu, tył powstaje jak dawniej, z przodem tylko jako referencją. Prompt
+narzuca wtedy horyzont i kolory lewej krawędzi przodu (z oceny modelem z wizją, uzupełnionej
+próbkami pikseli). Model nie trzyma się podanej wysokości horyzontu (podłoga czy śnieg
+potrafią wyjść kilkanaście procent wyżej, listwa bywa cieńsza), więc program dopasowuje tył
+w pionie do przodu: pionowy profil kolorów przy grzbiecie wyrównuje do profilu lewej krawędzi
+przodu (DTW, `seam_align_max`), a całą szerokość tyłu odkształca tą samą mapą wierszy, żeby
+linie zostały proste. Potem porównuje pasy
+poziome po obu stronach zgięcia grzbiet/przód (ΔE w Lab) i położenie horyzontu; przekroczenie
+progu to ponowienie. Na końcu w pasie
 `seam_band_in` po stronie grzbietu tło płynnie przechodzi w kolory lewej krawędzi przodu,
 a sam przód zostaje nienaruszony.
 """
@@ -12,7 +21,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import pairwise
 from pathlib import Path
 
@@ -30,12 +39,18 @@ from kdp_studio.pipeline.cover_front import (
 from kdp_studio.pipeline.cover_geometry import CoverGeometry
 from kdp_studio.pipeline.cover_vision import FrontScene
 from kdp_studio.pipeline.output import write_bytes_atomic
+from kdp_studio.pipeline.registration import ecc_affine, shift_origin, warp_back
 from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError, Usage
 
 EDGE_STRIP_IN = 0.05  # szerokość pasa próbek przy linii zgięcia
 HORIZON_MIN_DELTA_E = 15.0  # słabsza zmiana koloru w pionie to nie horyzont
 SPINE_SLACK_IN = 0.25  # zapas obok grzbietu, który też ma być samym tłem
 BLEND_SMOOTH_IN = 0.1  # wygładzenie kolorów krawędzi przodu w pionie przed przejściem
+ALIGN_ROWS = 256  # rozdzielczość profilu przy dopasowaniu wierszy tyłu do przodu
+ALIGN_STEP_PENALTY = 2.0  # ΔE za krok poza przekątną: bez potrzeby tył się nie odkształca
+ALIGN_SMOOTH = 0.03  # okno wygładzenia mapy wierszy (ułamek wysokości)
+OUTPAINT_HEIGHT = 1024  # wysokość płótna do dorysowania; model i tak skaluje je do siebie
+REGISTER_DOWNSCALE = 4  # rejestracja pasa przodu na zmniejszonym obrazie (szybciej, stabilniej)
 
 
 # --- Próbki pikseli --------------------------------------------------------------------------
@@ -98,6 +113,8 @@ class SeamCheck:
     horizon_back: float | None
     horizon_ok: bool
     passed: bool
+    align_shift: float | None = None  # największe przesunięcie wierszy tyłu przed kontrolą
+    register_cc: float | None = None  # zgodność pasa przodu z płótna po rejestracji (ECC)
 
     @property
     def score(self) -> float:
@@ -106,12 +123,19 @@ class SeamCheck:
 
 
 def seam_check(
-    back: np.ndarray, front: np.ndarray, strip_px: int, settings: CoverSettings
+    back: np.ndarray,
+    front: np.ndarray,
+    strip_px: int,
+    settings: CoverSettings,
+    *,
+    check_horizon: bool = True,
 ) -> SeamCheck:
     """Porównuje prawy pas tyłu z grzbietem (przy zgięciu) z lewym pasem przodu.
 
     Horyzont porównuje się tylko, gdy da się go wskazać po obu stronach; brak horyzontu po
-    jednej stronie wychwytuje porównanie pasów.
+    jednej stronie wychwytuje porównanie pasów. `check_horizon=False` (tył dorysowany
+    i dopasowany do przodu) zostawia sam ΔE: wiersz największej zmiany koloru potrafi wtedy
+    wskazać po obu stronach różne krawędzie tej samej listwy.
     """
     back_strip = back[:, -strip_px:]
     front_strip = front[:, :strip_px]
@@ -130,10 +154,91 @@ def seam_check(
     diff = _lab(back_bands[valid]) - _lab(front_bands[valid])
     max_de = round(float(np.sqrt((diff**2).sum(axis=1)).max()), 2) if valid.any() else 0.0
     horizon_ok = (
-        h_front is None or h_back is None or abs(h_front - h_back) <= settings.horizon_tolerance
+        not check_horizon
+        or h_front is None
+        or h_back is None
+        or abs(h_front - h_back) <= settings.horizon_tolerance
     )
     passed = max_de <= settings.seam_max_delta_e and horizon_ok
     return SeamCheck(max_de, h_front, h_back, horizon_ok, passed)
+
+
+def _row_profile(strip: np.ndarray, rows: int) -> np.ndarray:
+    """Mediana koloru każdego wiersza pasa (Lab), uśredniona do `rows` wierszy → rows × 3."""
+    profile = _lab(np.median(strip, axis=1))
+    edges = np.linspace(0, len(profile), rows + 1).round().astype(int)
+    return np.array([profile[a : max(b, a + 1)].mean(axis=0) for a, b in pairwise(edges)])
+
+
+def row_map(back: np.ndarray, front: np.ndarray, band: int) -> np.ndarray | None:
+    """Dla każdego wiersza profilu przodu wiersz profilu tyłu (DTW), albo None.
+
+    Ścieżka rosnąca, z nachyleniem od 1/2 do 2 (kroki (1,1), (1,2), (2,1), te dwa ostatnie
+    z karą), najwyżej `band` wierszy od przekątnej."""
+    n = len(front)
+    cost = np.sqrt(((back[:, None, :] - front[None, :, :]) ** 2).sum(axis=-1))
+    rows, cols = np.indices(cost.shape)
+    cost[np.abs(rows - cols) > band] = np.inf
+    acc = np.full((n, n), np.inf)
+    move = np.zeros((n, n), np.int8)
+    acc[0, 0] = cost[0, 0]
+    for i in range(1, n):
+        options = np.full((3, n), np.inf)
+        options[0, 1:] = acc[i - 1, :-1]
+        options[1, 2:] = acc[i - 1, :-2] + ALIGN_STEP_PENALTY
+        if i >= 2:
+            options[2, 1:] = acc[i - 2, :-1] + ALIGN_STEP_PENALTY
+        best = options.argmin(axis=0)
+        acc[i] = options[best, np.arange(n)] + cost[i]
+        move[i] = best + 1
+    if not np.isfinite(acc[-1, -1]):
+        return None
+    steps = {1: (1, 1), 2: (1, 2), 3: (2, 1)}
+    i, j = n - 1, n - 1
+    path = [(i, j)]
+    while (i, j) != (0, 0):
+        di, dj = steps[int(move[i, j])]
+        i, j = i - di, j - dj
+        path.append((i, j))
+    back_rows, front_rows = np.array(path[::-1], dtype=float).T
+    return np.asarray(np.interp(np.arange(n), front_rows, back_rows))
+
+
+def align_to_front(
+    back: np.ndarray, front_strip: np.ndarray, strip_px: int, max_shift: float
+) -> tuple[np.ndarray, float | None]:
+    """Tył odkształcony w pionie tak, by jego pas przy grzbiecie pasował wierszami do lewego
+    pasa przodu; (tył, największe przesunięcie wiersza jako ułamek wysokości albo None).
+
+    Mapa wierszy jest jedna dla całej szerokości, więc listwa czy linia śniegu zostają proste.
+    """
+    height, width = back.shape[:2]
+    rows = min(ALIGN_ROWS, height)
+    band = round(max_shift * rows)
+    if band == 0:
+        return back, None
+    mapping = row_map(
+        _row_profile(back[:, -strip_px:], rows), _row_profile(front_strip, rows), band
+    )
+    if mapping is None:
+        return back, None
+    window = max(3, round(rows * ALIGN_SMOOTH)) | 1
+    # Odbicie nieparzyste zachowuje liniowy przebieg przy krawędziach (tożsamość zostaje).
+    padded = np.pad(mapping, window // 2, mode="reflect", reflect_type="odd")
+    mapping = np.maximum.accumulate(np.convolve(padded, np.ones(window) / window, "valid"))
+    # Mapa jest w środkach pasów profilu; na brzegach obrazu ciągnie się liniowo.
+    centers = np.concatenate([[-0.5], np.arange(rows), [rows - 0.5]])
+    targets = np.concatenate([[mapping[0] - 0.5], mapping, [mapping[-1] + 0.5]])
+    y = (np.arange(height) + 0.5) / height * rows - 0.5
+    source = (np.interp(y, centers, targets) + 0.5) / rows * height - 0.5
+    offset = float(np.abs(source - np.arange(height)).max())
+    if offset < 1:  # mniej niż piksel: tył zostaje bez zmian
+        return back, None
+    shift = round(offset / height, 3)
+    map_y = np.repeat(source.astype(np.float32)[:, None], width, axis=1)
+    map_x = np.repeat(np.arange(width, dtype=np.float32)[None, :], height, axis=0)
+    out = cv2.remap(back, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return np.asarray(out, dtype=np.uint8), shift
 
 
 def blend_seam(back: np.ndarray, front: np.ndarray, band_px: int, smooth_px: int) -> np.ndarray:
@@ -188,6 +293,109 @@ def back_prompt(
     return f"{text}\nStyle of the book: {style}."
 
 
+def outpaint_prompt(
+    settings: CoverSettings, style: str, geometry: CoverGeometry, area: float
+) -> str:
+    """Prompt dorysowania tyłu: `area` to część płótna do wypełnienia (tył z grzbietem)."""
+    width = geometry.folds_x[1]
+    text = " ".join(settings.outpaint_prompt.split()).format(
+        area_pct=round(area * 100),
+        spine_pct=round((geometry.spine_in + SPINE_SLACK_IN) / width * 100),
+        margin_pct=max(1, round(settings.key_margin_in / width * 100)),
+    )
+    return f"{text}\nStyle of the book: {style}."
+
+
+# --- Dorysowanie ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutpaintPlan:
+    """Płótno do dorysowania: proporcje modelu i szerokość pasa przodu (piksele okładki)."""
+
+    aspect: str
+    overlap_px: int
+
+
+def outpaint_plan(
+    back_size: tuple[int, int], front_width: int, aspects: list[str], overlap_min: float
+) -> OutpaintPlan | None:
+    """Proporcje modelu z najwęższym pasem przodu, który ma co najmniej `overlap_min` jego
+    szerokości (i nie więcej niż cały przód); None, gdy żadne nie pasują."""
+    width, height = back_size
+    best: OutpaintPlan | None = None
+    for aspect in aspects:
+        a, b = (int(v) for v in aspect.split(":"))
+        overlap = round(height * a / b) - width
+        if not overlap_min * front_width <= overlap <= front_width:
+            continue
+        if best is None or overlap < best.overlap_px:
+            best = OutpaintPlan(aspect, overlap)
+    return best
+
+
+def _png_bytes(img: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def outpaint_canvas(
+    front: np.ndarray, back_size: tuple[int, int], plan: OutpaintPlan
+) -> tuple[bytes, bytes]:
+    """(płótno, maska) w PNG: po prawej lewy pas przodu, po lewej białe miejsce na tył; maska
+    jest przezroczysta tam, gdzie model ma malować."""
+    width, height = back_size
+    canvas = Image.new("RGB", (width + plan.overlap_px, height), (255, 255, 255))
+    canvas.paste(Image.fromarray(front[:, : plan.overlap_px]), (width, 0))
+    scale = OUTPAINT_HEIGHT / height
+    size = (round(canvas.width * scale), OUTPAINT_HEIGHT)
+    canvas = canvas.resize(size, Image.Resampling.LANCZOS)
+    mask = Image.new("RGBA", size, (0, 0, 0, 255))
+    mask.paste((0, 0, 0, 0), (0, 0, round(width * scale), size[1]))
+    return _png_bytes(canvas), _png_bytes(mask)
+
+
+def register_canvas(
+    canvas: np.ndarray, front_strip: np.ndarray, split: int
+) -> tuple[np.ndarray, float] | None:
+    """Płótno z modelu dopasowane do prawdziwego przodu; (płótno, zgodność ECC) albo None.
+
+    Maska w modelach obrazu jest „miękka”: model przerysowuje też znany pas przodu, lekko
+    przesunięty i przeskalowany (na próbie z 17.11: o ~30 px i 3%), więc deski i listwa
+    rozjeżdżają się na styku. Przekształcenie afiniczne, które nakłada pas z modelu na
+    prawdziwy przód, program stosuje do całego płótna, zanim wytnie z niego tył.
+    """
+    overlap = front_strip.shape[1]
+
+    def gray(img: np.ndarray) -> np.ndarray:
+        return np.asarray(cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2GRAY))
+
+    found = ecc_affine(
+        gray(front_strip), gray(canvas[:, split : split + overlap]), REGISTER_DOWNSCALE
+    )
+    if found is None:
+        return None
+    matrix, cc = found
+    # Przekształcenie liczone we współrzędnych pasa; na płótnie pas zaczyna się w `split`.
+    return warp_back(canvas, shift_origin(matrix, split)), cc
+
+
+def outpainted_back(
+    painted: Image.Image, back_size: tuple[int, int], plan: OutpaintPlan, front: np.ndarray
+) -> tuple[np.ndarray, float | None]:
+    """Tył z grzbietem wycięty z dorysowanego płótna (piksele okładki), po rejestracji pasa
+    przodu; (tył, zgodność ECC albo None, gdy rejestracja się nie udała)."""
+    width, height = back_size
+    size = (width + plan.overlap_px, height)
+    canvas = np.asarray(painted.convert("RGB").resize(size, Image.Resampling.LANCZOS))
+    registered = register_canvas(canvas, front[:, : plan.overlap_px], width)
+    if registered is None:
+        return canvas[:, :width], None
+    canvas, cc = registered
+    return canvas[:, :width], cc
+
+
 # --- Malowanie --------------------------------------------------------------------------------
 
 
@@ -195,7 +403,8 @@ def back_prompt(
 class BackPainter:
     """Tył z grzbietem z modelu: ponowienia przy błędach niekrytycznych i nieudanym styku.
 
-    `analyze(przód) -> FrontScene` to ocena przodu modelem z wizją (None: same próbki pikseli).
+    `analyze(przód) -> FrontScene` to ocena przodu modelem z wizją (None: same próbki pikseli);
+    potrzebna tylko bez dorysowania, gdzie prompt opisuje przód słowami.
     """
 
     provider: ImageProvider
@@ -219,6 +428,23 @@ class BackPainter:
     edge_colors: list[str] = field(default_factory=list)
     seams: list[SeamCheck] = field(default_factory=list)
     chosen: int | None = None  # numer użytej próby (1…)
+    mode: str | None = None  # outpaint: dorysowanie przodu; reference: przód jako referencja
+    overlap_px: int | None = None  # pas przodu na płótnie do dorysowania (piksele okładki)
+
+    def _analyze(self, front: Image.Image) -> None:
+        """Ocena przodu modelem z wizją do promptu; błąd niekrytyczny to próbki pikseli."""
+        if self.analyze is None:
+            return
+        self._check_budget()
+        try:
+            self.scene = self.analyze(front)
+        except ProviderError as e:
+            if e.fatal:
+                raise
+            self.scene_error = str(e)
+            self.warnings.append(
+                f"ocena przodu modelem z wizją nie powiodła się ({e}); tył według próbek pikseli"
+            )
 
     def _check_budget(self) -> None:
         if self.over_budget is not None and self.over_budget():
@@ -232,29 +458,27 @@ class BackPainter:
         front_px = np.asarray(front.convert("RGB"))
         strip_px = max(2, round(EDGE_STRIP_IN * geometry.dpi))
         edge = band_colors(front_px[:, :strip_px], settings.seam_bands)
+        front_horizon = pixel_horizon(front_px[:, :strip_px])
         self.edge_colors = [hex_color(c) for c in edge]
-        if self.analyze is not None:
-            self._check_budget()
-            try:
-                self.scene = self.analyze(front)
-            except ProviderError as e:
-                if e.fatal:
-                    raise
-                self.scene_error = str(e)
-                self.warnings.append(
-                    f"ocena przodu modelem z wizją nie powiodła się ({e}); "
-                    "tył według próbek pikseli"
-                )
-        self.aspect = model_aspect(size, self.provider.supported_aspects())
-        self.prompt = back_prompt(
-            settings,
-            self.style,
-            geometry,
-            self.scene,
-            self.edge_colors,
-            pixel_horizon(front_px[:, :strip_px]),
-        )
-        reference = reference_png(front, front_aspect(front.size))
+        aspects = self.provider.supported_aspects()
+        plan = None
+        if settings.outpaint:
+            plan = outpaint_plan(size, front_px.shape[1], aspects, settings.outpaint_overlap_min)
+        mask = None
+        if plan is not None:
+            self.mode, self.aspect, self.overlap_px = "outpaint", plan.aspect, plan.overlap_px
+            self.prompt = outpaint_prompt(
+                settings, self.style, geometry, size[0] / (size[0] + plan.overlap_px)
+            )
+            reference, mask = outpaint_canvas(front_px, size, plan)
+        else:
+            self.mode = "reference"
+            self._analyze(front)
+            self.aspect = model_aspect(size, aspects)
+            self.prompt = back_prompt(
+                settings, self.style, geometry, self.scene, self.edge_colors, front_horizon
+            )
+            reference = reference_png(front, front_aspect(front.size))
         best: tuple[float, np.ndarray, int] | None = None
         for _ in range(1 + settings.max_retries):
             self._check_budget()
@@ -266,6 +490,7 @@ class BackPainter:
                         aspect=self.aspect,
                         quality=self.quality,
                         reference_image=reference,
+                        mask=mask,
                     )
                 )
             except ProviderError as e:
@@ -281,12 +506,24 @@ class BackPainter:
             self.raw_files.append(path)
             try:
                 with Image.open(io.BytesIO(result.png_bytes)) as img:
-                    painted = img.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+                    cc = None
+                    if plan is not None:
+                        back, cc = outpainted_back(img, size, plan, front_px)
+                    else:
+                        back = np.asarray(img.convert("RGB").resize(size, Image.Resampling.LANCZOS))
             except OSError as e:
                 self.errors.append(f"niepoprawny obraz z modelu: {e}")
                 continue
-            back = np.asarray(painted)
-            seam = seam_check(back, front_px, strip_px, settings)
+            shift = None
+            if cc is None:  # zarejestrowany tył już pasuje; DTW tylko by go zniekształciło
+                back, shift = align_to_front(
+                    back, front_px[:, :strip_px], strip_px, settings.seam_align_max
+                )
+            seam = replace(
+                seam_check(back, front_px, strip_px, settings, check_horizon=cc is None),
+                align_shift=shift,
+                register_cc=cc,
+            )
             self.seams.append(seam)
             if best is None or seam.score < best[0]:
                 best = (seam.score, back, self.attempts)

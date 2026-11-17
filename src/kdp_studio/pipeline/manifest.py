@@ -237,6 +237,7 @@ class CoverFrontInfo(_Model):
     usage: Usage | None = None
     contour_match: float | None = None  # zgodność konturów modelu ze szkicem
     contours_overlay: bool = True  # nałożono ostre kontury 300 DPI (K100)
+    register_cc: float | None = None  # obraz modelu dopasowany do szkicu (zgodność ECC)
     title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze (thumbnail_check_px)
     title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
 
@@ -247,6 +248,8 @@ class CoverSeamInfo(_Model):
     max_delta_e: float
     horizon_front: float | None = None
     horizon_back: float | None = None
+    align_shift: float | None = None  # największe przesunięcie wierszy tyłu do przodu (ułamek)
+    register_cc: float | None = None  # dorysowanie: zgodność pasa przodu po rejestracji (ECC)
     passed: bool
 
 
@@ -267,6 +270,8 @@ class CoverBackInfo(_Model):
     model: str | None = None
     quality: str | None = None
     aspect: str | None = None
+    mode: str | None = None  # outpaint: dorysowanie przodu z maską; reference: przód jako wzór
+    overlap_px: int | None = None  # pas przodu na płótnie do dorysowania (piksele okładki)
     prompt: str | None = None
     attempts: int = 0
     chosen_attempt: int | None = None

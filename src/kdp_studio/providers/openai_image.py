@@ -2,8 +2,10 @@
 
 Bez `reference_image` adapter woła `images.generate`. Z obrazem referencyjnym (FR-15, np.
 kolorowanie szkicu okładki) woła `images.edit` z `input_fidelity="high"`, żeby model
-trzymał się konturów referencji. Model, który tego parametru nie obsługuje (HTTP 400, np.
-`gpt-image-2.6-flare`), dostaje to samo zapytanie bez niego, a adapter to zapamiętuje.
+trzymał się konturów referencji, a z `mask` dorysowuje przezroczyste miejsca płótna (tył
+okładki jako ciąg dalszy przodu). Model, który któregoś z tych parametrów nie obsługuje
+(HTTP 400, np. `gpt-image-2.6-flare` i `input_fidelity`), dostaje to samo zapytanie bez
+niego, a adapter to zapamiętuje.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+from collections.abc import Callable
 from typing import Literal, cast
 
 import openai
@@ -48,6 +51,7 @@ _log = logging.getLogger(__name__)
 
 OpenAIQuality = Literal["low", "medium", "high", "xhigh", "max", "auto"]
 QUALITIES: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max", "auto")
+OPTIONAL_PARAMS = ("input_fidelity", "mask")  # images.edit; model może ich nie obsługiwać
 
 
 class OpenAIImageProvider:
@@ -62,10 +66,29 @@ class OpenAIImageProvider:
         self.model = model
         self._client = client or default_client()
         self._retry_policy = retry_policy or RetryPolicy()
-        self._input_fidelity = True  # False po odmowie modelu (HTTP 400)
+        self._unsupported: set[str] = set()  # parametry odrzucone przez model (HTTP 400)
 
     def supported_aspects(self) -> list[str]:
         return list(SIZES)
+
+    def _call(
+        self, call: Callable[[], ImagesResponse], optional: Callable[[str], bool]
+    ) -> ImagesResponse:
+        """Wywołanie z ponowieniami; parametr odrzucony przez model (HTTP 400 przed
+        generowaniem) adapter zapamiętuje i wysyła to samo zapytanie bez niego."""
+        while True:
+            try:
+                return call_with_retries(
+                    call, retry_after=openai_retry_decision, policy=self._retry_policy
+                )
+            except openai.BadRequestError as e:
+                rejected = next(
+                    (n for n in OPTIONAL_PARAMS if optional(n) and rejects_parameter(e, n)), None
+                )
+                if rejected is None:
+                    raise
+                self._unsupported.add(rejected)
+                _log.info("model %s nie obsługuje %s; ponawiam bez niego", self.model, rejected)
 
     def generate(self, req: ImageRequest) -> ImageResult:
         size = SIZES.get(req.aspect)
@@ -75,6 +98,11 @@ class OpenAIImageProvider:
             raise ProviderError(f"OpenAI: nieobsługiwana jakość '{req.quality}'")
         quality = cast(OpenAIQuality, req.quality)
         reference = req.reference_image
+
+        def optional(name: str) -> bool:
+            if name == "mask" and req.mask is None:
+                return False
+            return reference is not None and name not in self._unsupported
 
         def call() -> ImagesResponse:
             if reference is not None:
@@ -87,7 +115,10 @@ class OpenAIImageProvider:
                     n=1,
                     output_format="png",
                     background="opaque",
-                    input_fidelity="high" if self._input_fidelity else openai.omit,
+                    input_fidelity="high" if optional("input_fidelity") else openai.omit,
+                    mask=("mask.png", req.mask, "image/png")
+                    if req.mask is not None and optional("mask")
+                    else openai.omit,
                 )
             return self._client.images.generate(
                 model=self.model,
@@ -100,19 +131,7 @@ class OpenAIImageProvider:
             )
 
         try:
-            try:
-                response = call_with_retries(
-                    call, retry_after=openai_retry_decision, policy=self._retry_policy
-                )
-            except openai.BadRequestError as e:
-                if reference is None or not rejects_parameter(e, "input_fidelity"):
-                    raise
-                # Model odrzucił parametr przed generowaniem: to samo zapytanie bez niego.
-                self._input_fidelity = False
-                _log.info("model %s nie obsługuje input_fidelity; ponawiam bez niego", self.model)
-                response = call_with_retries(
-                    call, retry_after=openai_retry_decision, policy=self._retry_policy
-                )
+            response = self._call(call, optional)
         except openai.OpenAIError as e:
             raise ProviderError(describe_openai_error(e), fatal=is_fatal(e)) from e
 

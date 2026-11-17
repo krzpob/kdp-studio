@@ -65,8 +65,8 @@ def test_generate_cover_runs_cover_last(
     images, responder = providers
     assert main([*GENERATE, "--pages", "6", "--cover"]) == ExitCode.OK
     out = capsys.readouterr().out
-    # Wybór stron modelem z wizją, kolorowy przód i tył z grzbietem.
-    assert responder.calls == ["select", "scene"]
+    # Wybór stron modelem z wizją, kolorowy przód i tył z grzbietem dorysowany do przodu.
+    assert responder.calls == ["select"]
     assert len(images.cover.requests) == 2
     data = _manifest()
     cover = data["cover"]

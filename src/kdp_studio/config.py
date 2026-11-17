@@ -287,6 +287,23 @@ DEFAULT_BACK_PROMPT = (
     "no logos, no frame, no border."
 )
 
+# Pola promptu dorysowania tyłu do przodu (maska); ten sam plik.
+OUTPAINT_PROMPT_FIELDS = {"area_pct": 0, "spine_pct": 0, "margin_pct": 0}
+DEFAULT_OUTPAINT_PROMPT = (
+    "Extend this picture to the left. The right part is the left edge of the front cover of a "
+    "children's coloring book; the empty white area on the left ({area_pct}% of the width) is "
+    "the back cover and spine of the same book. Fill the empty area so that the picture "
+    "continues seamlessly: the same wall, floor, ground or sky, the same lines, boards and "
+    "horizon at exactly the same height, the same style, palette and lighting. Do not change "
+    "the right part. Do not continue characters or objects cut by the edge into the new area. "
+    "The right {spine_pct}% of the new area, next to the existing part, is the spine: only "
+    "plain background there, no objects. Keep the bottom right corner of the new area calm "
+    "and plain. Keep any new objects at least {margin_pct}% away from the edges of the new "
+    "area and keep its middle mostly calm background, because thumbnails of inner pages will "
+    "be placed on it. Use vivid but print-friendly colors (no neon, no fluorescent colors). "
+    "No text, no letters, no title, no logos, no frame, no border."
+)
+
 
 class CoverSettings(_Strict):
     """Nasze ustawienia okładki (FR-15)."""
@@ -304,6 +321,8 @@ class CoverSettings(_Strict):
     seam_band_in: Annotated[float, Field(ge=0)] = 0.1
     seam_max_delta_e: Annotated[float, Field(gt=0)] = 12
     horizon_tolerance: Annotated[float, Field(gt=0, lt=1)] = 0.03
+    # Największe przesunięcie wierszy tyłu przy dopasowaniu do przodu (ułamek wysokości); 0 wyłącza.
+    seam_align_max: Annotated[float, Field(ge=0, lt=0.5)] = 0.2
     max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
     back_text: bool = False
     title_font: str = "assets/fonts/Fredoka-Variable.ttf"
@@ -330,6 +349,11 @@ class CoverSettings(_Strict):
     qa: bool = False  # --qa/--no-qa
     in_generate: bool = False  # generate --cover/--no-cover: okładka jako ostatni krok
     back_prompt: Annotated[str, Field(min_length=1)] = DEFAULT_BACK_PROMPT
+    # Tył jako dorysowanie przodu (płótno z pasem przodu i maska); bez pasującej proporcji
+    # modelu albo z `outpaint: false` tył powstaje z back_prompt (przód tylko jako referencja).
+    outpaint: bool = True
+    outpaint_overlap_min: Annotated[float, Field(gt=0, le=1)] = 0.2  # część szerokości przodu
+    outpaint_prompt: Annotated[str, Field(min_length=1)] = DEFAULT_OUTPAINT_PROMPT
     seam_bands: Annotated[int, Field(ge=2, le=32)] = 8  # pasy poziome kontroli styku
     back_text_pt: Annotated[float, Field(gt=0)] = 16
     back_text_min_pt: Annotated[float, Field(gt=0)] = 10
@@ -350,6 +374,11 @@ class CoverSettings(_Strict):
         except (KeyError, IndexError, ValueError) as e:
             names = ", ".join("{" + k + "}" for k in BACK_PROMPT_FIELDS)
             raise ValueError(f"cover.back_prompt: nieznane pole {e}; dozwolone: {names}") from e
+        try:
+            self.outpaint_prompt.format(**OUTPAINT_PROMPT_FIELDS)
+        except (KeyError, IndexError, ValueError) as e:
+            names = ", ".join("{" + k + "}" for k in OUTPAINT_PROMPT_FIELDS)
+            raise ValueError(f"cover.outpaint_prompt: nieznane pole {e}; dozwolone: {names}") from e
         if self.back_text_min_pt > self.back_text_pt:
             raise ValueError("cover.back_text_min_pt nie może być większy niż back_text_pt")
         return self

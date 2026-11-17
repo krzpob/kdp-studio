@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 from kdp_studio.config import CoverSettings
 from kdp_studio.pipeline.cover_geometry import CoverGeometry, RectPx
 from kdp_studio.pipeline.fonts import load_font
+from kdp_studio.pipeline.registration import ecc_affine, warp_back
 
 WHITE = 255
 BLACK = 0
@@ -34,6 +35,7 @@ GAP_IN = 0.15  # odstęp między elementami (tytuł/grafika, miniatury, nad pole
 MIN_TITLE_SCALE = 0.35  # tytuł nie mniejszy niż 35% rozmiaru z konfiguracji
 CONTOUR_DARK = 110  # piksel obrazu modelu ciemniejszy niż to liczy się jako kontur
 CONTOUR_CHECK_PX = 800  # szerokość, przy której porównuje się kontury
+CONTOUR_BLUR_PX = 3.0  # rozmycie masek konturów przed dopasowaniem przodu (przy CONTOUR_CHECK_PX)
 
 
 class CoverError(Exception):
@@ -66,6 +68,7 @@ class CoverBuild:
     colorized: bool = False  # przód pokolorowany przez model (etap 2)
     contour_match: float | None = None  # zgodność konturów modelu ze szkicem
     contours_overlay: bool = True  # nałożono ostre kontury 300 DPI
+    register_cc: float | None = None  # przód z modelu dopasowany do szkicu (zgodność ECC)
     title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze thumbnail_check_px
     title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
     back_painted: bool = False  # tło tyłu i grzbietu z modelu (etap 3)
@@ -329,16 +332,34 @@ def contour_match(line_art: np.ndarray, colored: Image.Image, radius: int) -> fl
     return float(near[line_art].mean())
 
 
+def _contour_mask(mask: np.ndarray) -> np.ndarray:
+    return np.asarray(cv2.GaussianBlur(mask.astype(np.float32), (0, 0), CONTOUR_BLUR_PX))
+
+
+def register_front(line_art: np.ndarray, colored: Image.Image) -> tuple[np.ndarray, float] | None:
+    """Przekształcenie, które nakłada kontury obrazu modelu na kontury szkicu (macierz 2×3
+    w pikselach `line_art`, zgodność ECC), albo None.
+
+    Model przerysowuje cały szkic: na próbie z 17.11 przesunął go o ~4% wysokości
+    i powiększył o 2%, więc ostre kontury 300 DPI nie trafiały w jego kolory.
+    """
+    dark = np.asarray(colored.convert("L")) < CONTOUR_DARK
+    return ecc_affine(_contour_mask(line_art), _contour_mask(dark))
+
+
 def apply_front_color(
     layers: CoverLayers,
     geometry: CoverGeometry,
     settings: CoverSettings,
     colored: Image.Image,
-) -> tuple[float, bool]:
-    """Kolor przodu z modelu: (zgodność konturów, czy nałożono kontury 300 DPI).
+) -> tuple[float, bool, float | None]:
+    """Kolor przodu z modelu: (zgodność konturów, czy nałożono kontury 300 DPI, zgodność
+    dopasowania do szkicu albo None).
 
-    Przy zgodności ≥ `contour_match_min` zostają ostre kontury K100 ze szkicu (mnożenie
-    przez czerń). Przy przesunięciu program używa samego powiększonego obrazu modelu.
+    Najpierw program cofa przesunięcie i skalowanie, które model wprowadził przy
+    przerysowaniu szkicu (`register_front`), jeśli to poprawia zgodność konturów. Przy
+    zgodności ≥ `contour_match_min` zostają ostre kontury K100 ze szkicu (mnożenie przez
+    czerń). Przy przesunięciu program używa samego powiększonego obrazu modelu.
     """
     rect = geometry.px(geometry.front_panel)
     size = (rect[2] - rect[0], rect[3] - rect[1])
@@ -349,12 +370,24 @@ def apply_front_color(
     sketch = layers.black.crop(rect).resize(small, Image.Resampling.BILINEAR)
     line_art = np.asarray(sketch) < 128
     radius = max(1, round(settings.contour_search_in * geometry.dpi * scale))
-    match = contour_match(line_art, colored.resize(small, Image.Resampling.BILINEAR), radius)
+    colored_small = colored.resize(small, Image.Resampling.BILINEAR)
+    match = contour_match(line_art, colored_small, radius)
+    register_cc = None
+    found = register_front(line_art, colored_small) if line_art.any() else None
+    if found is not None:
+        matrix, cc = found
+        moved = Image.fromarray(warp_back(np.asarray(colored_small), matrix))
+        moved_match = contour_match(line_art, moved, radius)
+        if moved_match > match:
+            full = matrix.copy()
+            full[:, 2] /= scale  # przesunięcie liczone w mniejszej skali
+            colored = Image.fromarray(warp_back(np.asarray(colored), full))
+            match, register_cc = moved_match, cc
     overlay = match >= settings.contour_match_min
     if not overlay:
         layers.black.paste(Image.new("L", size, WHITE), rect[:2])
     layers.color.paste(colored, rect[:2])
-    return round(match, 3), overlay
+    return round(match, 3), overlay, register_cc
 
 
 def _luminance(rgb: np.ndarray) -> np.ndarray:
@@ -623,7 +656,7 @@ def build_cover(
 
     if colorize is not None:
         colored = colorize(front_sketch(layers, geometry))
-        build.contour_match, build.contours_overlay = apply_front_color(
+        build.contour_match, build.contours_overlay, build.register_cc = apply_front_color(
             layers, geometry, settings, colored
         )
         build.colorized = True

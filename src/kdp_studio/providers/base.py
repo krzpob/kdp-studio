@@ -57,7 +57,10 @@ class ImageRequest:
     aspect: str  # np. "3:4", z profilu formatu
     quality: str = "auto"
     seed: int | None = None  # adapter może zignorować, jeśli model nie obsługuje
-    reference_image: bytes | None = None  # referencja stylu; adapter OpenAI w MVP ignoruje
+    reference_image: bytes | None = None  # obraz wejściowy (referencja albo płótno do dorysowania)
+    # PNG z kanałem alfa wielkości `reference_image`: przezroczyste = do dorysowania (FR-15).
+    # Tylko z `reference_image`; adapter bez obsługi maski wysyła samo płótno.
+    mask: bytes | None = None
 
 
 @dataclass(frozen=True)

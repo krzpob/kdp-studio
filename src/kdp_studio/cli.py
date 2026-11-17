@@ -2297,6 +2297,8 @@ def _make_cover(run: _CoverRun) -> ExitCode:
     typer.echo(f"Tekst na grzbiecie: {spine}.")
     if build.colorized and colorizer is not None:
         contours = "nałożone kontury 300 DPI" if build.contours_overlay else "kontury z modelu"
+        if build.register_cc is not None:
+            contours = f"obraz dopasowany do szkicu, {contours}"
         typer.echo(
             f"Przód pokolorowany ({plural(colorizer.attempts, 'próba', 'próby', 'prób')}, "
             f"zgodność konturów {build.contour_match:.0%}, {contours})."
@@ -2311,8 +2313,9 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             if used is not None
             else ""
         )
+        how = "dorysowane do przodu" if painter.mode == "outpaint" else "z przodem jako wzorem"
         typer.echo(
-            f"Tył i grzbiet z modelu ({plural(painter.attempts, 'próba', 'próby', 'prób')}"
+            f"Tył i grzbiet z modelu, {how} ({plural(painter.attempts, 'próba', 'próby', 'prób')}"
             f"{seam_text})."
         )
     if costs is not None:
@@ -2366,6 +2369,7 @@ def _front_info(
         info.raw_files = [p.relative_to(target).as_posix() for p in colorizer.raw_files]
     if build is not None:
         info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
+        info.register_cc = build.register_cc
         info.title_thumb_px, info.title_contrast = build.title_thumb_px, build.title_contrast
     return info
 
@@ -2382,6 +2386,8 @@ def _back_info(
         model=painter.provider.model,
         quality=painter.quality,
         aspect=painter.aspect,
+        mode=painter.mode,
+        overlap_px=painter.overlap_px,
         prompt=painter.prompt,
         attempts=painter.attempts,
         chosen_attempt=painter.chosen,
@@ -2403,6 +2409,8 @@ def _back_info(
                 max_delta_e=s.max_delta_e,
                 horizon_front=s.horizon_front,
                 horizon_back=s.horizon_back,
+                align_shift=s.align_shift,
+                register_cc=s.register_cc,
                 passed=s.passed,
             )
             for s in painter.seams
