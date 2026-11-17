@@ -1040,7 +1040,7 @@ Dziś zakaz z FR-03 jest tylko zdaniem w prompcie. Reguła tematu (FR-03) każe 
 **Zasada inspiracji**
 - Z chronionej nazwy zostaje tylko ogólna kategoria: rodzaj zabawki, gatunek zwierzęcia, święto, nastrój, typ zabawy.
 - Nie zostaje nic, co wskazuje na konkretny utwór lub produkt: nazwa i imiona postaci, charakterystyczny wygląd (kolor futra, strój, znaki szczególne, kształt figurki, logo), fabuła, cytaty ani miejsca z utworu.
-- Program nie robi wyjątków dla domeny publicznej. Ten sam bohater bywa wolny w jednym kraju i wersji, a chroniony w innej. Na przykład książkowy Kubuś Puchatek z 1926 roku jest w USA w domenie publicznej, ale wygląd z filmów Disneya i znaki towarowe już nie.
+- Wyjątek dla postaci z domeny publicznej jest możliwy tylko jawnie, dla wybranych rynków i stylów (niżej).
 
 | Temat | Rozpoznana nazwa | Temat ogólny (przykład) | Czego nie rysować |
 |---|---|---|---|
@@ -1048,6 +1048,18 @@ Dziś zakaz z FR-03 jest tylko zdaniem w prompcie. Reguła tematu (FR-03) każe 
 | Barbie | Barbie | lalki i moda: przebieranki, sukienki, fryzury | charakterystycznej lalki, różowego logo, domku marki |
 | Grinch na święta | Grinch | święta z humorem: psotne stworki, zimowe figle | zielonego futrzaka, kradzieży prezentów, psa z porożem, miasteczka z bajki |
 | Kubuś Puchatek | Winnie-the-Pooh | misie i leśne zwierzątka, piknik, miód | czerwonej koszulki, prosiaczka, tygryska i osiołka, Stumilowego Lasu |
+
+**Wyjątek: postać z domeny publicznej**
+- Domyślnie każda nazwa z listy jest zablokowana. Wpis może dostać sekcję `public_domain`, którą dopisuje użytkownik po sprawdzeniu stanu prawnego, ze źródłem i datą. Lista startowa nie włącza jej dla żadnej postaci.
+- Ten sam bohater bywa wolny w jednym kraju, a chroniony w innym. Książkowy Kubuś Puchatek z 1926 roku jest w USA w domenie publicznej od 2022 roku, ale jego wersja z filmów Disneya (czerwona koszulka, wygląd z kreskówek) i znaki towarowe nadal są chronione. W Wielkiej Brytanii tekst Milne’a będzie wolny od 1.01.2027, a ilustracje Sheparda (zm. 1976) są tam i w UE chronione jeszcze przez ok. 20 lat. Dlatego wyjątek dotyczy tylko rynków z listy `markets` (FR-19; do tego czasu rynku US).
+- Wyjątek dotyczy tylko stylów z listy `styles`. To lista dozwolonych, nie zakazanych stylów: nowy styl dopisany do `styles.yaml` jest dla tej postaci zablokowany, dopóki ktoś go świadomie nie doda. Styl, który ciągnie rysunek w stronę chronionej wersji (np. `cartoon` przy Kubusiu, bo kreskówkowy Kubuś to wersja Disneya), zostaje poza listą.
+- Poza dozwolonym rynkiem albo stylem postać jest tylko inspiracją, jak w zasadzie wyżej. Konsola podaje powód, np. `Kubuś Puchatek: styl cartoon nie jest dozwolony dla postaci z domeny publicznej (dozwolone: cozy, chibi); książka powstanie dla tematu ogólnego`.
+- Co wyjątek zmienia: generator pomysłów może budować książkę wokół świata i postaci oryginału (`characters`), a imiona mogą stać w tytułach stron w `ideas.json`.
+- Czego wyjątek nie zmienia:
+  - **Metadane:** nazwa nadal nie trafia do tytułu, podtytułu, opisu ani słów kluczowych, bo znak towarowy nie wygasa razem z prawem autorskim.
+  - **Opisy scen i prompty obrazu:** nie zawierają imion. Model obrazu zna te postacie głównie z wersji filmowej i narysuje ją niezależnie od stylu, więc zamiast imienia scena dostaje opis wyglądu z oryginału (`look`), a kontrola z kodu sprawdza `scene` i `elements` jak dotąd.
+  - **Cechy wersji chronionej (`avoid`):** trafiają do QA jako kryterium `protected_character`, a nie do promptu, bo nazwana cecha przyciąga model.
+- `ideas.json` → `theme_check` zapisuje tryb (`generic` albo `public_domain`), rynek, styl oraz `source` i `checked` z wpisu.
 
 **Sprawdzenie tematu (przed pomysłami)**
 - Kod szuka chronionych nazw w temacie, zanim cokolwiek wyśle do modelu (lista z `config/protected_names.yaml`, niżej).
@@ -1087,10 +1099,20 @@ names:
   - name: Winnie-the-Pooh
     forms: [Winnie the Pooh, Pooh, Kubuś Puchatek, Kubusia Puchatka, Kubusiem Puchatkiem, Puchatek, Puchatka]
     generic: teddy bears and woodland animals
+    # public_domain:                       # dopisuje użytkownik po sprawdzeniu stanu prawnego
+    #   markets: [US]                      # książka z 1926 r.; w UK tekst od 2027, ilustracje dłużej
+    #   styles: [cozy, chibi]              # bez cartoon: za blisko wersji filmowej
+    #   characters: [Pooh, Piglet, Eeyore, Owl, Rabbit, Kanga, Roo]
+    #   look:
+    #     Pooh: small round teddy bear with short limbs, wearing no clothes
+    #     Piglet: very small piglet in a striped knitted jumper
+    #   avoid: [red shirt, animated film character design]
+    #   source: https://web.law.duke.edu/cspd/publicdomainday/2022/bcvpd/
+    #   checked: 2026-11-17
 ```
 
 - Lista startowa obejmuje popularne w kolorowankach marki zabawek, postacie z filmów, seriali, gier i książek oraz ligi sportowe, z polskimi tytułami i odmianami. Rozwija ją użytkownik. Brak w liście nie oznacza, że nazwa jest wolna.
-- Walidacja konfiguracji (§7): pusta nazwa albo zdublowana forma kończy się kodem 1. Po FR-19 formy obejmują pisownię każdego rynku.
+- Walidacja konfiguracji (§7): pusta nazwa albo zdublowana forma kończy się kodem 1. W `public_domain` klucze `styles` muszą istnieć w `styles.yaml`, `markets` w `markets.yaml` (FR-19), każda postać z `characters` musi mieć `look`, a `source` i `checked` są wymagane. Po FR-19 formy obejmują pisownię każdego rynku.
 
 **Ograniczenia**
 - Ani lista, ani model nie znają wszystkich chronionych nazw, a „inspiracja” może wyjść zbyt podobna. Program zmniejsza ryzyko, ale nie zastępuje porady prawnej. Ostateczną decyzję przed publikacją podejmuje użytkownik.
@@ -1099,7 +1121,7 @@ names:
 **Uwagi do implementacji**
 - Moduł `pipeline/protected.py`: `ProtectedNames` z konfiguracji, `find(text) -> list[Hit]` i wspólna funkcja składania znaków z `slugify`.
 - Pola `protected_terms` i `generic_theme` w `_LLMIdeas` (opcjonalne przy wczytywaniu, żeby stare `ideas.json` działały). Werdykt kodu dla pomysłu przechodzi przez `IdeaReviewer._apply()`.
-- Testy: odmiany polskie, „legowisko” bez trafienia, samo „Kubuś” bez trafienia, ponowienie z informacją zwrotną, nazwa w ręcznie poprawionym `ideas.json` (kod 1), `--strict` (kod 1 bez wywołań API), kryterium QA w `FakeVisionProvider`.
+- Testy: odmiany polskie, „legowisko” bez trafienia, samo „Kubuś” bez trafienia, ponowienie z informacją zwrotną, nazwa w ręcznie poprawionym `ideas.json` (kod 1), `--strict` (kod 1 bez wywołań API), kryterium QA w `FakeVisionProvider`, wyjątek `public_domain` (dozwolony styl i rynek: imiona tylko w tytułach stron; styl spoza listy albo inny rynek: temat ogólny z powodem w konsoli; nowy styl domyślnie zablokowany).
 
 ## 7. Profile (konfiguracja YAML)
 
