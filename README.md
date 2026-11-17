@@ -68,6 +68,8 @@ Wynik:
 - `cover_preview.png` ze strefami i szablonem;
 - `cover_proof.png` (symulacja druku) i `cover_gamut.png` (miejsca, gdzie kolor zmieni się w druku).
 
+Okładkę może też zrobić `generate --cover` jako ostatni krok, po `finalize` (domyślnie `cover.in_generate: false` w `config/settings.yaml`). Strony wybiera wtedy model z wizją, pozostałe ustawienia okładki pochodzą z `settings.yaml`, a jej koszt liczy się do tego samego `--max-cost`. Okładka powstaje tylko wtedy, gdy wszystkie strony są gotowe; w przeciwnym razie `generate` ją pomija, a po dokończeniu książki uruchamiasz `cover`.
+
 Do konwersji CMYK potrzebny jest profil ICC, który wskazujesz w `config/settings.yaml` (`cover.cmyk.profile`). KDP żadnego nie podaje; zwykle używa się U.S. Web Coated (SWOP) v2 z pakietu profili Adobe, który pobierasz sam. Do prób na macOS wystarczy `/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc`. Ostateczną kontrolą kolorów jest egzemplarz próbny z KDP.
 
 ### Koszt i limit (FR-10)

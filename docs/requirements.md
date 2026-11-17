@@ -28,7 +28,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | 🟡 | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Zmiana z 17.11: osobne polecenie `belongs-to` i krok w `generate` (dziś strona powstaje w krokach `images` i `finalize`). |
-| FR-15 | 🟡 | #31, #32, #39 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. Do zrobienia `generate --cover` (zmiana z 17.11). Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
+| FR-15 | ✅ | #31, #32, #39, #40 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -399,16 +399,18 @@ przedszkole:
 - **Ponowna obróbka bez modelu** (dziś w kroku 3, po zmianie w `belongs-to`), gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Dzięki temu zmiana napisu lub czcionki nie kosztuje nowej grafiki.
 - **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
-### 🟡 FR-15: Okładka (poza MVP)
+### ✅ FR-15: Okładka (poza MVP)
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
 
-**`generate --cover`** (zmiana z 17.11.2026)
+**`generate --cover`** (zmiana z 17.11.2026, zrobiona)
 - `generate --cover` uruchamia `cover` jako ostatni krok, po `finalize`: `ideas` → `images` → (`belongs-to`) → `finalize` → `cover`. Jedno polecenie daje wtedy cały pakiet do KDP: strony do Canvy i gotowy PDF okładki.
-- Działa jak `cover` **bez wskazania stron**: stronę na przód i miniatury tyłu proponuje model z wizją (patrz „Wybór grafik”). `--template`, kolor i jakość pochodzą z `settings.yaml`.
+- Działa jak `cover` **bez wskazania stron**: stronę na przód i miniatury tyłu proponuje model z wizją (patrz „Wybór grafik”). Kolor, wybór stron, QA, opis na tyle i jakość grafik okładki pochodzą z `settings.yaml` (`cover.colorize`, `cover.select_pages`, `cover.qa`, `cover.back_text`, `image_quality`); `--image-quality` z `generate` dotyczy tylko stron. Kontroli szablonu KDP nie ma, bo szablon zależy od liczby stron: `--template` zostaje w `cover`.
 - Okładka startuje tylko wtedy, gdy wszystkie strony książki są `ok`. W przeciwnym razie `generate` pomija ją z komunikatem i kończy się kodem 2 jak dotąd; okładkę robi się potem samodzielnym `cover`.
 - `generate` tworzy wszystkich dostawców, także model z wizją do wyboru stron, przed pierwszym wywołaniem API. Koszt okładki liczy się do tego samego `--max-cost` co reszta uruchomienia (FR-10).
-- Wartość domyślna flagi: `cover.in_generate` w `settings.yaml` (domyślnie `false`).
+- Wartość domyślna flagi: `cover.in_generate` w `settings.yaml` (domyślnie `false`); `--no-cover` ją wyłącza.
+- Przed pierwszym wywołaniem API `generate --cover` sprawdza też czcionkę tytułu, profil CMYK i liczbę stron: okładka potrzebuje co najmniej `cover.thumbnails + 1` stron (przód i miniatury), inaczej kod 1.
+- Okładka powstaje pod tą samą blokadą książki co pozostałe kroki. `cover.cost_usd` to tylko jej część wydatków uruchomienia, a `cost_usd` książki obejmuje wszystko. Kod wyjścia to najgorszy z kroków (np. 3, gdy limit skończy się na okładce); podsumowanie `generate` (strony, koszt, czas z krokiem „okładka”) wypisuje się także po błędzie okładki.
 
 
 **Stałe założenia produkcyjne**
@@ -1059,7 +1061,7 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
 ├── kdp-studio.log                  # logi strukturalne wszystkich kroków, wiersze JSON (NFR-09)
 ├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
-└── cover/                          # tylko po `kdp-studio cover` (FR-15, poza MVP)
+└── cover/                          # tylko po `kdp-studio cover` albo `generate --cover` (FR-15, poza MVP)
     ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
     ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
     ├── cover.png, front.png

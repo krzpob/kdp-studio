@@ -328,6 +328,7 @@ class CoverSettings(_Strict):
     # Etap 3: wybór stron modelem z wizją, tło tyłu i grzbietu z modelu, QA okładki.
     select_pages: bool = True  # --select-pages/--no-select-pages
     qa: bool = False  # --qa/--no-qa
+    in_generate: bool = False  # generate --cover/--no-cover: okładka jako ostatni krok
     back_prompt: Annotated[str, Field(min_length=1)] = DEFAULT_BACK_PROMPT
     seam_bands: Annotated[int, Field(ge=2, le=32)] = 8  # pasy poziome kontroli styku
     back_text_pt: Annotated[float, Field(gt=0)] = 16
