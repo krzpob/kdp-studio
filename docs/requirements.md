@@ -32,6 +32,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
+| FR-20 | ⬜ | | Poza MVP. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -118,7 +119,7 @@ Wynik MVP to **jeden katalog** z grafikami i plikami metadanych. Każda grafika 
 | `--format` | enum | nie (domyślnie `letter`) | `square` | `letter` (8.5"×11") albo `square` (8.5"×8.5") |
 | `--pages` | int | nie (domyślnie `30`) | `30` | Liczba grafik (stron kolorowanki) |
 
-Parametry techniczne opisuje sekcja 9.
+Parametry techniczne opisuje sekcja 9. Wszystkie parametry można też podać w pliku `--config-file` (FR-20, poza MVP); flaga ma wtedy pierwszeństwo przed plikiem.
 
 ## 6. Wymagania funkcjonalne
 
@@ -847,6 +848,80 @@ comfyui:
   cost_per_image_usd: 0
 ```
 
+### ⬜ FR-20: Plik parametrów książki `--config-file` (poza MVP)
+
+Cel: krótsze wywołanie i powtarzalne ustawienia. Zamiast kilkunastu flag użytkownik podaje jeden plik YAML z parametrami książki, a flagi w wierszu poleceń nadpisują pojedyncze wartości. Plik przydaje się też tam, gdzie flaga jest za ciasna: przy liście bohaterów i scen (sekcja 14a).
+
+```bash
+kdp-studio generate --config-file ksiazki/kotki.yaml
+kdp-studio generate --config-file ksiazki/kotki.yaml --pages 40 --no-qa    # flagi wygrywają
+kdp-studio generate --config-file output/swiateczne_kotki_wczesnoszkolne_cozy_square/manifest.json --theme "Kotki w ogrodzie"
+```
+
+Plik nie jest konfiguracją programu (`config/`, `KDP_STUDIO_CONFIG_DIR`, §7). Opisuje jedną książkę i jej uruchomienie, więc pomoc flagi mówi o „pliku parametrów książki”.
+
+**Struktura pliku**
+- Jeden schemat (`BookInput`, Pydantic, `extra="forbid"`) dla pliku i dla sekcji `input` w `manifest.json`. Klucze najwyższego poziomu to nazwy flag `generate` bez `--`, z podkreśleniem zamiast myślnika (`image_quality`, `max_cost`, `review_ideas`). Ustawienia stron wstępnych i okładki mają własne sekcje, bo te same nazwy (`qa`, `image_quality`, `max_cost`) znaczą tam co innego niż dla stron.
+- `belongs_to.enabled` odpowiada `generate --belongs-to-page`, a `cover.enabled` odpowiada `generate --cover`. Skrót `cover: true` znaczy `cover: {enabled: true}`.
+- Pozostałe klucze sekcji `cover` to flagi polecenia `cover` (`page`, `thumbnails`, `template`, `color`, `select_pages`, `back_text`, `qa`, `image_quality`, `max_cost`). `generate --cover` działa bez wskazanej strony (FR-15), więc `page` i `thumbnails` czyta tylko polecenie `cover`.
+- Gdy pomysły z sekcji 14a staną się wymaganiami, dochodzą klucze `humanize`, `characters` i `scenes`. W pliku bohater ma osobne pola na wygląd (do promptu obrazu) oraz imię i charakter (tylko do generatora pomysłów), czego jeden napis we fladze `--character` nie oddaje.
+
+```yaml
+# ksiazki/kotki.yaml
+theme: Świąteczne kotki
+age: wczesnoszkolne
+style: cozy
+format: square
+pages: 30
+market: US                  # FR-19
+review_ideas: true
+qa: true
+image_quality: medium
+concurrency: 4
+max_cost: 6.00
+belongs_to:
+  enabled: true
+  qa: true
+cover:
+  enabled: true
+  back_text: true
+  qa: true
+  max_cost: 1.00
+# po przyjęciu pomysłów z sekcji 14a:
+# humanize: true
+# characters:
+#   - name: Feliks
+#     look: small ginger kitten with a striped scarf and a bell on the collar
+#     personality: ciekawski, trochę niezdarny
+#   - file: bohaterowie/mruczka.yaml
+# scenes: sceny.yaml
+```
+
+**Pierwszeństwo**
+- Flaga w wierszu poleceń > plik > profil (np. przyszłe `humanize` w `styles.yaml`) > `config/settings.yaml` > wartość domyślna w kodzie.
+- Lista z flagi zastępuje całą listę z pliku, bez łączenia (np. powtarzana `--character` zastępuje `characters`).
+- Brakujące wymagane parametry (`theme`, `age`, `style`) i błędne wartości wychodzą po scaleniu źródeł, jednym raportem jak w FR-01 (kod 1). Komunikat podaje źródło wartości: `kotki.yaml: pages: 300 poza zakresem 1–200` albo `--pages: …`.
+
+**Odczyt i walidacja**
+- YAML w UTF-8. Plik JSON też jest przyjmowany, bo YAML go obejmuje. Gdy plik ma sekcję `input` (jak `manifest.json`), program bierze tylko ją, więc `manifest.json` istniejącej książki służy za wzór nowej.
+- Nieznany klucz, zły typ albo zła wartość wyliczeniowa kończą się kodem 1 przed pierwszym wywołaniem API, ze ścieżką klucza (`cover.thumbnails[1]`). Literówka nie może zostać po cichu pominięta.
+- Ścieżki względne w pliku (`characters[].file`, `scenes`, `cover.template`, `output_dir`) liczą się od katalogu pliku, nie od katalogu roboczego. Ścieżki z flag liczą się jak dziś od katalogu roboczego.
+- Plik nie przyjmuje sekretów: kluczy API, tokenów ani adresów z tokenem (§9.2, NFR-10). Schemat nie ma na nie pól.
+
+**Polecenia**
+- `ideas` i `generate`: plik opisuje nową książkę. `ideas` bierze klucze potrzebne w kroku 1 i nie zgłasza pozostałych, bo ten sam plik służy kolejnym krokom.
+- `images`, `belongs-to` i `cover` przyjmują ten sam plik razem z katalogiem książki i biorą z niego ustawienia swojego kroku. Klucze opisujące książkę (`theme`, `age`, `style`, `format`, `pages`, `market`, `front_matter_pages`, a w przyszłości `humanize`, `characters`, `scenes`) muszą wtedy zgadzać się z `input` w manifeście. Różnica kończy się kodem 1 z listą różnic, bo plik opisuje inną książkę, a zmiana tych wartości wymaga nowej książki albo `ideas --redo`.
+- `finalize` i `price` nie przyjmują pliku.
+
+**Manifest**
+- `input` w manifeście zapisuje skuteczne wartości wszystkich kluczy schematu po scaleniu, a nie tylko te, które podał użytkownik. Dzięki temu manifest jest kompletnym plikiem parametrów (NFR-08), a stare manifesty bez nowych pól wczytują się z wartościami domyślnymi.
+- `input.config_file` zapisuje ścieżkę i `sha256` użytego pliku, a `input.overrides` nazwy kluczy nadpisanych flagami. Wartości sekretne nigdy tam nie trafiają, bo plik ich nie zawiera.
+
+**Uwagi do implementacji**
+- Opcje typer w `ideas`, `generate`, `images`, `belongs-to` i `cover` mają domyślnie `None`, żeby dało się odróżnić flagę niepodaną od podanej. Dziś `--format`, `--pages`, `--strict` i `--output-dir` mają domyślne wartości w sygnaturze `generate` i `ideas`; przenoszą się do kroku scalania.
+- Scalanie w jednej funkcji (np. `resolve_input(cli, file, config)`), która zwraca `BookInput` i mapę źródeł każdej wartości, użytą w komunikatach błędów i w `input.overrides`.
+- Testy: tabela pierwszeństwa (flaga, plik, settings), nieznany klucz, ścieżki względne od katalogu pliku, `manifest.json` jako plik wejściowy, niezgodność pliku z manifestem w `images`, brak sekretów w manifeście.
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -983,6 +1058,7 @@ Mapowanie rozmiarów dla OpenAI: `square` → `1024x1024`, `letter` → `1024x15
 ```bash
 # Generowanie książki: wszystkie trzy kroki po kolei (FR-17)
 kdp-studio generate \
+  [--config-file ksiazki/dinozaury.yaml] \
   --theme "Dinozaury" \
   --age przedszkole \
   --style kawaii \
@@ -1009,6 +1085,9 @@ kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # Każdy krok przyjmuje też --log-level info|debug (NFR-09)
+# Plik parametrów książki (FR-20, poza MVP): flagi nadpisują wartości z pliku
+kdp-studio generate --config-file ksiazki/dinozaury.yaml --pages 40
+kdp-studio images ./output/dinozaury_przedszkole_kawaii_square --config-file ksiazki/dinozaury.yaml
 # Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
 
 # Lista dostępnych profili
@@ -1035,7 +1114,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują `settings.yaml`.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują plik parametrów książki (`--config-file`, FR-20), a ten nadpisuje `settings.yaml`. Plik książki nie przyjmuje sekretów.
 
 ### 9.3 Kody wyjścia
 
@@ -1194,10 +1273,12 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Generator umieszcza bohaterów na większości stron, a weryfikacja pomysłów sprawdza zgodność z opisem.
 - Ograniczenie: opis tekstowy zapewnia ten sam strój i znaki szczególne, ale twarz i proporcje różnią się między stronami. Pełną spójność dałaby karta postaci generowana raz i podawana jako `reference_image` do każdej strony.
 - Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
+- W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
 
 **`--scenes`: własne sceny zamiast wymyślonych**
 - Plik z listą scen podanych przez użytkownika zastępuje generowanie pomysłów (FR-03). Weryfikacja, prompty i dalsze kroki działają bez zmian.
 - Zastosowanie: zbiór własnych opowiadań, w którym część stron to kolorowanki z wybranych scen, razem z `--character` dla bohaterów opowiadań.
+- W pliku parametrów książki (FR-20) `scenes` to lista scen w miejscu albo ścieżka do pliku, liczona od katalogu pliku książki.
 
 ## 15. Źródła i referencje
 - KDP: rozmiary stron (trim sizes), wymagania druku i ujawnianie treści AI: https://kdp.amazon.com/help/topic/GVBQ3CMEQW3W2VL6
