@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -362,7 +363,7 @@ def test_qa_instructions_allow_the_program_text(repo_config: AppConfig) -> None:
     assert "- text: any letters, words, numbers, signatures, logos or watermarks.\n" not in text
 
 
-# --- CLI ----------------------------------------------------------------------------------
+# --- CLI: generate --belongs-to-page ------------------------------------------------------
 
 
 def test_generate_with_belongs_to_page(
@@ -370,9 +371,14 @@ def test_generate_with_belongs_to_page(
 ) -> None:
     assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
     out = capsys.readouterr().out
-    assert "Strona „This book belongs to…”: prompt ramki w manifeście" in out
+    assert "Strona „This book belongs to…”: nowy wpis w manifeście" in out
     assert f"{FRONT_NAME}: ok, ramka (1 próba" in out
     assert f"{FRONT_NAME}: ok (ramka, " in out
+    assert "Czas kroku (strona „belongs to”)" in out
+    # Krok między images a finalize; canva.md pisze dopiero finalize.
+    assert out.index("Surowe grafiki:") < out.index(f"{FRONT_NAME}: ok, ramka")
+    assert out.index(f"{FRONT_NAME}: ok (ramka") < out.index("Gotowe strony:")
+    assert "Odświeżono instrukcję" not in out
     assert FRONT_PNG.is_file() and (BOOK / "svg" / f"{FRONT_NAME}.svg").is_file()
     assert len(provider.front_requests) == 1
     front = _front()
@@ -407,67 +413,15 @@ def test_no_front_page_by_default(provider: FrontAwareProvider) -> None:
     assert "front_belongs_to" not in (BOOK / "canva.md").read_text(encoding="utf-8")
 
 
-def test_images_adds_and_removes_the_page(provider: FrontAwareProvider) -> None:
-    assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
-    assert main(["images", ARG, "--belongs-to-page"]) == ExitCode.OK
-    assert _front()["status"] == "raw_ok"
-    assert len(provider.pages.requests) == 3  # strony bez zmian
-    assert main(["finalize", ARG]) == ExitCode.OK
-    assert FRONT_PNG.is_file()
-    assert main(["images", ARG]) == ExitCode.OK  # wpis zostaje, nic do zrobienia
-    assert len(provider.front_requests) == 1
-    assert main(["images", ARG, "--no-belongs-to-page"]) == ExitCode.OK
-    assert _manifest()["front_matter"]["belongs_to"] is None
-    assert not FRONT_PNG.exists()
-
-
-def test_regenerate_front_page(provider: FrontAwareProvider) -> None:
-    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
-    data = _manifest()
-    data["front_matter"]["belongs_to"]["action"] = "regenerate"
-    (BOOK / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
-    assert main(["images", ARG]) == ExitCode.OK
-    assert len(provider.front_requests) == 2
-    front = _front()
-    assert (front["status"], front["action"], front["attempts"]) == ("raw_ok", None, 2)
-    assert not FRONT_PNG.exists()  # stara strona usunięta do czasu finalize
-    assert front["cost_usd"] == pytest.approx(2 * FAKE_IMAGE_COST)
-
-
-def test_finalize_rerenders_after_text_change(
-    provider: FrontAwareProvider,
-    monkeypatch: pytest.MonkeyPatch,
-    config_dir: Any,
-) -> None:
-    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
-    before = FRONT_PNG.read_bytes()
-    formats = _formats()
-    settings = fake_settings()
-    settings["belongs_to_page"]["text"] = "Ta książka należy do:"
-    monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=formats, settings=settings)))
-    assert main(["finalize", ARG]) == ExitCode.OK
-    assert FRONT_PNG.read_bytes() != before
-    assert len(provider.front_requests) == 1  # bez nowej grafiki
-
-
-def _formats() -> dict[str, Any]:
-    formats = yaml.safe_load((DEFAULT_CONFIG_DIR / "formats.yaml").read_text(encoding="utf-8"))
-    for fmt in formats.values():
-        fmt["dpi"] = TEST_DPI
-        fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
-    assert isinstance(formats, dict)
-    return formats
-
-
-def test_failed_front_page_is_partial(
+def test_generate_skips_front_page_without_ready_pages(
     provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    provider.front_blank = [False]
     provider.pages.fail = lambda req: ProviderError("moderacja", fatal=False)
-    code = main([*GENERATE, "--pages", "3", "--belongs-to-page"])
-    assert code == ExitCode.PARTIAL
-    assert _front()["status"] == "failed"
-    assert f"nieudane strony: {FRONT_NAME}, page_01" in capsys.readouterr().err
+    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.PARTIAL
+    err = capsys.readouterr().err
+    assert "strona „This book belongs to…” pominięta: brak gotowych surowych grafik" in err
+    assert _manifest()["front_matter"]["belongs_to"] is None
+    assert provider.front_requests == []
 
 
 def test_fatal_error_on_front_page_exits_4(provider: FrontAwareProvider) -> None:
@@ -475,6 +429,22 @@ def test_fatal_error_on_front_page_exits_4(provider: FrontAwareProvider) -> None
     assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.PROVIDER_ERROR
     assert _manifest()["status"] == "failed"
     assert not FRONT_PNG.exists()
+    assert not (BOOK / "canva.md").exists()  # finalize czeka na usunięcie przyczyny
+
+
+def test_front_page_over_budget_exits_3(
+    provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
+    book_cost = _manifest()["cost_usd"]
+    shutil.rmtree(BOOK)
+    # Limit starcza na wszystkie strony, ale po nich jest już wyczerpany.
+    limit = f"{book_cost - 1e-6:.7f}"
+    code = main([*GENERATE, "--pages", "3", "--belongs-to-page", "--max-cost", limit])
+    assert code == ExitCode.BUDGET_EXCEEDED
+    assert f"pominięto {FRONT_NAME}" in capsys.readouterr().err
+    assert _manifest()["status"] == "budget_exceeded"
+    assert provider.front_requests == []
 
 
 def test_qa_checks_front_page_with_its_own_criteria(
@@ -493,16 +463,175 @@ def test_missing_font_fails_before_api_calls(
     provider: FrontAwareProvider,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    settings = fake_settings()
-    settings["belongs_to_page"]["font"] = "assets/fonts/missing.ttf"
-    monkeypatch.setenv(
-        "KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=_formats(), settings=settings))
-    )
+    _use_settings(monkeypatch, config_dir, font="assets/fonts/missing.ttf")
     assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.VALIDATION_ERROR
     assert "brak czcionki" in capsys.readouterr().err
     assert not BOOK.exists()
 
 
-def test_redo_rejects_the_flag(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["ideas", ARG, "--redo", "idea_01", "--belongs-to-page"]) == 1
-    assert "kdp-studio images <katalog>" in capsys.readouterr().err
+@pytest.mark.parametrize("command", [["ideas", "--theme", "Dinozaury"], ["images", ARG]])
+def test_only_generate_takes_the_flag(command: list[str]) -> None:
+    assert main([*command, "--belongs-to-page"]) == ExitCode.VALIDATION_ERROR
+
+
+# --- CLI: kdp-studio belongs-to -----------------------------------------------------------
+
+
+def _use_settings(monkeypatch: pytest.MonkeyPatch, config_dir: Any, **belongs_to: Any) -> None:
+    settings = fake_settings()
+    settings["belongs_to_page"].update(belongs_to)
+    monkeypatch.setenv(
+        "KDP_STUDIO_CONFIG_DIR", str(config_dir(formats=_formats(), settings=settings))
+    )
+
+
+def _formats() -> dict[str, Any]:
+    formats = yaml.safe_load((DEFAULT_CONFIG_DIR / "formats.yaml").read_text(encoding="utf-8"))
+    for fmt in formats.values():
+        fmt["dpi"] = TEST_DPI
+        fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
+    assert isinstance(formats, dict)
+    return formats
+
+
+def test_belongs_to_adds_page_to_finished_book(
+    provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
+    capsys.readouterr()
+    assert main(["belongs-to", ARG]) == ExitCode.OK
+    out = capsys.readouterr().out
+    assert f"{FRONT_NAME}: ok, ramka (1 próba" in out
+    assert f"Odświeżono instrukcję składania w Canvie: {BOOK / 'canva.md'}" in out
+    assert "Czas kroku (strona „belongs to”)" in out
+    assert len(provider.pages.requests) == 3  # strony bez zmian
+    assert FRONT_PNG.is_file() and _front()["status"] == "ok"
+    assert _manifest()["status"] == "completed"
+    assert f"`{FRONT_NAME}.png`" in (BOOK / "canva.md").read_text(encoding="utf-8")
+    # Drugie uruchomienie nic nie robi i nic nie kosztuje.
+    assert main(["belongs-to", ARG]) == ExitCode.OK
+    assert f"{FRONT_NAME} jest aktualna, nic do zrobienia." in capsys.readouterr().out
+    assert len(provider.front_requests) == 1
+
+
+def test_belongs_to_before_finalize_leaves_canva_to_finalize(
+    provider: FrontAwareProvider,
+) -> None:
+    assert main(["ideas", *GENERATE[1:], "--pages", "3"]) == ExitCode.OK
+    assert main(["images", ARG]) == ExitCode.OK
+    assert main(["belongs-to", ARG]) == ExitCode.OK
+    assert FRONT_PNG.is_file() and not (BOOK / "canva.md").exists()
+    assert _manifest()["status"] == "raw_ready"
+    assert main(["finalize", ARG]) == ExitCode.OK
+    assert f"`{FRONT_NAME}.png`" in (BOOK / "canva.md").read_text(encoding="utf-8")
+    assert _manifest()["status"] == "completed"
+
+
+def test_belongs_to_needs_raw_pages(
+    provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["ideas", *GENERATE[1:], "--pages", "3"]) == ExitCode.OK
+    assert main(["belongs-to", ARG]) == ExitCode.VALIDATION_ERROR
+    assert f"najpierw kdp-studio images {BOOK}" in capsys.readouterr().err
+    assert provider.front_requests == []
+    assert _manifest()["front_matter"]["belongs_to"] is None
+
+
+def test_belongs_to_remove(
+    provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
+    capsys.readouterr()
+    assert main(["belongs-to", ARG, "--remove"]) == ExitCode.OK
+    assert "Usunięto stronę „This book belongs to…”" in capsys.readouterr().out
+    assert _manifest()["front_matter"]["belongs_to"] is None
+    assert not FRONT_PNG.exists() and not (BOOK / "svg" / f"{FRONT_NAME}.svg").exists()
+    assert (BOOK / "raw" / f"{FRONT_NAME}.png").is_file()  # surowa grafika zostaje
+    assert "front_belongs_to" not in (BOOK / "canva.md").read_text(encoding="utf-8")
+    assert _manifest()["status"] == "completed"
+    assert main(["belongs-to", ARG, "--remove"]) == ExitCode.OK
+    assert "nic do usunięcia" in capsys.readouterr().out
+
+
+def test_remove_takes_no_generation_options(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["belongs-to", ARG, "--remove", "--qa"]) == ExitCode.VALIDATION_ERROR
+    assert "--remove nie łączy się" in capsys.readouterr().err
+
+
+def test_regenerate_front_page(provider: FrontAwareProvider) -> None:
+    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
+    data = _manifest()
+    data["front_matter"]["belongs_to"]["action"] = "regenerate"
+    (BOOK / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    assert main(["images", ARG]) == ExitCode.OK  # images nie rusza strony FR-14
+    assert len(provider.front_requests) == 1
+    assert main(["belongs-to", ARG]) == ExitCode.OK
+    assert len(provider.front_requests) == 2
+    front = _front()
+    assert (front["status"], front["action"], front["attempts"]) == ("ok", None, 2)
+    assert FRONT_PNG.is_file()
+    assert front["cost_usd"] == pytest.approx(2 * FAKE_IMAGE_COST)
+
+
+def test_text_change_rerenders_without_new_frame(
+    provider: FrontAwareProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
+    before = FRONT_PNG.read_bytes()
+    _use_settings(monkeypatch, config_dir, text="Ta książka należy do:")
+    capsys.readouterr()
+    assert main(["finalize", ARG]) == ExitCode.OK  # finalize tylko przypomina
+    assert "nie odpowiada obecnym ustawieniom" in capsys.readouterr().err
+    assert FRONT_PNG.read_bytes() == before
+    assert main(["belongs-to", ARG]) == ExitCode.OK
+    assert FRONT_PNG.read_bytes() != before
+    assert len(provider.front_requests) == 1  # bez nowej grafiki
+
+
+def test_failed_text_is_not_retried_with_a_new_frame(
+    provider: FrontAwareProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
+    _use_settings(monkeypatch, config_dir, text="This book belongs to " * 20)
+    assert main(["belongs-to", ARG]) == ExitCode.PARTIAL
+    err = capsys.readouterr().err
+    assert f"nieudana strona {FRONT_NAME}: obróbka:" in err
+    assert _front()["status"] == "failed" and _manifest()["status"] == "partial"
+    assert main(["belongs-to", ARG]) == ExitCode.PARTIAL
+    assert len(provider.front_requests) == 1  # napis nie zależy od ramki
+    assert main(["finalize", ARG]) == ExitCode.PARTIAL
+    assert f"ponów: kdp-studio belongs-to {BOOK}" in capsys.readouterr().err
+
+
+def test_images_warns_when_fallback_art_was_regenerated(
+    provider: FrontAwareProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    provider.front_blank = [False]
+    assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
+    data = _manifest()
+    data["pages"][0]["action"] = "regenerate"
+    (BOOK / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["images", ARG]) == ExitCode.OK
+    err = capsys.readouterr().err
+    assert f"{FRONT_NAME} używa grafiki page_01 sprzed ponownego generowania" in err
+    assert f"kdp-studio belongs-to {BOOK}" in err
+
+
+def test_belongs_to_missing_font(
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: Any,
+    provider: FrontAwareProvider,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
+    _use_settings(monkeypatch, config_dir, font="assets/fonts/missing.ttf")
+    assert main(["belongs-to", ARG]) == ExitCode.VALIDATION_ERROR
+    assert "brak czcionki" in capsys.readouterr().err
+    assert provider.front_requests == []

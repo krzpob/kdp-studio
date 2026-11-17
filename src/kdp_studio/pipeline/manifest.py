@@ -191,7 +191,7 @@ class FrontPage(_Model):
 
 
 class FrontMatter(_Model):
-    belongs_to: FrontPage | None = None  # tylko z --belongs-to-page
+    belongs_to: FrontPage | None = None  # po kdp-studio belongs-to
 
 
 class CoverTemplateInfo(_Model):
@@ -524,7 +524,7 @@ class ManifestWriter:
         quality: str,
         cost_usd: float = 0.0,
     ) -> None:
-        """Wynik kroku 2 dla strony FR-14: surowa grafika i układ albo błąd."""
+        """Ramka strony FR-14 z modelu (albo układ zapasowy) i jej koszt, albo błąd."""
         front = self.front
         assert front is not None
         ok = outcome.status == "ok" and outcome.raw_file is not None
@@ -560,7 +560,7 @@ class ManifestWriter:
     def record_front_final(
         self, *, png: Path | None, svg: Path | None, final: FinalInfo, error: str | None
     ) -> None:
-        """Wynik kroku 3 dla strony FR-14; jak w record_final, `final` zostaje po błędzie."""
+        """Gotowa strona FR-14 z napisem; jak w record_final, `final` zostaje po błędzie."""
         front = self.front
         assert front is not None
         front.status = "ok" if error is None else "failed"
