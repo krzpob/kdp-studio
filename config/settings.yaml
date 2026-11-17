@@ -155,6 +155,7 @@ cover:
     image. No text, no letters, no title, no logos, no frame, no border.
   contour_match_min: 0.85       # tyle konturów szkicu musi mieć ciemny piksel modelu w pobliżu,
   contour_search_in: 0.02       # w tym promieniu, żeby nałożyć ostre kontury 300 DPI
+  title_band_max_edges: 0.01    # więcej krawędzi w pasie tytułu (napis, obiekt) to ponowienie
   # Etap 3: bez --cover-page/--thumbnails strony proponuje model z wizją (arkusz kontaktowy).
   select_pages: true
   qa: false                     # --qa: model z wizją sprawdza gotową okładkę
