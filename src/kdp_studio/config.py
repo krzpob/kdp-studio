@@ -344,6 +344,9 @@ class CoverSettings(_Strict):
     )
     contour_match_min: Annotated[float, Field(ge=0, le=1)] = 0.85
     contour_search_in: Annotated[float, Field(gt=0)] = 0.02
+    # Pas tytułu ma zostać spokojnym tłem; więcej krawędzi (udział pikseli) to napis albo obiekt
+    # z modelu, który program przykryłby swoim tytułem: ponowienie kolorowania.
+    title_band_max_edges: Annotated[float, Field(gt=0, lt=1)] = 0.01
     # Etap 3: wybór stron modelem z wizją, tło tyłu i grzbietu z modelu, QA okładki.
     select_pages: bool = True  # --select-pages/--no-select-pages
     qa: bool = False  # --qa/--no-qa

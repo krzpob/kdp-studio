@@ -122,6 +122,12 @@ def test_back_prompt_has_horizon_colors_and_zones(repo_config: AppConfig) -> Non
     assert "{" not in prompt and "No text" in prompt
     flat = back_prompt(settings, "s", geometry, None, ["#FFFFFF"], None)
     assert "no horizon line" in flat and "#FFFFFF" in flat
+    assert "Book title" not in flat
+    themed = back_prompt(settings, "s", geometry, None, ["#FFFFFF"], None, ["unicorns", "winter"])
+    assert themed.endswith(
+        "\nThe book is about unicorns, winter; keep the same place, season and weather as the "
+        "front cover."
+    )
 
 
 def test_bad_outpaint_prompt_placeholder_is_a_config_error(config_dir: ConfigDirFactory) -> None:
