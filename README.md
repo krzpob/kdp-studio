@@ -81,7 +81,7 @@ Do konwersji CMYK potrzebny jest profil ICC, który wskazujesz w `config/setting
 
 Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i cennika `api_pricing` w `config/settings.yaml` (ceny przepisane ze strony OpenAI, z datą sprawdzenia). Gdy OpenAI zmieni ceny albo przełączysz model, zaktualizuj ten cennik: model bez ceny to błąd przed pierwszym wywołaniem. Koszt każdej strony, pomysłów i całej książki zapisuje się w `manifest.json` (`cost_usd`), a konsola pokazuje koszt stron, kroków i podsumowanie `generate`.
 
-`--max-cost` (domyślnie `max_cost_usd: 5.00` z `settings.yaml`) to limit jednego uruchomienia `ideas`, `images` albo `generate`. Po jego przekroczeniu strony w toku się kończą, nowe nie startują, manifest dostaje status `budget_exceeded`, a program kończy się kodem 3. Brakujące strony dokończysz tak:
+`--max-cost` (domyślnie `max_cost_usd: 5.00` z `settings.yaml`) to limit kosztu całej książki, razem z poprawkami: `images`, `belongs-to`, `cover` i `ideas --redo` liczą od kosztu, który książka już ma w `manifest.json` (`cost_usd`). Książka, która wydała już limit, nie zacznie kolejnego polecenia, dopóki go nie podniesiesz. Po jego przekroczeniu strony w toku się kończą, nowe nie startują, manifest dostaje status `budget_exceeded`, a program kończy się kodem 3. Brakujące strony dokończysz tak:
 
 ```bash
 uv run kdp-studio images output/<książka> --max-cost 10

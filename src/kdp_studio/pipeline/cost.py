@@ -1,8 +1,11 @@
 """FR-10: koszt wywołań API z cennika w konfiguracji i limit budżetu.
 
 Koszt liczy się z tokenów, które zwraca API (`Usage`), i cen z `settings.yaml` (`api_pricing`).
-Limit (`--max-cost`) dotyczy jednego uruchomienia komendy: `CostTracker` sumuje koszt kroków
-w tym uruchomieniu, a worker przed każdą nową grafiką pyta, czy limit nie został przekroczony.
+Limit (`--max-cost`) dotyczy całej książki, razem z poprawkami w kolejnych uruchomieniach
+(zmiana z 17.11.2026; wcześniej jednego uruchomienia): `CostTracker` zaczyna od kosztu, który
+książka już ma w manifeście (`spent_before`), i sumuje koszt kroków tego uruchomienia, a worker
+przed każdą nową grafiką pyta, czy suma nie przekroczyła limitu. Łączny koszt książki posłuży
+też do policzenia, ile egzemplarzy go zwróci (FR-16).
 """
 
 from __future__ import annotations
@@ -38,13 +41,15 @@ def format_usd(amount: float) -> str:
 
 @dataclass
 class CostTracker:
-    """Koszt jednego uruchomienia komendy według rodzaju wywołań i limit budżetu.
+    """Koszt jednego uruchomienia komendy według rodzaju wywołań i limit budżetu książki.
 
+    `spent` to koszt tego uruchomienia, `total` razem z tym, co książka wydała wcześniej.
     `add()` woła wątek główny, `over_budget()` także wątki workera; odczyt i zapis pod blokadą.
     """
 
     pricing: ApiPricing
     limit_usd: float
+    spent_before: float = 0.0  # koszt książki z manifestu przed tym uruchomieniem
     by_kind: dict[str, float] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -63,5 +68,10 @@ class CostTracker:
         with self._lock:
             return round(sum(self.by_kind.values()), COST_DIGITS)
 
+    @property
+    def total(self) -> float:
+        """Koszt książki: wcześniejsze uruchomienia i to."""
+        return round(self.spent_before + self.spent, COST_DIGITS)
+
     def over_budget(self) -> bool:
-        return self.spent >= self.limit_usd
+        return self.total >= self.limit_usd

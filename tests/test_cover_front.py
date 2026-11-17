@@ -463,8 +463,22 @@ def test_cover_fatal_error_exits_4(coloring: ColoringProvider) -> None:
 
 def test_cover_budget_exits_3(coloring: ColoringProvider) -> None:
     coloring.junk = True
-    assert main(["cover", ARG, "--max-cost", "0.001", "--no-select-pages"]) == (
+    # Limit książki: to, co książka już wydała, plus mniej niż jedna grafika okładki.
+    limit = f"{_manifest()['cost_usd'] + 0.001:.6f}"
+    assert main(["cover", ARG, "--max-cost", limit, "--no-select-pages"]) == (
         ExitCode.BUDGET_EXCEEDED
     )
     assert len(coloring.requests) == 1
     assert "limit kosztu" in _manifest()["cover"]["error"]
+
+
+def test_cover_does_not_start_when_the_book_spent_its_limit(
+    coloring: ColoringProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    assert main(["cover", ARG, "--max-cost", "0.001", "--no-select-pages"]) == (
+        ExitCode.BUDGET_EXCEEDED
+    )
+    assert coloring.requests == []
+    assert "książka kosztowała już" in capsys.readouterr().err
+    assert _manifest().get("cover") is None

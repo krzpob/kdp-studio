@@ -78,9 +78,10 @@ api_pricing:
     gpt-image-2.6-sunburst: {input_per_1m: 5.00, output_per_1m: 30.00}
     gpt-image-2.5-flare: {input_per_1m: 5.00, output_per_1m: 30.00}
 
-# Limit kosztu jednego uruchomienia komendy w USD (FR-10); --max-cost nadpisuje. Po przekroczeniu
-# program kończy strony w toku, nie zaczyna nowych i kończy się kodem 3. 50 grafik w jakości
-# medium kosztuje ok. 2.3 USD.
+# Limit kosztu całej książki w USD (FR-10), razem z poprawkami w kolejnych uruchomieniach
+# (images, belongs-to, cover, ideas --redo liczą od cost_usd z manifestu); --max-cost nadpisuje.
+# Po przekroczeniu program kończy strony w toku, nie zaczyna nowych i kończy się kodem 3; książka,
+# która już wydała limit, nie startuje (też kod 3). 50 grafik w jakości medium kosztuje ok. 2.3 USD.
 max_cost_usd: 5.00
 
 # Jakość grafik: low, medium, high albo auto (spec §14, pytanie 5: ustalić po spike'u).

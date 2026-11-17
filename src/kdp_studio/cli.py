@@ -308,8 +308,9 @@ BelongsToOpt = Annotated[
 MaxCostOpt = Annotated[
     float | None,
     typer.Option(
-        help="Limit kosztu API tego uruchomienia w USD (FR-10); po przekroczeniu nowe grafiki "
-        "nie startują, a program kończy się kodem 3. Domyślnie z settings.yaml.",
+        help="Limit kosztu API całej książki w USD (FR-10), razem z wcześniejszymi "
+        "uruchomieniami (cost_usd w manifeście); po przekroczeniu nowe grafiki nie startują, "
+        "a program kończy się kodem 3. Domyślnie z settings.yaml.",
     ),
 ]
 LogLevelOpt = Annotated[
@@ -418,8 +419,24 @@ def _new_front(
     return FrontPage(provider=provider, model=model, prompt=prompt, elements=elements)
 
 
-def _cost_tracker(config: AppConfig, max_cost: float | None, models: list[str]) -> CostTracker:
-    """Limit budżetu (FR-10); model bez ceny w cenniku to błąd przed pierwszym wywołaniem API."""
+def _book_cost(target: Path) -> float:
+    """Koszt istniejącej książki z manifestu (FR-10: limit obejmuje wcześniejsze uruchomienia)."""
+    return _open_book(target).manifest.cost_usd
+
+
+def _spent_text(costs: CostTracker) -> str:
+    """„wydano $X” albo, gdy książka miała koszty wcześniej, z podziałem na to uruchomienie."""
+    if costs.spent_before <= 0:
+        return f"wydano {format_usd(costs.spent)}"
+    return f"książka: {format_usd(costs.total)}, w tym to uruchomienie {format_usd(costs.spent)}"
+
+
+def _cost_tracker(
+    config: AppConfig, max_cost: float | None, models: list[str], spent_before: float = 0.0
+) -> CostTracker:
+    """Limit budżetu książki (FR-10); model bez ceny w cenniku to błąd przed pierwszym
+    wywołaniem API. `spent_before`: koszt istniejącej książki z manifestu; jeśli już sięga
+    limitu, polecenie kończy się kodem 3, zanim cokolwiek wyda."""
     settings = config.settings
     limit = settings.max_cost_usd if max_cost is None else max_cost
     if limit <= 0:
@@ -432,7 +449,16 @@ def _cost_tracker(config: AppConfig, max_cost: float | None, models: list[str]) 
                 "(api_pricing.models): bez niej program nie pilnuje limitu kosztu (FR-10)"
             ]
         )
-    return CostTracker(settings.api_pricing, limit)
+    if spent_before >= limit:
+        raise _fail(
+            [
+                f"książka kosztowała już {format_usd(spent_before)}, a limit kosztu książki to "
+                f"{format_usd(limit)} (--max-cost, max_cost_usd w settings.yaml); podnieś "
+                "limit, żeby kontynuować"
+            ],
+            ExitCode.BUDGET_EXCEEDED,
+        )
+    return CostTracker(settings.api_pricing, limit, spent_before=spent_before)
 
 
 def _text_provider(config: AppConfig) -> TextProvider:
@@ -734,7 +760,7 @@ def ideas(
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
         provider = _text_provider(config)
-        costs = _cost_tracker(config, max_cost, [provider.model])
+        costs = _cost_tracker(config, max_cost, [provider.model], _book_cost(book))
         with _locked(book, level), _timed(timer, "redo", costs):
             _step_redo(config, book, list(dict.fromkeys(ids)), review_ideas, provider, costs)
         return
@@ -838,7 +864,10 @@ def _step_images(
             f"na stronę, zapasowe pomysły: {pool.remaining}."
         )
     done = 0
-    typer.echo(f"Limit kosztu: {format_usd(costs.limit_usd)} (wydano {format_usd(costs.spent)}).")
+    typer.echo(
+        f"Limit kosztu książki: {format_usd(costs.limit_usd)} "
+        f"(wydano dotąd {format_usd(costs.total)})."
+    )
 
     def spend(outcome: PageOutcome) -> None:
         """W wątku workera, przed następną stroną: koszt liczy się do limitu od razu."""
@@ -930,8 +959,8 @@ def _step_images(
     budget_error = None
     if result.budget_exceeded:
         budget_error = (
-            f"przekroczony limit kosztu {format_usd(costs.limit_usd)} (wydano "
-            f"{format_usd(costs.spent)}), pominięto "
+            f"przekroczony limit kosztu książki {format_usd(costs.limit_usd)} "
+            f"({_spent_text(costs)}), pominięto "
             f"{plural(skipped, 'stronę', 'strony', 'stron')}"
         )
     status = writer.update_status(fatal_error, budget_error=budget_error)
@@ -1099,7 +1128,9 @@ def images(
     images_provider, vision = _image_providers(
         config, writer.manifest.input.format, image_provider, do_qa
     )
-    costs = _cost_tracker(config, max_cost, _models(images_provider, vision))
+    costs = _cost_tracker(
+        config, max_cost, _models(images_provider, vision), writer.manifest.cost_usd
+    )
     with _locked(book, level), _timed(StepTimer(), "images", costs):
         code = _step_images(config, book, images_provider, vision, workers, quality, costs)
     if code == ExitCode.OK and _open_book(book).manifest.status != "completed":
@@ -1325,8 +1356,8 @@ def _step_belongs_to(
     if reason is not None:
         if costs.over_budget():
             message = (
-                f"przekroczony limit kosztu {format_usd(costs.limit_usd)} (wydano "
-                f"{format_usd(costs.spent)}), pominięto {FRONT_NAME}"
+                f"przekroczony limit kosztu książki {format_usd(costs.limit_usd)} "
+                f"({_spent_text(costs)}), pominięto {FRONT_NAME}"
             )
             writer.update_status(budget_error=message)
             _fail_lines(
@@ -1420,7 +1451,7 @@ def belongs_to(
     images_provider, vision = _image_providers(
         config, manifest.input.format, manifest.providers.image.provider, do_qa
     )
-    costs = _cost_tracker(config, max_cost, _models(images_provider, vision))
+    costs = _cost_tracker(config, max_cost, _models(images_provider, vision), manifest.cost_usd)
     with _locked(book, level), _timed(StepTimer(), "belongs-to", costs):
         code = _step_belongs_to(
             config, book, images_provider, vision, quality, costs, refresh_canva=True
@@ -1592,8 +1623,8 @@ def _stop_after_ideas(target: Path, costs: CostTracker) -> ExitCode:
     """`generate`: same pomysły zużyły limit (FR-10), więc grafiki nie startują."""
     writer = _open_book(target)
     message = (
-        f"przekroczony limit kosztu {format_usd(costs.limit_usd)} już po pomysłach "
-        f"(wydano {format_usd(costs.spent)})"
+        f"przekroczony limit kosztu książki {format_usd(costs.limit_usd)} już po pomysłach "
+        f"(wydano {format_usd(costs.total)})"
     )
     writer.update_status(budget_error=message)
     _fail_lines([message, f"grafiki z wyższym limitem: kdp-studio images {target} --max-cost …"])
@@ -2009,7 +2040,7 @@ def cover(
     except ConfigError as e:
         raise _fail([str(e)]) from e
     models = [p.model for p in (images, vision) if p is not None]
-    costs = _cost_tracker(config, max_cost, models) if models else None
+    costs = _cost_tracker(config, max_cost, models, manifest.cost_usd) if models else None
     prices = settings.api_pricing.models
     run = _cover_run(
         book,

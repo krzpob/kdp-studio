@@ -23,7 +23,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-07 | ✅ | #14 | |
 | FR-08 | ✅ | #13, #23 | |
 | FR-09 | ↪ FR-17 | #23 | |
-| FR-10 | ✅ | #29 | Cennik `api_pricing` w `settings.yaml`, limit na jedno uruchomienie komendy. |
+| FR-10 | ✅ | #29 | Cennik `api_pricing` w `settings.yaml`. Limit na całą książkę, razem z poprawkami (zmiana z 17.11.2026; wcześniej na jedno uruchomienie komendy). |
 | FR-11 | ↪ FR-17 | #23 | |
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
@@ -240,18 +240,18 @@ Zastąpione przez FR-17. Wznowienie to ponowne uruchomienie przerwanego kroku: `
 
 ### ✅ FR-10: Koszty i limit budżetu
 - Każde wywołanie API zapisuje szacowany koszt (z cennika w konfiguracji albo z `usage` zwracanego przez API).
-- `--max-cost <USD>` (domyślnie 5.00): po przekroczeniu limitu program kończy bieżące zadania, nie startuje nowych i zapisuje manifest (status `budget_exceeded`).
+- `--max-cost <USD>` (domyślnie 5.00): limit kosztu **całej książki**. Po przekroczeniu program kończy bieżące zadania, nie startuje nowych i zapisuje manifest (status `budget_exceeded`).
 - Na końcu program wypisuje podsumowanie: liczbę stron ok/failed, łączny koszt i czas.
 
 **Szczegóły**
 - **Cennik:** `api_pricing` w `settings.yaml`, przepisany ze strony dostawcy, z adresem źródła i datą sprawdzenia (`source`, `checked`). Dla każdego modelu podaje cenę w USD za milion tokenów wejścia i wyjścia. Koszt wywołania liczy się z tokenów, które zwraca API. Tokeny z pamięci podręcznej program liczy po pełnej cenie, więc koszt jest raczej zawyżony.
 - **Model bez ceny** w cenniku to błąd konfiguracji (kod 1) przed pierwszym wywołaniem API, bo bez ceny program nie pilnowałby limitu.
-- **Zakres limitu:** limit dotyczy jednego uruchomienia komendy (`ideas`, `images`, `generate`). Domyślna wartość to `max_cost_usd` w `settings.yaml`, a `--max-cost` ją nadpisuje.
+- **Zakres limitu** (zmiana z 17.11.2026): limit dotyczy całej książki, razem z poprawkami w kolejnych uruchomieniach. Polecenia na istniejącej książce (`images`, `belongs-to`, `cover`, `ideas --redo`) zaczynają liczenie od łącznego kosztu z manifestu (`cost_usd`), a nie od zera; `generate` i `ideas` dla nowej książki zaczynają od zera. Książka, która już wydała limit, nie startuje kolejnego polecenia (kod 3, przed pierwszym wywołaniem API, z prośbą o wyższy limit). Wcześniej limit dotyczył jednego uruchomienia, więc poprawki go omijały. Łączny koszt książki służy też do policzenia, ile egzemplarzy go zwróci (FR-16). Domyślna wartość to `max_cost_usd` w `settings.yaml`, a `--max-cost` ją nadpisuje.
 - **Sprawdzanie limitu:** program sprawdza limit przed każdą nową stroną i przed każdą grafiką z zapasowego pomysłu po odrzuceniu przez QA. Koszt strony dolicza się zaraz po jej zakończeniu, zanim wątek weźmie następną. Strony w innych wątkach mogą jeszcze trwać, więc limit może zostać przekroczony najwyżej o grafiki w toku.
 - **Po przekroczeniu w `images`:** strona, której QA odrzuciło grafikę, nie dostaje zapasowego pomysłu i jest oznaczona jako nieudana. Manifest dostaje status `budget_exceeded` z opisem w `error`, a program kończy się kodem 3. Kolejne `kdp-studio images` z wyższym limitem dokańcza brakujące strony.
 - **Po przekroczeniu w `generate`:** krok 3 (`finalize`) czeka, aż kroki 1 i 2 zostaną dokończone. Jeśli limit zużyją już pomysły, grafiki nie startują.
 - **Manifest:** strona ma `cost_usd` z grafik i QA, sumowany przez wszystkie uruchomienia (ponowne wygenerowanie dolicza się do poprzedniego kosztu). `ideas.cost_usd` obejmuje pomysły, weryfikację i `--redo`. Pole `cost_usd` w katalogu głównym manifestu to łączny koszt książki.
-- **Konsola:** koszt pomysłów, koszt każdej strony, koszt każdego kroku (`Czas kroku (grafiki): 6 min 12 s, koszt $2.27.`). `generate` kończy się podsumowaniem: liczba gotowych i nieudanych stron, koszt według rodzaju (pomysły, grafiki, QA) z limitem oraz czasy kroków.
+- **Konsola:** limit książki z tym, co już wydała (`Limit kosztu książki: $5.00 (wydano dotąd $1.42).`), koszt pomysłów, koszt każdej strony, koszt każdego kroku (`Czas kroku (grafiki): 6 min 12 s, koszt $2.27.`); komunikat o przekroczeniu podaje koszt książki i tego uruchomienia. `generate` kończy się podsumowaniem: liczba gotowych i nieudanych stron, koszt według rodzaju (pomysły, grafiki, QA) z limitem oraz czasy kroków.
 - **Log (NFR-09):** `cost_usd` przy `page_raw`, `ideas_saved`, `images_done` i `run_end`. Na poziomie `debug` koszt ma też każde wywołanie API (`api_call`).
 
 ### ↪ FR-11: Tryb próbny (dry run)
@@ -687,6 +687,7 @@ Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada 
     | 258 | $5.39 | $10.77 | $8.98 | $9.99, stawka 60% (przypadek graniczny) |
     | 402 | $7.83 | $15.67 | $13.06 | $13.06, stawka 60% |
 - **Ceny tuż pod progiem:** w strefie 50% tantiema jest zawsze niższa niż przy cenie progowej 60%. Na Amazon.com, żeby przy stawce 50% zarobić tyle co przy $9.99, cena musiałaby wynosić $11.99, czyli przekroczyć próg. Program pokazuje to wprost: między ceną minimalną a progiem tantiema jest niższa niż przy cenie progowej, a różnica rośnie im bliżej progu.
+- **Zwrot kosztu generowania:** liczba egzemplarzy, po której tantiemy pokryją koszt książki: `ceil(cost_usd / royalty)`, gdzie `cost_usd` to łączny koszt z manifestu, ze wszystkimi poprawkami (FR-10).
 - **Strony bez dodatkowego kosztu:** do progu stron koszt druku jest stały. Przy druku jednostronnym i 2 stronach wstępnych do progu 110 stron mieści się 54 grafiki: tyle samo kosztuje druk 30 i 54 grafik. Powyżej każda grafika dodaje 2 strony × `per_page` (Amazon.com, duży format: $0.034).
 
 Przykład (Amazon.com, letter albo kwadrat):
