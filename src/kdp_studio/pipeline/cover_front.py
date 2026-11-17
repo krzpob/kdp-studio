@@ -32,9 +32,14 @@ class CoverBudgetError(CoverError):
     """Limit kosztu nie pozwala na kolejną próbę (kod wyjścia 3)."""
 
 
+def book_style(spec: BookSpec, config: AppConfig) -> str:
+    """Fragment promptu stylu książki w jednej linii, bez kropki na końcu."""
+    return " ".join(config.styles[spec.style].prompt_fragment.split()).rstrip(" .")
+
+
 def color_prompt(spec: BookSpec, config: AppConfig) -> str:
     """Prompt kolorowania: polecenie z `cover.color_prompt` i styl książki."""
-    style = " ".join(config.styles[spec.style].prompt_fragment.split()).rstrip(" .")
+    style = book_style(spec, config)
     return f"{' '.join(config.settings.cover.color_prompt.split())}\nStyle of the book: {style}."
 
 

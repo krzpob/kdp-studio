@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from kdp_studio import __version__
 from kdp_studio.pipeline.belongs_to import FRONT_NAME, BelongsToOutcome, Layout
 from kdp_studio.pipeline.cost import COST_DIGITS
+from kdp_studio.pipeline.cover_vision import CoverQAResult
 from kdp_studio.pipeline.output import write_json_atomic
 from kdp_studio.pipeline.qa import QAIssue, QAResult
 from kdp_studio.pipeline.worker import PageJob, PageOutcome
@@ -240,21 +241,77 @@ class CoverFrontInfo(_Model):
     title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
 
 
+class CoverSeamInfo(_Model):
+    """Kontrola styku grzbiet/przód jednej próby tyłu (etap 3)."""
+
+    max_delta_e: float
+    horizon_front: float | None = None
+    horizon_back: float | None = None
+    passed: bool
+
+
+class CoverSceneInfo(_Model):
+    """Ocena przodu modelem z wizją: horyzont i kolory tła przy lewej krawędzi."""
+
+    horizon: float | None = None
+    band_colors: list[str] = []
+    background: str = ""
+    usage: Usage | None = None
+
+
+class CoverBackInfo(_Model):
+    """Tło tyłu i grzbietu z modelu (etap 3)."""
+
+    painted: bool
+    provider: str | None = None
+    model: str | None = None
+    quality: str | None = None
+    aspect: str | None = None
+    prompt: str | None = None
+    attempts: int = 0
+    chosen_attempt: int | None = None
+    raw_files: list[str] = []
+    errors: list[str] = []
+    usage: Usage | None = None
+    scene: CoverSceneInfo | None = None
+    scene_error: str | None = None
+    edge_colors: list[str] = []  # próbki pikseli lewej krawędzi przodu, od góry
+    seams: list[CoverSeamInfo] = []
+    seam_passed: bool | None = None
+
+
+class CoverSelectionInfo(_Model):
+    """Propozycja stron modelem z wizją (arkusz kontaktowy, etap 3)."""
+
+    model: str
+    reason: str
+    contact_sheet: str
+    usage: Usage
+    warnings: list[str] = []
+
+
 class CoverInfo(_Model):
     """Okładka paperback (FR-15, `kdp-studio cover`)."""
 
-    status: Literal["ok", "failed"] = "ok"
+    # qa_failed: pliki zapisane, ale QA (`--qa`) odrzuciła okładkę albo się nie udała
+    status: Literal["ok", "failed", "qa_failed"] = "ok"
     created_at: str = Field(default_factory=_now)
     geometry: dict[str, object]
     front_page: str
     thumbnails: list[str]
-    selection: Literal["manual", "default"]
+    selection: Literal["manual", "default", "vision"]
+    selection_info: CoverSelectionInfo | None = None
     title: str
     subtitle: str
     spine_text: bool
     placements: dict[str, tuple[int, int, int, int]] = {}  # px, kontrola rozmieszczenia
     template: CoverTemplateInfo | None = None
     front: CoverFrontInfo | None = None
+    back: CoverBackInfo | None = None
+    back_text: bool = False
+    qa: CoverQAResult | None = None
+    qa_error: str | None = None
+    qa_usage: Usage | None = None
     cmyk: CoverCmykInfo | None = None
     files: CoverFiles | None = None
     warnings: list[str] = []

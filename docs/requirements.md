@@ -6,7 +6,7 @@ Specyfikacja wymagań na potrzeby implementacji. Dokument zbiera ustalenia z ses
 
 ## 0. Stan implementacji
 
-Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastąpione innym wymaganiem. Te same znaczniki stoją przy nagłówkach wymagań w sekcji 6.
+Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastąpione innym wymaganiem. Te same znaczniki stoją przy nagłówkach wymagań w sekcji 6.
 
 **Wymagania funkcjonalne**
 
@@ -28,7 +28,7 @@ Stan na 16.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. |
-| FR-15 | 🟡 | #31, #32 | Poza MVP. Specyfikacja: #17. Etapy 1–2 z 3: geometria, szablon, układ, CMYK, PDF i kolorowy przód z modelu; tło tyłu w etapie 3. |
+| FR-15 | ✅ | #31, #32 | Poza MVP. Specyfikacja: #17. Trzy etapy: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -394,7 +394,7 @@ przedszkole:
 - **Krok 3 obrabia stronę ponownie**, gdy zmieni się surowa grafika, parametry obróbki, napis, pole, czcionka (suma pliku) albo profil wieku. Model nie jest wtedy wywoływany.
 - **`reference_image`:** adapter OpenAI go nie obsługuje, więc strona nie używa referencji stylu. Wspólny blok stylu wystarcza do spójności.
 
-### 🟡 FR-15: Okładka (poza MVP)
+### ✅ FR-15: Okładka (poza MVP)
 
 Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę paperback: jeden jednostronicowy PDF z tyłem, grzbietem i przodem. Uruchamia się ją po `generate`, bo wymiary zależą od ostatecznej liczby stron, a przód od gotowych grafik. Okładkę można wygenerować ponownie bez ruszania wnętrza.
 
@@ -554,7 +554,18 @@ FR-15 powstaje w trzech PR-ach.
 - **Pliki prób:** `cover/raw/front_sketch.png` i `cover/raw/front_color_tryN.png`.
 - **Ograniczenie:** `Usage` nie rozróżnia tokenów obrazu wejściowego (cennik OpenAI: $8 za 1M wobec $5 za tekst), więc koszt wejścia referencji jest nieco zaniżony. Wyjście, które dominuje w koszcie, liczy się dokładnie.
 
-*Etap 3:* tło tyłu i grzbietu z modelu (horyzont, kolory, kontrola i wygładzenie styku), propozycja stron modelem z wizją (arkusz kontaktowy), QA okładki, `--qa` i `--max-cost` dla `cover`, opcjonalny `back_text`.
+*Etap 3 (zrobiony):*
+- **Wybór stron** (`pipeline/cover_vision.py`): bez `--cover-page` i `--thumbnails` program składa arkusz kontaktowy (`cover/raw/contact_sheet.png`, numery rysuje program) i pyta model z wizją o przód, miniatury i uzasadnienie (`cover.selection: vision`, `selection_info` w manifeście). Numery spoza arkusza, powtórki albo przód wśród miniatur program zastępuje wyborem domyślnym z ostrzeżeniem. Strony podane ręcznie zostają: przy samym `--cover-page` model wybiera tylko miniatury, przy samym `--thumbnails` tylko przód (miniatur nie ma wtedy na arkuszu). Niekrytyczny błąd modelu to wybór domyślny z ostrzeżeniem. `--no-select-pages` (`cover.select_pages`) wyłącza propozycję.
+- **Tył i grzbiet** (`pipeline/cover_back.py`), tylko przy pokolorowanym przodzie:
+  - model z wizją podaje horyzont i kolory tła przy lewej krawędzi przodu; program dodaje próbki pikseli i własny pomiar horyzontu (wiersz największej zmiany koloru w pionie, ΔE ≥ 15), które zastępują ocenę modelu, gdy ta się nie uda;
+  - prompt `cover.back_prompt` z polami `{horizon}`, `{colors}`, `{spine_pct}` (grzbiet z zapasem 0.25"), `{margin_pct}`; nieznane pole to błąd konfiguracji;
+  - kontrola styku: mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
+  - po `max_retries` nieudanych kontrolach program bierze próbę z najmniejszym ΔE i ostrzega; wygładzenie styku i tak działa;
+  - pliki prób: `cover/raw/back_tryN.png`; manifest: `cover.back` (prompt, ocena przodu, próbki krawędzi, wynik kontroli każdej próby, użyta próba).
+- **Opis na tyle** (`--back-text`, `cover.back_text`): najwięcej pełnych zdań opisu z metadanych, które mieszczą się w `back_text_max_height` (30%) strefy tyłu, w rozmiarze od `back_text_pt` (16 pt) do `back_text_min_pt` (10 pt); litery jak tytuł (kolor z czarnym obrysem K100). Miniatury przesuwają się pod opis. Gdy nie mieści się nawet jedno zdanie, tył jest bez opisu z ostrzeżeniem.
+- **QA** (`--qa`, `cover.qa`): jedna ocena całej okładki (zmniejszonej do 2048 px) według kryteriów `text` (tekst inny niż napisy programu), `front_mismatch` (przód nie pokazuje sceny wybranej strony), `style_mismatch` (tył nie pasuje do przodu albo widać szew) i `other`. Wynik w `cover.qa` jak przy stronach (`{pass, issues}`).
+- **Decyzja:** odrzucenie przez QA nie ponawia generowania (nie wiadomo, którą część poprawić, a każda próba to płatna grafika). Pliki się zapisują, `cover.status` to `qa_failed`, a kod wyjścia 2, żeby użytkownik obejrzał `cover.png` przed wysłaniem. Tak samo przy błędzie QA (krytyczny: kod 4) i przekroczonym limicie przed QA (kod 3).
+- **Koszt:** wszystkie oceny modelem z wizją liczą się jako `qa`, grafiki jako `images`, razem w `cover.cost_usd` i limicie `--max-cost`.
 
 **Decyzje etapu 1**
 - **Czcionka tytułu:** Fredoka w wariancie `Bold` (`cover.title_font_variation`), ta sama rodzina co napis FR-14 (otwarte pytanie 7).
@@ -994,6 +1005,7 @@ kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
   [--thumbnails 03,12,21] \
   [--template kdp_template.png] \
   [--color|--no-color] [--image-quality low|medium|high] \
+  [--select-pages|--no-select-pages] [--back-text] \
   [--qa] \
   [--max-cost 1.00]
 
@@ -1035,7 +1047,7 @@ output/dinozaury_przedszkole_kawaii_square/
     ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
     ├── cover.png, front.png
     ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
-    └── raw/
+    └── raw/                        # front_sketch, front_color_tryN, back_tryN, contact_sheet
 ```
 
 Przykład wpisu strony w `manifest.json`:
@@ -1135,7 +1147,7 @@ kdp-studio/
 | 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
 | 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
 
-Stan na 16.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod etapów 1–2 z 3 (tło tyłu z modelu w etapie 3), etap 1c ma gotową specyfikację.
+Stan na 17.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod wszystkich trzech etapów; jego kryterium wyjścia wymaga próby w kreatorze KDP. Etap 1c ma gotową specyfikację.
 
 ## 14. Otwarte pytania
 

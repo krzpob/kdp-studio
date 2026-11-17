@@ -46,7 +46,8 @@ from kdp_studio.pipeline.cover_geometry import (
 )
 from kdp_studio.pipeline.pdf import cmyk_pdf
 from kdp_studio.providers.base import ProviderError
-from kdp_studio.providers.fake import FakeImageProvider
+from kdp_studio.providers.fake import FakeImageProvider, FakeVisionProvider
+from tests.conftest import CoverVision
 from tests.test_cli import fake_text_provider  # noqa: F401  (autouse: fałszywi dostawcy)
 
 TEMPLATES = Path(__file__).parent / "fixtures" / "kdp_templates"
@@ -324,8 +325,13 @@ def test_preview_and_front_crop(repo_config: AppConfig) -> None:
 
 
 @pytest.fixture
-def naive_cmyk(monkeypatch: pytest.MonkeyPatch) -> None:
+def naive_cmyk(monkeypatch: pytest.MonkeyPatch) -> CoverVision:
+    """Konwerter CMYK bez profilu ICC i model z wizją dla okładki (etap 3)."""
     monkeypatch.setattr(cli, "cmyk_converter", lambda settings: NaiveConverter())
+    responder = CoverVision()
+    vision = FakeVisionProvider(responder)
+    monkeypatch.setattr(cli, "create_vision_provider", lambda name, model: vision)
+    return responder
 
 
 def _book(pages: int = 6) -> None:
@@ -342,7 +348,7 @@ def _cover() -> dict[str, Any]:
 @pytest.mark.usefixtures("naive_cmyk")
 def test_cover_command_writes_all_files(capsys: pytest.CaptureFixture[str]) -> None:
     _book()
-    assert main(["cover", ARG]) == ExitCode.OK
+    assert main(["cover", ARG, "--no-select-pages"]) == ExitCode.OK
     out = capsys.readouterr().out
     assert 'Okładka: 17.282" × 11.250"' in out  # letter, 14 stron: grzbiet 0.0315"
     assert "Przód: page_01; miniatury: page_02, page_04, page_06 (domyślny wybór" in out

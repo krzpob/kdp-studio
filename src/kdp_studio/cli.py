@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import IntEnum
 from functools import partial
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Annotated, Literal, get_args
 
 import typer
 from dotenv import load_dotenv
+from PIL import Image
 
 from kdp_studio.config import (
     MAX_CONCURRENCY,
@@ -63,10 +65,12 @@ from kdp_studio.pipeline.book import (
 from kdp_studio.pipeline.canva import CANVA_FILE, render_canva_md
 from kdp_studio.pipeline.cost import CostTracker, format_usd, missing_prices
 from kdp_studio.pipeline.cover import CoverBuild, CoverError, build_cover, front_crop, preview
+from kdp_studio.pipeline.cover_back import BackPainter
 from kdp_studio.pipeline.cover_front import (
     CoverBudgetError,
     CoverColorError,
     FrontColorizer,
+    book_style,
     color_prompt,
 )
 from kdp_studio.pipeline.cover_geometry import (
@@ -75,16 +79,31 @@ from kdp_studio.pipeline.cover_geometry import (
     compare_template,
     measure_template,
 )
+from kdp_studio.pipeline.cover_vision import (
+    CoverQAResult,
+    FrontScene,
+    analyze_front,
+    check_cover,
+    contact_sheet,
+    png_bytes,
+    propose_pages,
+    select_instructions,
+)
+from kdp_studio.pipeline.cover_vision import qa_instructions as cover_qa_instructions
 from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
 from kdp_studio.pipeline.fonts import FontError
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
+    CoverBackInfo,
     CoverCmykInfo,
     CoverFiles,
     CoverFrontInfo,
     CoverInfo,
+    CoverSceneInfo,
+    CoverSeamInfo,
+    CoverSelectionInfo,
     CoverTemplateInfo,
     FinalInfo,
     FrontPage,
@@ -1471,13 +1490,25 @@ def _page_ref(value: str, manifest: Manifest) -> ManifestPage:
     return manifest.pages[number - 1]
 
 
+@dataclass
+class _CoverPick:
+    """Strony okładki: przód i miniatury tyłu (tylko gotowe strony)."""
+
+    front: ManifestPage
+    thumbs: list[ManifestPage]
+    selection: Literal["manual", "default", "vision"]
+    available: list[ManifestPage]
+    manual_front: bool
+    manual_thumbs: bool
+
+
 def _cover_pages(
     target: Path,
     manifest: Manifest,
     cover_page: str | None,
     thumbnails: str | None,
     count: int,
-) -> tuple[ManifestPage, list[ManifestPage], Literal["manual", "default"]]:
+) -> _CoverPick:
     """Strona na przód i miniatury tyłu; tylko gotowe strony (`ok` z plikiem PNG)."""
 
     def ready(page: ManifestPage) -> bool:
@@ -1510,7 +1541,7 @@ def _cover_pages(
     if errors:
         raise _fail(errors)
     selection: Literal["manual", "default"] = "manual" if cover_page or thumbnails else "default"
-    return front, thumbs, selection
+    return _CoverPick(front, thumbs, selection, available, bool(cover_page), bool(thumbnails))
 
 
 def _cover_template(
@@ -1532,17 +1563,66 @@ def _cover_template(
     return CoverTemplateInfo(file=str(template))
 
 
+@dataclass
+class _CoverRun:
+    """Wszystko, czego potrzebuje `_make_cover`; dostawcy tworzeni przed pierwszym wywołaniem."""
+
+    target: Path
+    writer: ManifestWriter
+    geometry: CoverGeometry
+    config: AppConfig
+    converter: cmyk.CmykConverter
+    pick: _CoverPick
+    ideas: BookIdeas
+    spec: BookSpec
+    template: Path | None = None
+    template_info: CoverTemplateInfo | None = None
+    colorizer: FrontColorizer | None = None
+    painter: BackPainter | None = None
+    vision: VisionProvider | None = None
+    select: bool = False  # propozycja stron modelem z wizją
+    qa: bool = False
+    back_text: bool = False
+    costs: CostTracker | None = None
+
+
+SelectPagesOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--select-pages/--no-select-pages",
+        help="Bez --cover-page i --thumbnails strony proponuje model z wizją na podstawie "
+        "arkusza kontaktowego; --no-select-pages: pierwsza strona i strony rozłożone po książce. "
+        "Domyślnie z settings.yaml (cover.select_pages).",
+    ),
+]
+CoverQaOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--qa/--no-qa",
+        help="Model z wizją sprawdza gotową okładkę: brak tekstu poza napisami programu, przód "
+        "z wybraną stroną, tył w stylu przodu. Odrzucenie to kod 2. Domyślnie cover.qa.",
+    ),
+]
+BackTextOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--back-text/--no-back-text",
+        help="Opis książki z metadanych na tyle, nad miniaturami. Domyślnie cover.back_text.",
+    ),
+]
+
+
 @app.command()
 def cover(
     book: BookArg,
     cover_page: Annotated[
         str | None,
-        typer.Option(help="Strona na przód, np. 07. Domyślnie pierwsza gotowa strona."),
+        typer.Option(help="Strona na przód, np. 07. Domyślnie propozycja modelu z wizją."),
     ] = None,
     thumbnails: Annotated[
         str | None,
         typer.Option(
-            help="3–4 strony na miniatury tyłu, np. 03,12,21. Domyślnie rozłożone po książce."
+            help="3–4 strony na miniatury tyłu, np. 03,12,21. Domyślnie propozycja modelu z wizją."
         ),
     ] = None,
     template: Annotated[
@@ -1553,10 +1633,13 @@ def cover(
         bool | None,
         typer.Option(
             "--color/--no-color",
-            help="Kolorowanie przodu modelem obrazu (płatne); --no-color: szkic bez koloru. "
-            "Domyślnie z settings.yaml (cover.colorize).",
+            help="Kolorowanie przodu i tło tyłu z grzbietem z modelu obrazu (płatne); "
+            "--no-color: szkic bez koloru. Domyślnie z settings.yaml (cover.colorize).",
         ),
     ] = None,
+    select_pages: SelectPagesOpt = None,
+    qa: CoverQaOpt = None,
+    back_text: BackTextOpt = None,
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
     max_cost: MaxCostOpt = None,
@@ -1584,9 +1667,7 @@ def cover(
                 f"a książka ma {layout.pages_in_book}: powstaje nowa"
             ]
         )
-    front, thumbs, selection = _cover_pages(
-        book, manifest, cover_page, thumbnails, settings.cover.thumbnails
-    )
+    pick = _cover_pages(book, manifest, cover_page, thumbnails, settings.cover.thumbnails)
     template_info = _cover_template(template, geometry, config) if template else None
     if not settings.cover.title_font_path.is_file():
         raise _fail([f"brak czcionki tytułu {settings.cover.title_font_path} (cover.title_font)"])
@@ -1600,64 +1681,164 @@ def cover(
         raise _fail(e.errors) from e
     if manifest.status != "completed":
         _warn([f"książka nie jest gotowa (status {manifest.status}); okładka z gotowych stron"])
-    colorizer = None
-    costs = None
-    if settings.cover.colorize if color is None else color:
-        quality = _quality(config, image_quality)
-        try:
-            provider = create_image_provider(
+
+    spec = spec_from_manifest(manifest)
+    do_color = settings.cover.colorize if color is None else color
+    do_select = (settings.cover.select_pages if select_pages is None else select_pages) and not (
+        cover_page and thumbnails
+    )
+    do_qa = settings.cover.qa if qa is None else qa
+    run = _CoverRun(
+        target=book,
+        writer=writer,
+        geometry=geometry,
+        config=config,
+        converter=converter,
+        pick=pick,
+        ideas=ideas,
+        spec=spec,
+        template=template,
+        template_info=template_info,
+        select=do_select,
+        qa=do_qa,
+        back_text=settings.cover.back_text if back_text is None else back_text,
+    )
+    images: ImageProvider | None = None
+    try:
+        if do_color:
+            images = create_image_provider(
                 image_provider or settings.providers.image, settings.models.image
             )
-        except ConfigError as e:
-            raise _fail([str(e)]) from e
-        logged = LoggedImageProvider(provider, settings.api_pricing.models.get(provider.model))
-        costs = _cost_tracker(config, max_cost, [provider.model])
-        colorizer = FrontColorizer(
+        if do_color or do_select or do_qa:  # ocena przodu do tła tyłu, wybór stron, QA
+            run.vision = create_vision_provider(settings.providers.vision, settings.models.vision)
+    except ConfigError as e:
+        raise _fail([str(e)]) from e
+    prices = settings.api_pricing.models
+    models = [p.model for p in (images, run.vision) if p is not None]
+    if models:
+        run.costs = _cost_tracker(config, max_cost, models)
+    if run.vision is not None:
+        run.vision = LoggedVisionProvider(run.vision, prices.get(run.vision.model))
+    if images is not None and run.costs is not None:
+        quality = _quality(config, image_quality)
+        logged = LoggedImageProvider(images, prices.get(images.model))
+        raw_dir = book / COVER_DIR / RAW_DIR
+        spend = partial(_spend, run.costs, images.model)
+        run.colorizer = FrontColorizer(
             provider=logged,
             quality=quality,
-            prompt=color_prompt(spec_from_manifest(manifest), config),
+            prompt=color_prompt(spec, config),
             settings=settings.cover,
-            raw_dir=book / COVER_DIR / RAW_DIR,
-            over_budget=costs.over_budget,
-            spend=partial(_spend, costs, provider.model),
+            raw_dir=raw_dir,
+            over_budget=run.costs.over_budget,
+            spend=spend,
+        )
+        assert run.vision is not None
+        run.painter = BackPainter(
+            provider=logged,
+            quality=quality,
+            style=book_style(spec, config),
+            settings=settings.cover,
+            geometry=geometry,
+            raw_dir=raw_dir,
+            analyze=partial(_analyze_front, run.vision, settings.cover.seam_bands, run.costs),
+            over_budget=run.costs.over_budget,
+            spend=spend,
         )
 
-    with _locked(book, level), _timed(StepTimer(), "cover", costs):
-        code = _make_cover(
-            book,
-            writer,
-            geometry,
-            config,
-            converter,
-            front,
-            thumbs,
-            selection,
-            template,
-            template_info,
-            ideas,
-            colorizer,
-            costs,
-        )
+    with _locked(book, level), _timed(StepTimer(), "cover", run.costs):
+        code = _make_cover(run)
     raise typer.Exit(code)
 
 
-def _make_cover(
-    target: Path,
-    writer: ManifestWriter,
-    geometry: CoverGeometry,
-    config: AppConfig,
-    converter: cmyk.CmykConverter,
-    front: ManifestPage,
-    thumbs: list[ManifestPage],
-    selection: Literal["manual", "default"],
-    template: Path | None,
-    template_info: CoverTemplateInfo | None,
-    ideas: BookIdeas,
-    colorizer: FrontColorizer | None,
-    costs: CostTracker | None,
-) -> ExitCode:
+def _analyze_front(
+    vision: VisionProvider, bands: int, costs: CostTracker, front: Image.Image
+) -> FrontScene:
+    scene = analyze_front(vision, front, bands)
+    costs.add("qa", vision.model, scene.usage)
+    return scene
+
+
+def _propose_cover_pages(run: _CoverRun) -> CoverSelectionInfo | None:
+    """Propozycja stron modelem z wizją; strony podane ręcznie zostają. Błąd niekrytyczny:
+    wybór domyślny z ostrzeżeniem (None)."""
+    assert run.vision is not None and run.costs is not None
+    pick, target = run.pick, run.target
+    numbers = {p.name: i for i, p in enumerate(run.writer.manifest.pages, start=1)}
+    by_number = {i: p for i, p in enumerate(run.writer.manifest.pages, start=1)}
+    excluded = {p.name for p in pick.thumbs} if pick.manual_thumbs else set()
+    on_sheet = [p for p in pick.available if p.name not in excluded]
+    settings = run.config.settings.cover
+    sheet = contact_sheet(
+        [(numbers[p.name], target / f"{p.name}.png") for p in on_sheet], settings.title_font_path
+    )
+    path = target / COVER_DIR / RAW_DIR / "contact_sheet.png"
+    write_bytes_atomic(path, png_bytes(sheet))
+    if run.costs.over_budget():
+        raise CoverBudgetError("przekroczony limit kosztu przed wyborem stron okładki")
+    count = 0 if pick.manual_thumbs else len(pick.thumbs)
+    fixed_front = numbers[pick.front.name] if pick.manual_front else None
+    typer.echo(f"Wybieram strony okładki ({run.vision.name}, {run.vision.model})…")
+    try:
+        choice = propose_pages(
+            run.vision,
+            sheet,
+            select_instructions(run.spec, run.config, run.ideas.book.title, count, fixed_front),
+            [numbers[p.name] for p in on_sheet],
+            count,
+            fixed_front,
+            numbers[pick.front.name],
+            [] if pick.manual_thumbs else [numbers[p.name] for p in pick.thumbs],
+        )
+    except ProviderError as e:
+        if e.fatal:
+            raise
+        _warn([f"propozycja stron modelem z wizją nie powiodła się ({e}); wybór domyślny"])
+        return None
+    run.costs.add("qa", run.vision.model, choice.usage)
+    pick.front = by_number[choice.front]
+    if not pick.manual_thumbs:
+        pick.thumbs = [by_number[n] for n in choice.thumbnails]
+    pick.selection = "vision"
+    return CoverSelectionInfo(
+        model=run.vision.model,
+        reason=choice.reason,
+        contact_sheet=path.relative_to(target).as_posix(),
+        usage=choice.usage,
+        warnings=choice.warnings,
+    )
+
+
+def _cover_qa(
+    run: _CoverRun, rgb: Image.Image, build: CoverBuild
+) -> tuple[CoverQAResult | None, str | None, Usage | None, ExitCode]:
+    """QA gotowej okładki (`--qa`): (wynik, błąd, zużycie, kod wyjścia)."""
+    assert run.vision is not None and run.costs is not None
+    if run.costs.over_budget():
+        return None, "przekroczony limit kosztu przed QA okładki", None, ExitCode.BUDGET_EXCEEDED
+    ideas = {idea.id: idea for idea in run.ideas.pages}
+    book = run.ideas.book
+    instructions = cover_qa_instructions(
+        book.title,
+        book.subtitle,
+        build.spine_text,
+        build.back_text,
+        ideas.get(run.pick.front.idea_id),
+    )
+    typer.echo("Sprawdzam okładkę (QA)…")
+    try:
+        result, usage = check_cover(run.vision, rgb, instructions)
+    except ProviderError as e:
+        return None, str(e), None, ExitCode.PROVIDER_ERROR if e.fatal else ExitCode.PARTIAL
+    run.costs.add("qa", run.vision.model, usage)
+    return result, None, usage, ExitCode.OK if result.passed else ExitCode.PARTIAL
+
+
+def _make_cover(run: _CoverRun) -> ExitCode:
+    target, writer, geometry, config = run.target, run.writer, run.geometry, run.config
+    colorizer, painter, costs, pick = run.colorizer, run.painter, run.costs, run.pick
     settings = config.settings.cover
-    title, subtitle = ideas.book.title, ideas.book.subtitle
+    title, subtitle = run.ideas.book.title, run.ideas.book.subtitle
     width_in, height_in = geometry.size_in
     width_px, height_px = geometry.size_px
     typer.echo(
@@ -1665,20 +1846,25 @@ def _make_cover(
         f'{geometry.dpi} DPI), grzbiet {geometry.spine_in:.4f}" '
         f"({plural(geometry.pages_in_book, 'strona', 'strony', 'stron')})."
     )
-    if colorizer is not None:
-        typer.echo(
-            f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
-            f"{colorizer.quality}, limit {format_usd(costs.limit_usd if costs else 0)})…"
-        )
+    selection_info = None
     try:
+        if run.select:
+            selection_info = _propose_cover_pages(run)
+        if colorizer is not None:
+            typer.echo(
+                f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
+                f"{colorizer.quality}, limit {format_usd(costs.limit_usd if costs else 0)})…"
+            )
         build = build_cover(
             geometry,
             settings,
-            target / f"{front.name}.png",
-            [target / f"{p.name}.png" for p in thumbs],
+            target / f"{pick.front.name}.png",
+            [target / f"{p.name}.png" for p in pick.thumbs],
             title,
             subtitle,
             colorize=colorizer,
+            paint_back=painter,
+            back_text=run.ideas.book.description if run.back_text else None,
         )
     except (CoverColorError, CoverBudgetError, ProviderError) as e:
         code = (
@@ -1693,13 +1879,15 @@ def _make_cover(
             status="failed",
             error=str(e),
             geometry=geometry.summary(),
-            front_page=front.name,
-            thumbnails=[p.name for p in thumbs],
-            selection=selection,
+            front_page=pick.front.name,
+            thumbnails=[p.name for p in pick.thumbs],
+            selection=pick.selection,
+            selection_info=selection_info,
             title=title,
             subtitle=subtitle,
             spine_text=False,
             front=_front_info(target, colorizer, None),
+            back=_back_info(target, painter, None),
             cost_usd=round(cost, 6),
         )
         writer.manifest.cost_usd = round(writer.manifest.cost_usd + cost, 6)
@@ -1711,19 +1899,26 @@ def _make_cover(
     out = target / COVER_DIR
     out.mkdir(exist_ok=True)
     rgb = cmyk.rgb_preview(build.layers.color, build.layers.black, build.layers.paper)
+    qa_result, qa_error, qa_usage, code = None, None, None, ExitCode.OK
+    if run.qa:
+        qa_result, qa_error, qa_usage, code = _cover_qa(run, rgb, build)
     result = cmyk.compose_cmyk(
         build.layers.color,
         build.layers.black,
         build.layers.paper,
-        converter,
+        run.converter,
         settings.cmyk.max_total_ink_pct,
     )
-    proof = converter.to_rgb(result.image)
+    proof = run.converter.to_rgb(result.image)
     gamut, changed = cmyk.gamut_map(rgb, proof, settings.cmyk.gamut_warn_delta_e)
     area_pct = round(float(changed.mean() * 100), 2)
     left, top, right, bottom = build.placements["title"]
     title_changed = float(changed[top:bottom, left:right].mean() * 100) if right > left else 0.0
     warnings = list(build.warnings)
+    if selection_info is not None:
+        warnings += selection_info.warnings
+    if painter is not None:
+        warnings += painter.warnings
     if area_pct > settings.cmyk.gamut_warn_area_pct:
         warnings.append(
             f"kolory zmienią się w druku na {area_pct:g}% powierzchni "
@@ -1731,6 +1926,10 @@ def _make_cover(
         )
     if title_changed > 1.0:
         warnings.append("kolory tytułu zmienią się w druku; obejrzyj cover_gamut.png")
+    if qa_result is not None and not qa_result.passed:
+        warnings.append(f"QA odrzuciła okładkę: {qa_result.summary()}")
+    if qa_error is not None:
+        warnings.append(f"QA okładki nie powiodła się: {qa_error}")
 
     files = CoverFiles(
         pdf=f"{COVER_DIR}/cover.pdf",
@@ -1746,25 +1945,32 @@ def _make_cover(
     front_crop(rgb, geometry).save(target / files.front, dpi=dpi)
     proof.save(target / files.proof, dpi=dpi)
     gamut.save(target / files.gamut, dpi=dpi)
-    preview(rgb, geometry, template).save(target / files.preview, dpi=dpi)
+    preview(rgb, geometry, run.template).save(target / files.preview, dpi=dpi)
 
     cmyk_settings = settings.cmyk
     profile_path = cmyk_settings.profile_path
     info = CoverInfo(
+        status="ok" if code == ExitCode.OK else "qa_failed",
         geometry=geometry.summary(),
-        front_page=front.name,
-        thumbnails=[p.name for p in thumbs],
-        selection=selection,
+        front_page=pick.front.name,
+        thumbnails=[p.name for p in pick.thumbs],
+        selection=pick.selection,
+        selection_info=selection_info,
         title=title,
         subtitle=subtitle,
         spine_text=build.spine_text,
         placements=build.placements,
-        template=template_info,
+        template=run.template_info,
         front=_front_info(target, colorizer, build),
+        back=_back_info(target, painter, build),
+        back_text=build.back_text,
+        qa=qa_result,
+        qa_error=qa_error,
+        qa_usage=qa_usage,
         cmyk=CoverCmykInfo(
-            profile=converter.name,
+            profile=run.converter.name,
             profile_file=str(profile_path) if profile_path is not None else None,
-            profile_sha256=converter.sha256,
+            profile_sha256=run.converter.sha256,
             rendering_intent=cmyk_settings.rendering_intent,
             black_point_compensation=cmyk_settings.black_point_compensation,
             max_total_ink_limit_pct=cmyk_settings.max_total_ink_pct,
@@ -1785,8 +1991,9 @@ def _make_cover(
         _log,
         logging.INFO,
         "cover_done",
-        front_page=front.name,
+        front_page=pick.front.name,
         thumbnails=info.thumbnails,
+        selection=pick.selection,
         spine_text=build.spine_text,
         geometry=info.geometry,
         max_total_ink_pct=result.max_total_ink_pct,
@@ -1794,15 +2001,19 @@ def _make_cover(
         warnings=warnings,
         colorized=build.colorized,
         contour_match=build.contour_match,
+        back_painted=build.back_painted,
+        seam_passed=info.back.seam_passed if info.back is not None else None,
+        qa_pass=qa_result.passed if qa_result is not None else None,
         cost_usd=info.cost_usd,
     )
 
-    how = (
-        "domyślny wybór; inne strony: --cover-page i --thumbnails"
-        if selection == "default"
-        else "wybór ręczny"
-    )
-    typer.echo(f"Przód: {front.name}; miniatury: {', '.join(info.thumbnails)} ({how}).")
+    how = {
+        "default": "domyślny wybór; inne strony: --cover-page i --thumbnails",
+        "manual": "wybór ręczny",
+        "vision": "propozycja modelu z wizją"
+        + (f": {selection_info.reason}" if selection_info and selection_info.reason else ""),
+    }[pick.selection]
+    typer.echo(f"Przód: {pick.front.name}; miniatury: {', '.join(info.thumbnails)} ({how}).")
     minimum = max(settings.spine_text_min_pages, geometry.kdp.spine_text_kdp_min_pages)
     spine = "tak" if build.spine_text else f"nie (od {minimum} stron)"
     typer.echo(f"Tekst na grzbiecie: {spine}.")
@@ -1810,22 +2021,37 @@ def _make_cover(
         contours = "nałożone kontury 300 DPI" if build.contours_overlay else "kontury z modelu"
         typer.echo(
             f"Przód pokolorowany ({plural(colorizer.attempts, 'próba', 'próby', 'prób')}, "
-            f"zgodność konturów {build.contour_match:.0%}, {contours}), "
-            f"koszt {format_usd(info.cost_usd)}."
+            f"zgodność konturów {build.contour_match:.0%}, {contours})."
         )
     else:
         typer.echo("Przód: szkic bez koloru (--no-color).")
+    if build.back_painted and painter is not None and painter.chosen is not None:
+        seam = painter.seams[-1] if painter.seams else None
+        used = next((s for s in painter.seams if s.passed), seam)
+        seam_text = (
+            f", styk z przodem ΔE {used.max_delta_e:g} (próg {settings.seam_max_delta_e:g})"
+            if used is not None
+            else ""
+        )
+        typer.echo(
+            f"Tył i grzbiet z modelu ({plural(painter.attempts, 'próba', 'próby', 'prób')}"
+            f"{seam_text})."
+        )
+    if costs is not None:
+        typer.echo(f"Koszt okładki: {format_usd(info.cost_usd)}.")
     typer.echo(
         f"Tytuł w miniaturze {settings.thumbnail_check_px} px: litery {build.title_thumb_px:g} px, "
         f"kontrast {build.title_contrast:g}:1."
     )
-    if template_info is not None:
-        typer.echo(f"Szablon KDP {template.name if template else ''}: zgodny z geometrią.")
+    if run.template_info is not None:
+        typer.echo(f"Szablon KDP {run.template.name if run.template else ''}: zgodny z geometrią.")
     typer.echo(
-        f"CMYK: {converter.name} ({cmyk_settings.rendering_intent}), suma farb maks. "
+        f"CMYK: {run.converter.name} ({cmyk_settings.rendering_intent}), suma farb maks. "
         f"{result.max_total_ink_pct:g}% (limit {cmyk_settings.max_total_ink_pct}%), "
         f"zmiana koloru w druku na {area_pct:g}% powierzchni."
     )
+    if qa_result is not None and qa_result.passed:
+        typer.echo("QA okładki: zaakceptowana.")
     _warn(warnings)
     typer.echo(f"Okładka do KDP: {target / files.pdf}")
     typer.echo(
@@ -1836,7 +2062,7 @@ def _make_cover(
         "Pamiętaj: druk różni się od ekranu, więc ostateczną kontrolą kolorów jest egzemplarz "
         "próbny zamówiony w KDP."
     )
-    return ExitCode.OK
+    return code
 
 
 def _spend(costs: CostTracker, model: str, usage: Usage) -> None:
@@ -1864,6 +2090,47 @@ def _front_info(
         info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
         info.title_thumb_px, info.title_contrast = build.title_thumb_px, build.title_contrast
     return info
+
+
+def _back_info(
+    target: Path, painter: BackPainter | None, build: CoverBuild | None
+) -> CoverBackInfo | None:
+    if painter is None:
+        return None
+    scene = painter.scene
+    return CoverBackInfo(
+        painted=build.back_painted if build is not None else False,
+        provider=painter.provider.name,
+        model=painter.provider.model,
+        quality=painter.quality,
+        aspect=painter.aspect,
+        prompt=painter.prompt,
+        attempts=painter.attempts,
+        chosen_attempt=painter.chosen,
+        raw_files=[p.relative_to(target).as_posix() for p in painter.raw_files],
+        errors=painter.errors,
+        usage=painter.usage,
+        scene=CoverSceneInfo(
+            horizon=scene.horizon,
+            band_colors=scene.band_colors,
+            background=scene.background,
+            usage=scene.usage,
+        )
+        if scene is not None
+        else None,
+        scene_error=painter.scene_error,
+        edge_colors=painter.edge_colors,
+        seams=[
+            CoverSeamInfo(
+                max_delta_e=s.max_delta_e,
+                horizon_front=s.horizon_front,
+                horizon_back=s.horizon_back,
+                passed=s.passed,
+            )
+            for s in painter.seams
+        ],
+        seam_passed=any(s.passed for s in painter.seams) if painter.seams else None,
+    )
 
 
 @app.command()

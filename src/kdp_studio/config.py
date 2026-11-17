@@ -272,6 +272,22 @@ class CmykSettings(_Strict):
         return path if path.is_absolute() else REPO_ROOT / path
 
 
+# Pola promptu tyłu (FR-15 etap 3), wypełniane przez `pipeline/cover_back.py`.
+BACK_PROMPT_FIELDS = {"horizon": "", "colors": "", "spine_pct": 0, "margin_pct": 0}
+DEFAULT_BACK_PROMPT = (
+    "Paint the back cover and spine of the same children's coloring book as the reference "
+    "image, which is its front cover. Make one wide background picture in the same style, "
+    "palette and lighting, as if the world of the front cover continued to the left. "
+    "{horizon} Along the right edge, where it joins the front cover, the background colors "
+    "from top to bottom are: {colors}. The right {spine_pct}% of the picture is the spine: "
+    "only plain background there, no objects. Keep the bottom right corner calm and plain. "
+    "Keep any objects at least {margin_pct}% away from every edge and keep the middle mostly "
+    "calm background, because thumbnails of inner pages will be placed on it. Use vivid but "
+    "print-friendly colors (no neon, no fluorescent colors). No text, no letters, no title, "
+    "no logos, no frame, no border."
+)
+
+
 class CoverSettings(_Strict):
     """Nasze ustawienia okładki (FR-15)."""
 
@@ -309,6 +325,14 @@ class CoverSettings(_Strict):
     )
     contour_match_min: Annotated[float, Field(ge=0, le=1)] = 0.85
     contour_search_in: Annotated[float, Field(gt=0)] = 0.02
+    # Etap 3: wybór stron modelem z wizją, tło tyłu i grzbietu z modelu, QA okładki.
+    select_pages: bool = True  # --select-pages/--no-select-pages
+    qa: bool = False  # --qa/--no-qa
+    back_prompt: Annotated[str, Field(min_length=1)] = DEFAULT_BACK_PROMPT
+    seam_bands: Annotated[int, Field(ge=2, le=32)] = 8  # pasy poziome kontroli styku
+    back_text_pt: Annotated[float, Field(gt=0)] = 16
+    back_text_min_pt: Annotated[float, Field(gt=0)] = 10
+    back_text_max_height: Annotated[float, Field(gt=0, lt=0.6)] = 0.3  # część strefy tyłu
     cmyk: CmykSettings = CmykSettings()
     template_colors: TemplateColors = TemplateColors()
     template_tolerance_in: Annotated[float, Field(gt=0)] = 0.01
@@ -317,6 +341,17 @@ class CoverSettings(_Strict):
     def title_font_path(self) -> Path:
         path = Path(self.title_font)
         return path if path.is_absolute() else REPO_ROOT / path
+
+    @model_validator(mode="after")
+    def _back_prompt_fields(self) -> Self:
+        try:
+            self.back_prompt.format(**BACK_PROMPT_FIELDS)
+        except (KeyError, IndexError, ValueError) as e:
+            names = ", ".join("{" + k + "}" for k in BACK_PROMPT_FIELDS)
+            raise ValueError(f"cover.back_prompt: nieznane pole {e}; dozwolone: {names}") from e
+        if self.back_text_min_pt > self.back_text_pt:
+            raise ValueError("cover.back_text_min_pt nie może być większy niż back_text_pt")
+        return self
 
 
 class Settings(_Strict):

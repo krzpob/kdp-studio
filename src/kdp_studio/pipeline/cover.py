@@ -8,11 +8,13 @@ Przód: szkic z czarno-białą grafiką wybranej strony w dolnej części i pust
 Etap 2: model koloruje szkic (`colorize`), program nakłada na kolor ostre kontury 300 DPI,
 jeśli kontury modelu się zgadzają, a na końcu wpisuje tytuł (wypełnienie w kolorze, obrys
 czarny K100) i sprawdza jego czytelność w miniaturze. Bez `colorize` przód zostaje szkicem na
-białym tle. Tło tyłu i grzbietu z modelu to etap 3.
+białym tle. Etap 3: tło tyłu i grzbietu z modelu (`paint_back`, przód jako referencja) i
+opcjonalny opis na tyle (`back_text`) nad miniaturami.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +68,8 @@ class CoverBuild:
     contours_overlay: bool = True  # nałożono ostre kontury 300 DPI
     title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze thumbnail_check_px
     title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
+    back_painted: bool = False  # tło tyłu i grzbietu z modelu (etap 3)
+    back_text: bool = False  # opis z metadanych na tyle
 
 
 # --- Pomocnicze ----------------------------------------------------------------------------
@@ -416,12 +420,16 @@ def place_back(
     geometry: CoverGeometry,
     settings: CoverSettings,
     pages: list[Image.Image],
+    reserved_top: int = 0,
 ) -> dict[str, RectPx]:
-    """Miniatury stron w ramkach, w strefie tyłu nad polem kodu kreskowego."""
+    """Miniatury stron w ramkach, w strefie tyłu nad polem kodu kreskowego.
+
+    `reserved_top`: piksele u góry strefy zajęte przez opis (`back_text`)."""
     key = geometry.px(geometry.key_back)
     barcode = geometry.px(geometry.barcode)
     gap = round(GAP_IN * geometry.dpi)
-    area = (key[0], key[1], key[2], min(key[3], barcode[1] - gap))
+    top = key[1] + (reserved_top + gap if reserved_top else 0)
+    area = (key[0], top, key[2], min(key[3], barcode[1] - gap))
     first = pages[0]
     rects = thumbnail_grid(area, len(pages), first.width / first.height, gap)
     if len(rects) != len(pages):
@@ -441,6 +449,88 @@ def place_back(
         draw.rectangle((rect[0], rect[1], rect[2] - 1, rect[3] - 1), outline=BLACK, width=frame)
         placements[f"thumbnail_{index}"] = rect
     return placements
+
+
+@dataclass(frozen=True)
+class BackText:
+    lines: list[_Text]
+    line_gap: int
+    sentences: int  # ile zdań opisu się zmieściło
+    size_pt: float
+
+    @property
+    def height(self) -> int:
+        return int(
+            sum(t.outline.shape[0] for t in self.lines) + self.line_gap * (len(self.lines) - 1)
+        )
+
+
+def _wrap(words: list[str], font: ImageFont.FreeTypeFont, width: int) -> list[str] | None:
+    """Słowa w liniach nie szerszych niż `width`; None, gdy jedno słowo się nie mieści."""
+    lines: list[str] = []
+    for word in words:
+        candidate = f"{lines[-1]} {word}" if lines else word
+        if lines and font.getlength(candidate) <= width:
+            lines[-1] = candidate
+        elif font.getlength(word) <= width:
+            lines.append(word)
+        else:
+            return None
+    return lines
+
+
+def layout_back_text(
+    geometry: CoverGeometry, settings: CoverSettings, text: str
+) -> tuple[BackText | None, str | None]:
+    """Opis na tyle: najwięcej zdań, które mieszczą się w `back_text_max_height` strefy,
+    w największym rozmiarze od `back_text_pt` do `back_text_min_pt`."""
+    left, top, right, bottom = geometry.px(geometry.key_back)
+    max_height = (bottom - top) * settings.back_text_max_height
+    sentences = [x for x in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if x]
+    best: BackText | None = None
+    size_pt = settings.back_text_pt
+    while size_pt >= settings.back_text_min_pt and sentences:
+        size = round(size_pt / POINTS_PER_INCH * geometry.dpi)
+        radius = max(1, round(size * 0.06))
+        font = load_font(settings.title_font_path, size, settings.title_font_variation)
+        for count in range(len(sentences), 0, -1):
+            if best is not None and count <= best.sentences:
+                break
+            lines = _wrap(" ".join(sentences[:count]).split(), font, right - left - 2 * radius)
+            if lines is None:
+                continue
+            block = BackText(
+                [_outlined(line, font, radius) for line in lines],
+                round(size * 0.2),
+                count,
+                size_pt,
+            )
+            if block.height <= max_height:
+                best = block
+                break
+        if best is not None and best.sentences == len(sentences):
+            break
+        size_pt -= 1
+    if best is None:
+        return None, (
+            f"opis nie mieści się na tyle w rozmiarze ≥ {settings.back_text_min_pt:g} pt; "
+            "tył bez opisu"
+        )
+    return best, None
+
+
+def paste_back_text(
+    layers: CoverLayers, geometry: CoverGeometry, block: BackText, fill: tuple[int, int, int]
+) -> RectPx:
+    """Opis wyśrodkowany u góry strefy tyłu: wypełnienie w kolorze, obrys czarny K100."""
+    left, top, right, _ = geometry.px(geometry.key_back)
+    y = top
+    rects = []
+    for line in block.lines:
+        w = line.outline.shape[1]
+        rects.append(_paste_text(layers, line, (left + (right - left - w) // 2, y), fill))
+        y += line.outline.shape[0] + block.line_gap
+    return min(r[0] for r in rects), rects[0][1], max(r[2] for r in rects), rects[-1][3]
 
 
 # --- Grzbiet -------------------------------------------------------------------------------
@@ -483,6 +573,15 @@ def place_spine(
 
 
 Colorize = Callable[[Image.Image], Image.Image]
+PaintBack = Callable[[Image.Image], Image.Image]  # gotowy przód → tył z grzbietem (RGB)
+
+
+def flatten(layers: CoverLayers, rect: RectPx) -> Image.Image:
+    """Fragment okładki w RGB: kolor z nałożoną czernią K100 i papierem K0."""
+    color = np.asarray(layers.color.crop(rect)).copy()
+    color[np.asarray(layers.paper.crop(rect)) == BLACK] = (255, 255, 255)
+    color[np.asarray(layers.black.crop(rect)) == BLACK] = (0, 0, 0)
+    return Image.fromarray(color, mode="RGB")
 
 
 def build_cover(
@@ -493,9 +592,12 @@ def build_cover(
     title: str,
     subtitle: str,
     colorize: Colorize | None = None,
+    paint_back: PaintBack | None = None,
+    back_text: str | None = None,
 ) -> CoverBuild:
     """Okładka w warstwach. `colorize(szkic przodu) -> obraz RGB` to kolor z modelu (etap 2);
-    bez niego przód zostaje szkicem na białym tle."""
+    bez niego przód zostaje szkicem na białym tle. `paint_back(gotowy przód) -> tył z
+    grzbietem` (etap 3) działa tylko po pokolorowaniu przodu. `back_text`: opis na tyle."""
     layers = CoverLayers.blank(geometry.size_px)
     with Image.open(front_page) as img:
         front = img.convert("L")
@@ -505,7 +607,13 @@ def build_cover(
             pages.append(img.convert("L"))
     build = CoverBuild(layers=layers)
     build.placements["front_art"] = place_front_art(layers, geometry, settings, front)
-    build.placements.update(place_back(layers, geometry, settings, pages))
+    text_block = None
+    if back_text:
+        text_block, text_warning = layout_back_text(geometry, settings, back_text)
+        if text_warning is not None:
+            build.warnings.append(text_warning)
+    reserved = text_block.height if text_block is not None else 0
+    build.placements.update(place_back(layers, geometry, settings, pages, reserved))
     spine, warning = place_spine(layers, geometry, settings, title)
     if spine is not None:
         build.placements["spine_text"] = spine
@@ -524,6 +632,20 @@ def build_cover(
                 f"kontury z modelu przesunięte (zgodność {build.contour_match:.0%}); "
                 "przód bez nałożonych konturów 300 DPI"
             )
+        if paint_back is not None:
+            front_rect = geometry.px(geometry.front_panel)
+            back = paint_back(flatten(layers, front_rect))
+            size = (front_rect[0], geometry.size_px[1])
+            if back.size != size:
+                back = back.resize(size, Image.Resampling.LANCZOS)
+            layers.color.paste(back.convert("RGB"), (0, 0))
+            build.back_painted = True
+
+    if text_block is not None:
+        build.placements["back_text"] = paste_back_text(
+            layers, geometry, text_block, settings.title_fill_rgb
+        )
+        build.back_text = True
 
     titles = place_titles(layers, geometry, settings, title, subtitle)
     build.placements.update(titles.placements)
@@ -563,7 +685,8 @@ def check_placements(build: CoverBuild, geometry: CoverGeometry) -> None:
     barcode = geometry.px(geometry.barcode)
     problems = []
     for name, rect in build.placements.items():
-        zone = spine if name == "spine_text" else back if name.startswith("thumbnail") else front
+        on_back = name.startswith("thumbnail") or name == "back_text"
+        zone = spine if name == "spine_text" else back if on_back else front
         if not _inside(rect, zone):
             problems.append(f"{name} poza swoją strefą")
         if _overlaps(rect, barcode):
