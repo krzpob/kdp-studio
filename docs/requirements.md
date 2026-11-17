@@ -481,6 +481,7 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
   - prawy pas szerokości grzbietu plus zapas to wyłącznie tło;
   - dolny róg przy grzbiecie (pole kodu kreskowego) to spokojne tło;
   - bez tekstu.
+- **Dopasowanie tyłu do przodu:** model nie trzyma się podanej wysokości horyzontu (na próbach z 17.11 listwa podłogi wyszła o 14% wyżej i była cieńsza niż na przodzie, a linia śniegu przesunęła się o 0,7%). Dlatego przed kontrolą styku program dopasowuje tył w pionie do przodu: pionowy profil kolorów pasa przy grzbiecie wyrównuje do profilu lewej krawędzi przodu (DTW z nachyleniem 1/2–2 i karą za odkształcenie, przesunięcie najwyżej `seam_align_max` wysokości). Tę samą, wygładzoną mapę wierszy stosuje do całej szerokości tyłu, więc listwa czy linia śniegu zostają proste. Tył przesuwa się tylko w pionie; obiekty na nim mogą się nieco rozciągnąć albo ścisnąć.
 - **Kontrola styku z przodem:** program porównuje kolory w pasach poziomych po obu stronach zgięcia grzbiet/przód (ΔE w przestrzeni Lab) i położenie horyzontu. Przekroczenie progu (`seam_max_delta_e`, `horizon_tolerance`) to ponowienie, maks. `max_retries`.
 - **Wygładzenie styku:** w pasie `seam_band_in` po stronie grzbietu program płynnie przechodzi z tła tyłu w kolory lewej krawędzi przodu. Przód zostaje nienaruszony, a przesunięcie przy oprawie nie odsłania szwu.
 - **Tekst na grzbiecie:** tylko gdy `pages_in_book ≥ spine_text_min_pages` (domyślnie 100; twarde minimum KDP to 79). Tytuł czytany z góry na dół, min. 0.0625" od linii zgięcia, rozmiar dopasowany do szerokości grzbietu, min. 7 pt. Gdy się nie mieści, program pomija tekst z ostrzeżeniem. Poniżej progu grzbiet to samo tło. Przy typowej książce z 30 grafikami (62 strony) grzbietu nie da się podpisać.
@@ -576,7 +577,8 @@ FR-15 powstaje w trzech PR-ach.
 - **Tył i grzbiet** (`pipeline/cover_back.py`), tylko przy pokolorowanym przodzie:
   - model z wizją podaje horyzont i kolory tła przy lewej krawędzi przodu; program dodaje próbki pikseli i własny pomiar horyzontu (wiersz największej zmiany koloru w pionie, ΔE ≥ 15), które zastępują ocenę modelu, gdy ta się nie uda;
   - prompt `cover.back_prompt` z polami `{horizon}`, `{colors}`, `{spine_pct}` (grzbiet z zapasem 0.25"), `{margin_pct}`; nieznane pole to błąd konfiguracji;
-  - kontrola styku: mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
+  - dopasowanie w pionie (`align_to_front()`): profile Lab 256 wierszy po obu stronach zgięcia, DTW w pasie `seam_align_max` (domyślnie 0.2, 0 wyłącza), mapa wierszy wygładzona w oknie 3% wysokości i zastosowana do całego tyłu (`cv2.remap`); przesunięcie poniżej piksela zostawia tył bez zmian, a największe przesunięcie trafia do manifestu (`seams[].align_shift`);
+  - kontrola styku (po dopasowaniu): mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
   - po `max_retries` nieudanych kontrolach program bierze próbę z najmniejszym ΔE i ostrzega; wygładzenie styku i tak działa;
   - pliki prób: `cover/raw/back_tryN.png`; manifest: `cover.back` (prompt, ocena przodu, próbki krawędzi, wynik kontroli każdej próby, użyta próba).
 - **Opis na tyle** (`--back-text`, `cover.back_text`): najwięcej pełnych zdań opisu z metadanych, które mieszczą się w `back_text_max_height` (30%) strefy tyłu, w rozmiarze od `back_text_pt` (16 pt) do `back_text_min_pt` (10 pt); litery jak tytuł (kolor z czarnym obrysem K100). Miniatury przesuwają się pod opis. Gdy nie mieści się nawet jedno zdanie, tył jest bez opisu z ostrzeżeniem.
@@ -622,6 +624,7 @@ cover:                          # nasze ustawienia
   seam_band_in: 0.1
   seam_max_delta_e: 12
   horizon_tolerance: 0.03       # ułamek wysokości
+  seam_align_max: 0.2           # największe przesunięcie wierszy tyłu przy dopasowaniu do przodu
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf

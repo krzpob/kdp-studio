@@ -130,6 +130,7 @@ cover:
   seam_band_in: 0.1
   seam_max_delta_e: 12
   horizon_tolerance: 0.03
+  seam_align_max: 0.2           # tył dopasowany w pionie do przodu przy grzbiecie (listwa, śnieg)
   max_retries: 2
   back_text: false
   title_font: assets/fonts/Fredoka-Variable.ttf

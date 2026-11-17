@@ -304,6 +304,8 @@ class CoverSettings(_Strict):
     seam_band_in: Annotated[float, Field(ge=0)] = 0.1
     seam_max_delta_e: Annotated[float, Field(gt=0)] = 12
     horizon_tolerance: Annotated[float, Field(gt=0, lt=1)] = 0.03
+    # Największe przesunięcie wierszy tyłu przy dopasowaniu do przodu (ułamek wysokości); 0 wyłącza.
+    seam_align_max: Annotated[float, Field(ge=0, lt=0.5)] = 0.2
     max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
     back_text: bool = False
     title_font: str = "assets/fonts/Fredoka-Variable.ttf"

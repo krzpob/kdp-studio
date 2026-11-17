@@ -247,6 +247,7 @@ class CoverSeamInfo(_Model):
     max_delta_e: float
     horizon_front: float | None = None
     horizon_back: float | None = None
+    align_shift: float | None = None  # największe przesunięcie wierszy tyłu do przodu (ułamek)
     passed: bool
 
 

@@ -19,6 +19,7 @@ from kdp_studio.pipeline.cmyk import NaiveConverter
 from kdp_studio.pipeline.cover import build_cover, layout_back_text
 from kdp_studio.pipeline.cover_back import (
     BackPainter,
+    align_to_front,
     back_prompt,
     blend_seam,
     pixel_horizon,
@@ -198,6 +199,73 @@ def test_back_painter_uses_best_try_with_warning(repo_config: AppConfig, tmp_pat
     painter(_front(geometry))
     assert painter.attempts == 3 and painter.chosen == 1
     assert any("styk grzbietu z przodem" in w for w in painter.warnings)
+
+
+CREAM = (245, 230, 200)
+WOOD = (200, 120, 60)
+
+
+def _room(size: tuple[int, int], top: float, bottom: float) -> np.ndarray:
+    """Ściana nad listwą (od `top` do `bottom` wysokości) i podłoga pod nią."""
+    width, height = size
+    img = np.empty((height, width, 3), np.uint8)
+    img[: round(height * top)] = SKY
+    img[round(height * top) : round(height * bottom)] = CREAM
+    img[round(height * bottom) :] = WOOD
+    return img
+
+
+def _edges(column: np.ndarray) -> list[float]:
+    """Wysokości zmian koloru w kolumnie pikseli (ułamki od góry)."""
+    change = np.nonzero(np.abs(np.diff(column.astype(int), axis=0)).sum(axis=1) > 60)[0]
+    return [round((row + 1) / len(column), 2) for row in change]
+
+
+def test_align_to_front_matches_both_edges_of_a_thicker_baseboard() -> None:
+    # Model namalował listwę wyżej i cieńszą niż na przodzie (jak w „Świątecznych kotkach”).
+    front = _room((20, 400), 0.68, 0.73)
+    back = _room((80, 400), 0.54, 0.59)
+    out, shift = align_to_front(back, front, 5, 0.2)
+    assert shift == pytest.approx(0.14, abs=0.02)
+    for column in (out[:, -1], out[:, 0]):  # ta sama mapa wierszy na całej szerokości
+        assert _edges(column) == pytest.approx([0.68, 0.73], abs=0.015)
+    assert tuple(out[10, 40]) == SKY and tuple(out[-10, 40]) == WOOD
+
+
+def test_align_to_front_leaves_a_matching_back_alone() -> None:
+    back = _landscape((60, 400), 0.6)
+    out, shift = align_to_front(back, _landscape((10, 400), 0.6), 5, 0.2)
+    assert shift is None and out is back
+    shifted = _landscape((60, 400), 0.4)
+    out, shift = align_to_front(shifted, back[:, :10], 5, 0.0)  # seam_align_max 0 wyłącza
+    assert shift is None and out is shifted
+
+
+def test_back_painter_aligns_horizon_the_model_missed(
+    repo_config: AppConfig, tmp_path: Path
+) -> None:
+    # Model namalował horyzont 12% wyżej niż na przodzie: bez dopasowania styk by nie przeszedł.
+    provider = Painter([_landscape((300, 300), 0.48)])
+    painter = _painter(repo_config, tmp_path, provider)
+    geometry = _geometry()
+    back = np.asarray(painter(_front(geometry)))
+    assert painter.attempts == 1
+    (seam,) = painter.seams
+    assert seam.passed and seam.align_shift == pytest.approx(0.12, abs=0.02)
+    assert pixel_horizon(back[:, -5:]) == pytest.approx(0.6, abs=0.01)
+    assert not painter.warnings
+
+
+def test_shift_beyond_the_limit_is_not_fully_aligned(
+    repo_config: AppConfig, tmp_path: Path
+) -> None:
+    settings = repo_config.settings.cover.model_copy(update={"seam_align_max": 0.05})
+    provider = Painter([_landscape((300, 300), 0.48)] * 3)
+    painter = _painter(repo_config, tmp_path, provider)
+    painter.settings = settings
+    painter(_front(_geometry()))
+    assert painter.attempts == 3
+    assert all(not s.passed and (s.align_shift or 0) <= 0.06 for s in painter.seams)
 
 
 def test_back_painter_gives_up_and_respects_budget(repo_config: AppConfig, tmp_path: Path) -> None:
@@ -400,6 +468,7 @@ def test_cover_paints_back_and_records_seam(
     assert back["painted"] and back["attempts"] == 1 and back["chosen_attempt"] == 1
     assert back["raw_files"] == ["cover/raw/back_try1.png"]
     assert back["seam_passed"] is True and back["seams"][0]["passed"]
+    assert "align_shift" in back["seams"][0]
     assert back["scene"]["background"] == "plain white background"
     assert len(back["edge_colors"]) == 8
     assert back["prompt"].startswith("Paint the back cover")

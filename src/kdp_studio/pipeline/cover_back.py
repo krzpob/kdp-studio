@@ -2,8 +2,13 @@
 
 Tył i grzbiet powstają razem, jednym wywołaniem, z gotowym przodem jako referencją. Prompt
 narzuca horyzont i kolory lewej krawędzi przodu (z oceny modelem z wizją, uzupełnionej
-próbkami pikseli). Program porównuje potem pasy poziome po obu stronach zgięcia grzbiet/przód
-(ΔE w Lab) i położenie horyzontu; przekroczenie progu to ponowienie. Na końcu w pasie
+próbkami pikseli). Model nie trzyma się podanej wysokości horyzontu (podłoga czy śnieg
+potrafią wyjść kilkanaście procent wyżej, listwa bywa cieńsza), więc program dopasowuje tył
+w pionie do przodu: pionowy profil kolorów przy grzbiecie wyrównuje do profilu lewej krawędzi
+przodu (DTW, `seam_align_max`), a całą szerokość tyłu odkształca tą samą mapą wierszy, żeby
+linie zostały proste. Potem porównuje pasy
+poziome po obu stronach zgięcia grzbiet/przód (ΔE w Lab) i położenie horyzontu; przekroczenie
+progu to ponowienie. Na końcu w pasie
 `seam_band_in` po stronie grzbietu tło płynnie przechodzi w kolory lewej krawędzi przodu,
 a sam przód zostaje nienaruszony.
 """
@@ -12,7 +17,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import pairwise
 from pathlib import Path
 
@@ -36,6 +41,9 @@ EDGE_STRIP_IN = 0.05  # szerokość pasa próbek przy linii zgięcia
 HORIZON_MIN_DELTA_E = 15.0  # słabsza zmiana koloru w pionie to nie horyzont
 SPINE_SLACK_IN = 0.25  # zapas obok grzbietu, który też ma być samym tłem
 BLEND_SMOOTH_IN = 0.1  # wygładzenie kolorów krawędzi przodu w pionie przed przejściem
+ALIGN_ROWS = 256  # rozdzielczość profilu przy dopasowaniu wierszy tyłu do przodu
+ALIGN_STEP_PENALTY = 2.0  # ΔE za krok poza przekątną: bez potrzeby tył się nie odkształca
+ALIGN_SMOOTH = 0.03  # okno wygładzenia mapy wierszy (ułamek wysokości)
 
 
 # --- Próbki pikseli --------------------------------------------------------------------------
@@ -98,6 +106,7 @@ class SeamCheck:
     horizon_back: float | None
     horizon_ok: bool
     passed: bool
+    align_shift: float | None = None  # największe przesunięcie wierszy tyłu przed kontrolą
 
     @property
     def score(self) -> float:
@@ -134,6 +143,84 @@ def seam_check(
     )
     passed = max_de <= settings.seam_max_delta_e and horizon_ok
     return SeamCheck(max_de, h_front, h_back, horizon_ok, passed)
+
+
+def _row_profile(strip: np.ndarray, rows: int) -> np.ndarray:
+    """Mediana koloru każdego wiersza pasa (Lab), uśredniona do `rows` wierszy → rows × 3."""
+    profile = _lab(np.median(strip, axis=1))
+    edges = np.linspace(0, len(profile), rows + 1).round().astype(int)
+    return np.array([profile[a : max(b, a + 1)].mean(axis=0) for a, b in pairwise(edges)])
+
+
+def row_map(back: np.ndarray, front: np.ndarray, band: int) -> np.ndarray | None:
+    """Dla każdego wiersza profilu przodu wiersz profilu tyłu (DTW), albo None.
+
+    Ścieżka rosnąca, z nachyleniem od 1/2 do 2 (kroki (1,1), (1,2), (2,1), te dwa ostatnie
+    z karą), najwyżej `band` wierszy od przekątnej."""
+    n = len(front)
+    cost = np.sqrt(((back[:, None, :] - front[None, :, :]) ** 2).sum(axis=-1))
+    rows, cols = np.indices(cost.shape)
+    cost[np.abs(rows - cols) > band] = np.inf
+    acc = np.full((n, n), np.inf)
+    move = np.zeros((n, n), np.int8)
+    acc[0, 0] = cost[0, 0]
+    for i in range(1, n):
+        options = np.full((3, n), np.inf)
+        options[0, 1:] = acc[i - 1, :-1]
+        options[1, 2:] = acc[i - 1, :-2] + ALIGN_STEP_PENALTY
+        if i >= 2:
+            options[2, 1:] = acc[i - 2, :-1] + ALIGN_STEP_PENALTY
+        best = options.argmin(axis=0)
+        acc[i] = options[best, np.arange(n)] + cost[i]
+        move[i] = best + 1
+    if not np.isfinite(acc[-1, -1]):
+        return None
+    steps = {1: (1, 1), 2: (1, 2), 3: (2, 1)}
+    i, j = n - 1, n - 1
+    path = [(i, j)]
+    while (i, j) != (0, 0):
+        di, dj = steps[int(move[i, j])]
+        i, j = i - di, j - dj
+        path.append((i, j))
+    back_rows, front_rows = np.array(path[::-1], dtype=float).T
+    return np.asarray(np.interp(np.arange(n), front_rows, back_rows))
+
+
+def align_to_front(
+    back: np.ndarray, front_strip: np.ndarray, strip_px: int, max_shift: float
+) -> tuple[np.ndarray, float | None]:
+    """Tył odkształcony w pionie tak, by jego pas przy grzbiecie pasował wierszami do lewego
+    pasa przodu; (tył, największe przesunięcie wiersza jako ułamek wysokości albo None).
+
+    Mapa wierszy jest jedna dla całej szerokości, więc listwa czy linia śniegu zostają proste.
+    """
+    height, width = back.shape[:2]
+    rows = min(ALIGN_ROWS, height)
+    band = round(max_shift * rows)
+    if band == 0:
+        return back, None
+    mapping = row_map(
+        _row_profile(back[:, -strip_px:], rows), _row_profile(front_strip, rows), band
+    )
+    if mapping is None:
+        return back, None
+    window = max(3, round(rows * ALIGN_SMOOTH)) | 1
+    # Odbicie nieparzyste zachowuje liniowy przebieg przy krawędziach (tożsamość zostaje).
+    padded = np.pad(mapping, window // 2, mode="reflect", reflect_type="odd")
+    mapping = np.maximum.accumulate(np.convolve(padded, np.ones(window) / window, "valid"))
+    # Mapa jest w środkach pasów profilu; na brzegach obrazu ciągnie się liniowo.
+    centers = np.concatenate([[-0.5], np.arange(rows), [rows - 0.5]])
+    targets = np.concatenate([[mapping[0] - 0.5], mapping, [mapping[-1] + 0.5]])
+    y = (np.arange(height) + 0.5) / height * rows - 0.5
+    source = (np.interp(y, centers, targets) + 0.5) / rows * height - 0.5
+    offset = float(np.abs(source - np.arange(height)).max())
+    if offset < 1:  # mniej niż piksel: tył zostaje bez zmian
+        return back, None
+    shift = round(offset / height, 3)
+    map_y = np.repeat(source.astype(np.float32)[:, None], width, axis=1)
+    map_x = np.repeat(np.arange(width, dtype=np.float32)[None, :], height, axis=0)
+    out = cv2.remap(back, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return np.asarray(out, dtype=np.uint8), shift
 
 
 def blend_seam(back: np.ndarray, front: np.ndarray, band_px: int, smooth_px: int) -> np.ndarray:
@@ -232,6 +319,7 @@ class BackPainter:
         front_px = np.asarray(front.convert("RGB"))
         strip_px = max(2, round(EDGE_STRIP_IN * geometry.dpi))
         edge = band_colors(front_px[:, :strip_px], settings.seam_bands)
+        front_horizon = pixel_horizon(front_px[:, :strip_px])
         self.edge_colors = [hex_color(c) for c in edge]
         if self.analyze is not None:
             self._check_budget()
@@ -252,7 +340,7 @@ class BackPainter:
             geometry,
             self.scene,
             self.edge_colors,
-            pixel_horizon(front_px[:, :strip_px]),
+            front_horizon,
         )
         reference = reference_png(front, front_aspect(front.size))
         best: tuple[float, np.ndarray, int] | None = None
@@ -285,8 +373,10 @@ class BackPainter:
             except OSError as e:
                 self.errors.append(f"niepoprawny obraz z modelu: {e}")
                 continue
-            back = np.asarray(painted)
-            seam = seam_check(back, front_px, strip_px, settings)
+            back, shift = align_to_front(
+                np.asarray(painted), front_px[:, :strip_px], strip_px, settings.seam_align_max
+            )
+            seam = replace(seam_check(back, front_px, strip_px, settings), align_shift=shift)
             self.seams.append(seam)
             if best is None or seam.score < best[0]:
                 best = (seam.score, back, self.attempts)
