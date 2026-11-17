@@ -268,6 +268,7 @@ def back_prompt(
     scene: FrontScene | None,
     edge: list[str],
     horizon: float | None,
+    title: str = "",
 ) -> str:
     """Prompt tyłu z grzbietem: horyzont, kolory lewej krawędzi przodu i strefy kompozycji."""
     width = geometry.folds_x[1]
@@ -290,11 +291,11 @@ def back_prompt(
         spine_pct=spine_pct,
         margin_pct=margin_pct,
     )
-    return f"{text}\nStyle of the book: {style}."
+    return f"{text}\nStyle of the book: {style}.{_title_line(title)}"
 
 
 def outpaint_prompt(
-    settings: CoverSettings, style: str, geometry: CoverGeometry, area: float
+    settings: CoverSettings, style: str, geometry: CoverGeometry, area: float, title: str = ""
 ) -> str:
     """Prompt dorysowania tyłu: `area` to część płótna do wypełnienia (tył z grzbietem)."""
     width = geometry.folds_x[1]
@@ -303,7 +304,12 @@ def outpaint_prompt(
         spine_pct=round((geometry.spine_in + SPINE_SLACK_IN) / width * 100),
         margin_pct=max(1, round(settings.key_margin_in / width * 100)),
     )
-    return f"{text}\nStyle of the book: {style}."
+    return f"{text}\nStyle of the book: {style}.{_title_line(title)}"
+
+
+def _title_line(title: str) -> str:
+    """Tytuł książki w promptach tyłu: model trzyma porę roku i miejsce całej okładki."""
+    return f"\nBook title: {title.strip()}." if title.strip() else ""
 
 
 # --- Dorysowanie ---------------------------------------------------------------------------
@@ -413,6 +419,7 @@ class BackPainter:
     settings: CoverSettings
     geometry: CoverGeometry
     raw_dir: Path
+    title: str = ""  # tytuł książki z metadanych (do promptu)
     analyze: Callable[[Image.Image], FrontScene] | None = None
     over_budget: Callable[[], bool] | None = None
     spend: Callable[[Usage], None] | None = None
@@ -468,7 +475,11 @@ class BackPainter:
         if plan is not None:
             self.mode, self.aspect, self.overlap_px = "outpaint", plan.aspect, plan.overlap_px
             self.prompt = outpaint_prompt(
-                settings, self.style, geometry, size[0] / (size[0] + plan.overlap_px)
+                settings,
+                self.style,
+                geometry,
+                size[0] / (size[0] + plan.overlap_px),
+                self.title,
             )
             reference, mask = outpaint_canvas(front_px, size, plan)
         else:
@@ -476,7 +487,13 @@ class BackPainter:
             self._analyze(front)
             self.aspect = model_aspect(size, aspects)
             self.prompt = back_prompt(
-                settings, self.style, geometry, self.scene, self.edge_colors, front_horizon
+                settings,
+                self.style,
+                geometry,
+                self.scene,
+                self.edge_colors,
+                front_horizon,
+                self.title,
             )
             reference = reference_png(front, front_aspect(front.size))
         best: tuple[float, np.ndarray, int] | None = None

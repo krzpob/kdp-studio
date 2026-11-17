@@ -141,6 +141,19 @@ def test_color_prompt_has_style_and_no_text(repo_config: AppConfig) -> None:
     assert "Keep every black outline exactly where it is" in prompt
     assert "No text, no letters, no title" in prompt
     assert prompt.splitlines()[-1].startswith("Style of the book: ")
+    # Kontury nie mówią, czy brzeg jest pod śniegiem: scena strony i tytuł idą do promptu.
+    full = color_prompt(
+        spec,
+        repo_config,
+        "Winter Unicorn Ponies Coloring Book",
+        "A unicorn pony stands on a snowy shore near winter waves and a patch of ice.",
+    )
+    lines = full.splitlines()
+    assert lines[-2] == "Book title: Winter Unicorn Ponies Coloring Book."
+    assert lines[-1].startswith(
+        "The picture shows: A unicorn pony stands on a snowy shore near winter waves and a "
+        "patch of ice. Choose colors that fit this description"
+    )
 
 
 def _colorizer(
@@ -334,6 +347,14 @@ def test_cover_colorizes_front(
     assert "Przód pokolorowany (1 próba, zgodność konturów 100%, nałożone kontury 300 DPI)" in out
     assert "Tytuł w miniaturze 160 px: litery " in out
     req, back = coloring.requests
+    cover = _manifest()["cover"]
+    ideas = json.loads((BOOK / "ideas.json").read_text(encoding="utf-8"))
+    page = next(p for p in _manifest()["pages"] if p["name"] == cover["front_page"])
+    scene = next(i["scene"] for i in ideas["pages"] if i["id"] == page["idea_id"])
+    assert f"Book title: {ideas['book']['title']}." in req.prompt
+    assert f"The picture shows: {scene.rstrip('.')}." in req.prompt
+    assert f"Book title: {ideas['book']['title']}." in back.prompt
+    assert cover["front"]["prompt"] == req.prompt
     assert req.reference_image is not None and req.aspect == "3:4"
     assert back.prompt.startswith("Extend this picture") and back.mask is not None
     data = _manifest()

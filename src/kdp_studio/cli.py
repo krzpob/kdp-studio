@@ -1897,6 +1897,7 @@ def _cover_run(
             provider=images,
             quality=setup.quality,
             style=book_style(spec, config),
+            title=ideas.book.title,
             settings=settings.cover,
             geometry=geometry,
             raw_dir=raw_dir,
@@ -2129,6 +2130,12 @@ def _make_cover(run: _CoverRun) -> ExitCode:
         if run.select:
             selection_info = _propose_cover_pages(run)
         if colorizer is not None:
+            # Scena strony na przód znana dopiero po wyborze stron (model z wizją albo ręcznie).
+            ideas = {idea.id: idea for idea in run.ideas.pages}
+            front_idea = ideas.get(pick.front.idea_id)
+            colorizer.prompt = color_prompt(
+                run.spec, config, title, front_idea.scene if front_idea is not None else None
+            )
             typer.echo(
                 f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
                 f"{colorizer.quality}, limit {format_usd(costs.limit_usd if costs else 0)})…"

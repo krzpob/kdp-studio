@@ -37,10 +37,26 @@ def book_style(spec: BookSpec, config: AppConfig) -> str:
     return " ".join(config.styles[spec.style].prompt_fragment.split()).rstrip(" .")
 
 
-def color_prompt(spec: BookSpec, config: AppConfig) -> str:
-    """Prompt kolorowania: polecenie z `cover.color_prompt` i styl książki."""
-    style = book_style(spec, config)
-    return f"{' '.join(config.settings.cover.color_prompt.split())}\nStyle of the book: {style}."
+def color_prompt(
+    spec: BookSpec, config: AppConfig, title: str | None = None, scene: str | None = None
+) -> str:
+    """Prompt kolorowania: polecenie z `cover.color_prompt`, styl, tytuł książki i scena strony.
+
+    Same kontury nie mówią, czy brzeg jest pod śniegiem, czy to plaża: bez sceny i tytułu
+    model pokolorował zimową stronę („snowy shore, winter waves, ice”) jak letnią plażę.
+    Tytuł z metadanych jest po angielsku, jak prompt (temat książki bywa po polsku).
+    """
+    lines = [" ".join(config.settings.cover.color_prompt.split())]
+    lines.append(f"Style of the book: {book_style(spec, config)}.")
+    if title:
+        lines.append(f"Book title: {title.strip()}.")
+    if scene:
+        lines.append(
+            f"The picture shows: {scene.strip().rstrip('.')}. Choose colors that fit this "
+            "description and the book title (place, season, weather, time of day), not a "
+            "different setting."
+        )
+    return "\n".join(lines)
 
 
 def model_aspect(size: tuple[int, int], aspects: list[str]) -> str:
