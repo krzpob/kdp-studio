@@ -32,6 +32,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
+| FR-19 | ⬜ | | Poza MVP. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -342,7 +343,7 @@ Strona wstępna z miejscem na imię właściciela, narysowana w tym samym motywi
 - Gdy próby się wyczerpią, program przechodzi na **układ zapasowy**: grafikę z motywem (bez ramki) w górnych 55% obszaru treści, a tekst i linię pod nią. Ta strona zawsze powstaje.
 
 **Tekst i miejsce na imię**
-- Program wpisuje napis `belongs_to_page.text` (domyślnie „This book belongs to:”, w języku `metadata_language`).
+- Program wpisuje napis `belongs_to_page.text` (domyślnie „This book belongs to:”; po FR-19 z `terms` rynku książki).
 - Pod napisem rysuje pustą linię albo ramkę na imię wpisywane ręcznie. Każdy egzemplarz drukowanej książki jest taki sam, więc imienia nie da się wydrukować.
 - Rozmiar napisu i wysokość miejsca na imię zależą od wieku: przedszkolaki piszą dużymi literami. W `ages.yaml` dochodzi blok `belongs_to` z `font_pt` i `name_line_height_in`.
 - Czcionka:
@@ -643,7 +644,7 @@ cover:                          # nasze ustawienia
 Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada cenę. Pomaga to już przy wyborze liczby grafik, przed generowaniem.
 
 **Dane: tabele KDP w konfiguracji**
-- `config/kdp_pricing.yaml` przepisuje dwie strony pomocy KDP. Każdy rynek ma źródło i datę sprawdzenia (`checked`):
+- Dane rynków są w `config/markets.yaml` (FR-19), który przepisuje dwie strony pomocy KDP. Każdy rynek ma źródło i datę sprawdzenia (`checked`):
   - **koszt druku** paperback, czarny atrament, papier biały: dla formatu regularnego i dużego, dla każdego rynku: koszt stały dla krótkich książek (24–110 stron, na Amazon.com.au 24–108) oraz koszt stały + koszt za stronę powyżej tego progu;
   - **progi tantiemy:** stawka 50% do ceny progowej włącznie, 60% od następnej ceny, plus cena maksymalna.
 - Format jest **duży**, gdy ma ponad 6.12" szerokości albo ponad 9" wysokości. Oba nasze formaty (letter i kwadrat 8.5") są duże.
@@ -691,7 +692,7 @@ Przykład (Amazon.com, letter albo kwadrat):
 - Komenda `kdp-studio price`:
   - dla gotowej książki: `kdp-studio price <katalog-książki>` (format i `pages_in_book` z manifestu);
   - przed generowaniem: `kdp-studio price --format letter --pages 30` (liczba stron jak w FR-02).
-  - Opcje: `--market US,UK,DE,PL` (domyślnie `pricing.markets` z `settings.yaml`, np. `[US]`) i `--price 9.99` (konkretna cena do sprawdzenia, w walucie rynku).
+  - Opcje: `--market US,UK,DE,PL` (domyślnie rynek książki z manifestu, FR-19, a przed generowaniem `default_market`) i `--price 9.99` (konkretna cena do sprawdzenia, w walucie rynku).
 - Wynik dla każdego rynku:
   - koszt druku i cena minimalna;
   - tabela tantiem dla ceny minimalnej, kilku cen z `pricing.candidate_prices` (np. 6.99, 7.99, 8.99, ostatnia cena przed progiem, cena progowa, 12.99, 14.99) i ceny z `--price`;
@@ -707,10 +708,10 @@ Przykład (Amazon.com, letter albo kwadrat):
 - Kolorowanki nie są przyjmowane do Expanded Distribution, więc program liczy tylko sprzedaż na Amazonie.
 - Twarda oprawa jest poza zakresem (FR-15), więc tabele obejmują tylko paperback.
 
-Konfiguracja (szkic, wartości z KDP sprawdzone 16.11.2026):
+Konfiguracja (szkic, wartości z KDP sprawdzone 16.11.2026; po FR-19 te dane są częścią `config/markets.yaml`):
 
 ```yaml
-# config/kdp_pricing.yaml
+# config/kdp_pricing.yaml → config/markets.yaml (FR-19)
 sources:
   printing_cost: https://kdp.amazon.com/en_US/help/topic/G201834340
   royalty: https://kdp.amazon.com/en_US/help/topic/G201834330
@@ -845,6 +846,103 @@ comfyui:
   poll_interval_s: 2
   timeout_s: 300
   cost_per_image_usd: 0
+```
+
+### ⬜ FR-19: Rynek docelowy Amazona (poza MVP)
+
+Książka powstaje dla konkretnego rynku Amazona, a nie tylko dla języka. USA, Wielka Brytania i Australia mówią po angielsku, ale inaczej: „Coloring Book” i „Colouring Book”, „color” i „colour”, inne słowa w wyszukiwarce. Słowa kluczowe KDP działają tylko wtedy, gdy zgadzają się z tym, jak szukają klienci na danym rynku.
+
+**Parametr**
+- `--market US|UK|DE|FR|ES|IT|NL|PL|SE|JP|CA|AU` w `ideas` i `generate`. Domyślnie `default_market: US` z `settings.yaml`.
+- Rynek trafia do manifestu (`input.market`); kolejne kroki (`images`, `finalize`, `belongs-to`, `cover`, `price`) czytają go stamtąd. Stara książka bez tego pola to `US`.
+- Nieznany rynek to błąd walidacji z listą dostępnych (kod 1). `kdp-studio profiles market` wypisuje rynki z `config/markets.yaml`.
+
+**Jedno źródło danych: `config/markets.yaml`**
+- Dla każdego rynku: domena Amazona, `locale` (np. `en-US`, `en-GB`, `en-AU`, `de-DE`, `pl-PL`), nazwa odmiany języka do promptu (np. „British English”), waluta, oraz:
+  - **dane cenowe FR-16:** koszt druku, progi tantiem i cena maksymalna. Zastępują osobny `config/kdp_pricing.yaml`. Rynki o wspólnych tabelach KDP (strefa euro: DE, FR, ES, IT, NL, IE, BE) wskazują wspólną grupę (`pricing_group: EU`), żeby nie powielać liczb;
+  - **stałe teksty rysowane przez program** (`terms`): napis strony FR-14 („This book belongs to:”, „Ta książka należy do:”), nazwa gatunku do podtytułu okładki („Coloring Book”, „Colouring Book”, „Malbuch”, „Kolorowanka”) i wzór wieku („for Kids Ages {min}–{max}”). Teksty są w konfiguracji, a nie z modelu, bo program musi je wpisać bez literówek.
+- Każdy wpis ma `source` i `checked` jak w FR-16. Przy dodawaniu rynku trzeba sprawdzić, czy KDP przyjmuje paperbacki w jego języku.
+
+**Na co wpływa rynek**
+- **Metadane (FR-03):** tytuł, podtytuł, opis i słowa kluczowe powstają w odmianie języka rynku, z jej pisownią i słowami, których używają tam kupujący. To zastępuje ustawienie `metadata_language`.
+- **Weryfikacja pomysłów (FR-03a):** sprawdza też spójność języka i pisowni metadanych z rynkiem (np. brak „color” w książce na UK).
+- **Prompty obrazów i opisy scen zostają po angielsku**, niezależnie od rynku, bo w tym języku modele działają najlepiej.
+- **Strona FR-14:** napis z `terms` rynku, chyba że `belongs_to_page.text` jest ustawione ręcznie.
+- **Okładka FR-15:** podtytuł i opis na tyle w języku rynku.
+- **Ceny FR-16:** `price` domyślnie liczy dla rynku książki, w jego walucie. `--market` w `price` nadal pozwala porównać inne rynki.
+
+**Czcionki**
+- Program sprawdza, czy czcionki stron FR-14 i okładki mają wszystkie znaki potrzebne dla tekstów rynku i tytułu (np. polskie ą, ę; niemieckie ß; szwedzkie å). Brak znaku to błąd przed pierwszym wywołaniem API (kod 1), a nie dziura w druku.
+- Rynek JP wymaga czcionki z japońskimi znakami. Dopóki jej nie ma w `assets/fonts/`, wybór JP przy teście znaków kończy się błędem z wyjaśnieniem.
+
+**Jedna książka, jeden rynek**
+- Tytuł w KDP ma jeden język i jeden zestaw metadanych, a do innych rynków trafia tylko z inną ceną. Ta sama kolorowanka w innej odmianie języka to w KDP osobna książka, więc u nas osobne uruchomienie `ideas` z innym `--market`.
+- Możliwe rozszerzenie: nowa książka na innym rynku korzystająca z gotowych stron istniejącej (np. `ideas --from <katalog>`), bo grafiki nie zawierają tekstu. Na razie poza tym wymaganiem.
+
+Konfiguracja (szkic):
+
+```yaml
+# config/markets.yaml
+pricing_groups:
+  EU:                              # DE, FR, ES, IT, NL, IE, BE – wspólne tabele KDP
+    currency: EUR
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.05, fixed: 0.75, per_page: 0.012}
+      large:   {fixed_only: 2.48, fixed: 0.75, per_page: 0.016}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+markets:
+  US:
+    domain: amazon.com
+    locale: en-US
+    language: American English
+    currency: USD
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.30, fixed: 1.00, per_page: 0.012}
+      large:   {fixed_only: 2.84, fixed: 1.00, per_page: 0.017}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+    terms:
+      coloring_book: Coloring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+  UK:
+    domain: amazon.co.uk
+    locale: en-GB
+    language: British English
+    currency: GBP
+    # printing_cost, royalty: jak w FR-16
+    terms:
+      coloring_book: Colouring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+  DE:
+    domain: amazon.de
+    locale: de-DE
+    language: German
+    pricing_group: EU
+    terms:
+      coloring_book: Malbuch
+      belongs_to: "Dieses Buch gehört:"
+      ages: "für Kinder von {min} bis {max} Jahren"
+  PL:
+    domain: amazon.pl
+    locale: pl-PL
+    language: Polish
+    currency: PLN
+    # printing_cost, royalty: jak w FR-16
+    terms:
+      coloring_book: Kolorowanka
+      belongs_to: "Ta książka należy do:"
+      ages: "dla dzieci w wieku {min}–{max} lat"
+  # AU (en-AU), CA (en-CA), FR, ES, IT, NL, SE, JP – analogicznie
+sources:
+  printing_cost: https://kdp.amazon.com/en_US/help/topic/G201834340
+  royalty: https://kdp.amazon.com/en_US/help/topic/G201834330
+checked: 2026-11-16
+
+# settings.yaml
+default_market: US
 ```
 
 ## 7. Profile (konfiguracja YAML)
@@ -988,6 +1086,7 @@ kdp-studio generate \
   --style kawaii \
   --format square \
   --pages 30 \
+  [--market US] \
   [--output-dir ./output] \
   [--concurrency 4] \
   [--max-cost 5.00] \
@@ -1003,7 +1102,7 @@ kdp-studio generate \
 
 # Generowanie krokowe (FR-17)
 kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
-  [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
+  [--market US] [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
 kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
@@ -1012,7 +1111,7 @@ kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
 
 # Lista dostępnych profili
-kdp-studio profiles [age|style|format]
+kdp-studio profiles [age|style|format|market]
 
 # Strona „This book belongs to…” (FR-14, poza MVP), po kroku images
 kdp-studio belongs-to ./output/dinozaury_przedszkole_kawaii_square \
@@ -1171,7 +1270,7 @@ Stan na 17.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wy
 ## 14. Otwarte pytania
 
 1. Startowa lista stylów i dozwolone połączenia wiek × styl.
-2. Język metadanych książki (`title`, `description`, `keywords`): angielski (rynek US) czy parametr `--lang`?
+2. ~~Język metadanych książki: angielski czy parametr `--lang`?~~ Rozstrzygnięte w FR-19: parametr `--market` (rynek Amazona, domyślnie US), bo odmiana języka i słowa kluczowe zależą od rynku, a nie od samego języka.
 3. Czy QA ma być domyślnie włączone po etapie 0, gdy znany będzie jego koszt i skuteczność?
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
