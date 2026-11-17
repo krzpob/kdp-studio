@@ -237,6 +237,7 @@ class CoverFrontInfo(_Model):
     usage: Usage | None = None
     contour_match: float | None = None  # zgodność konturów modelu ze szkicem
     contours_overlay: bool = True  # nałożono ostre kontury 300 DPI (K100)
+    register_cc: float | None = None  # obraz modelu dopasowany do szkicu (zgodność ECC)
     title_thumb_px: float = 0.0  # wysokość liter tytułu w miniaturze (thumbnail_check_px)
     title_contrast: float = 0.0  # kontrast WCAG tytułu z tłem
 

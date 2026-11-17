@@ -227,18 +227,38 @@ def _layers_with_art(repo_config: AppConfig, tmp_path: Path) -> tuple[CoverLayer
 def test_aligned_color_keeps_k100_contours(repo_config: AppConfig, tmp_path: Path) -> None:
     layers, geometry = _layers_with_art(repo_config, tmp_path)
     colored = _tinted(front_sketch(layers, geometry))
-    match, overlay = apply_front_color(layers, geometry, repo_config.settings.cover, colored)
-    assert match >= 0.85 and overlay
+    match, overlay, register_cc = apply_front_color(
+        layers, geometry, repo_config.settings.cover, colored
+    )
+    assert match >= 0.85 and overlay and register_cc is None  # nic do poprawiania
     rect = geometry.px(geometry.front_panel)
     assert (np.asarray(layers.black.crop(rect)) == 0).any()
     assert layers.color.getpixel((rect[0] + 2, rect[1] + 2)) != (255, 255, 255)
 
 
-def test_shifted_color_drops_overlay(repo_config: AppConfig, tmp_path: Path) -> None:
+def test_shifted_color_is_registered_and_keeps_contours(
+    repo_config: AppConfig, tmp_path: Path
+) -> None:
+    # Model przerysował szkic przesunięty i powiększony: program cofa to przed konturami.
     layers, geometry = _layers_with_art(repo_config, tmp_path)
     sketch = front_sketch(layers, geometry)
-    shifted = _tinted(sketch).transform(sketch.size, Image.Transform.AFFINE, (1, 0, 40, 0, 1, 40))
-    match, overlay = apply_front_color(layers, geometry, repo_config.settings.cover, shifted)
+    tinted = _tinted(sketch)
+    shifted = tinted.transform(sketch.size, Image.Transform.AFFINE, (0.98, 0, 25, 0, 0.98, 30))
+    assert contour_match(np.asarray(sketch.convert("L")) < 128, shifted, 3) < 0.85
+    match, overlay, register_cc = apply_front_color(
+        layers, geometry, repo_config.settings.cover, shifted
+    )
+    assert match >= 0.85 and overlay
+    assert register_cc is not None and register_cc > 0.5
+    rect = geometry.px(geometry.front_panel)
+    assert (np.asarray(layers.black.crop(rect)) == 0).any()
+
+
+def test_unrelated_color_drops_overlay(repo_config: AppConfig, tmp_path: Path) -> None:
+    layers, geometry = _layers_with_art(repo_config, tmp_path)
+    sketch = front_sketch(layers, geometry)
+    flipped = _tinted(sketch).transpose(Image.Transpose.FLIP_TOP_BOTTOM)  # inny rysunek
+    match, overlay, _ = apply_front_color(layers, geometry, repo_config.settings.cover, flipped)
     assert match < 0.85 and not overlay
     rect = geometry.px(geometry.front_panel)
     assert (np.asarray(layers.black.crop(rect)) == 255).all()

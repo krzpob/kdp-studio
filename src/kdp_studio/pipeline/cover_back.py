@@ -39,6 +39,7 @@ from kdp_studio.pipeline.cover_front import (
 from kdp_studio.pipeline.cover_geometry import CoverGeometry
 from kdp_studio.pipeline.cover_vision import FrontScene
 from kdp_studio.pipeline.output import write_bytes_atomic
+from kdp_studio.pipeline.registration import ecc_affine, shift_origin, warp_back
 from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError, Usage
 
 EDGE_STRIP_IN = 0.05  # szerokość pasa próbek przy linii zgięcia
@@ -50,9 +51,6 @@ ALIGN_STEP_PENALTY = 2.0  # ΔE za krok poza przekątną: bez potrzeby tył się
 ALIGN_SMOOTH = 0.03  # okno wygładzenia mapy wierszy (ułamek wysokości)
 OUTPAINT_HEIGHT = 1024  # wysokość płótna do dorysowania; model i tak skaluje je do siebie
 REGISTER_DOWNSCALE = 4  # rejestracja pasa przodu na zmniejszonym obrazie (szybciej, stabilniej)
-REGISTER_MIN_CC = 0.5  # słabsza zgodność (ECC) to nieudana rejestracja
-REGISTER_MAX_SCALE = 0.15  # dopuszczalna zmiana skali przy rejestracji (±)
-REGISTER_MAX_SHIFT = 0.1  # dopuszczalne przesunięcie przy rejestracji (ułamek wysokości)
 
 
 # --- Próbki pikseli --------------------------------------------------------------------------
@@ -125,12 +123,19 @@ class SeamCheck:
 
 
 def seam_check(
-    back: np.ndarray, front: np.ndarray, strip_px: int, settings: CoverSettings
+    back: np.ndarray,
+    front: np.ndarray,
+    strip_px: int,
+    settings: CoverSettings,
+    *,
+    check_horizon: bool = True,
 ) -> SeamCheck:
     """Porównuje prawy pas tyłu z grzbietem (przy zgięciu) z lewym pasem przodu.
 
     Horyzont porównuje się tylko, gdy da się go wskazać po obu stronach; brak horyzontu po
-    jednej stronie wychwytuje porównanie pasów.
+    jednej stronie wychwytuje porównanie pasów. `check_horizon=False` (tył dorysowany
+    i dopasowany do przodu) zostawia sam ΔE: wiersz największej zmiany koloru potrafi wtedy
+    wskazać po obu stronach różne krawędzie tej samej listwy.
     """
     back_strip = back[:, -strip_px:]
     front_strip = front[:, :strip_px]
@@ -149,7 +154,10 @@ def seam_check(
     diff = _lab(back_bands[valid]) - _lab(front_bands[valid])
     max_de = round(float(np.sqrt((diff**2).sum(axis=1)).max()), 2) if valid.any() else 0.0
     horizon_ok = (
-        h_front is None or h_back is None or abs(h_front - h_back) <= settings.horizon_tolerance
+        not check_horizon
+        or h_front is None
+        or h_back is None
+        or abs(h_front - h_back) <= settings.horizon_tolerance
     )
     passed = max_de <= settings.seam_max_delta_e and horizon_ok
     return SeamCheck(max_de, h_front, h_back, horizon_ok, passed)
@@ -359,52 +367,18 @@ def register_canvas(
     prawdziwy przód, program stosuje do całego płótna, zanim wytnie z niego tył.
     """
     overlap = front_strip.shape[1]
-    k = REGISTER_DOWNSCALE
 
     def gray(img: np.ndarray) -> np.ndarray:
-        small = cv2.resize(
-            cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2GRAY),
-            None,
-            fx=1 / k,
-            fy=1 / k,
-            interpolation=cv2.INTER_AREA,
-        )
-        return np.asarray(small, dtype=np.float32)
+        return np.asarray(cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2GRAY))
 
-    warp = np.eye(2, 3, dtype=np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
-    try:
-        cc, found = cv2.findTransformECC(
-            gray(front_strip),
-            gray(canvas[:, split : split + overlap]),
-            warp,
-            cv2.MOTION_AFFINE,
-            criteria,
-            None,
-        )
-    except cv2.error:
-        return None
-    matrix = np.asarray(found, dtype=np.float64)
-    matrix[:, 2] *= k
-    linear, offset = matrix[:, :2], matrix[:, 2]
-    height = canvas.shape[0]
-    if (
-        cc < REGISTER_MIN_CC
-        or np.abs(linear - np.eye(2)).max() > REGISTER_MAX_SCALE
-        or np.abs(offset).max() > REGISTER_MAX_SHIFT * height
-    ):
-        return None
-    # Przekształcenie liczone we współrzędnych pasa; na płótnie pas zaczyna się w `split`.
-    origin = np.array([split, 0.0])
-    full = np.hstack([linear, (offset + origin - linear @ origin)[:, None]])
-    out = cv2.warpAffine(
-        canvas,
-        full,
-        (canvas.shape[1], height),
-        flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
-        borderMode=cv2.BORDER_REPLICATE,
+    found = ecc_affine(
+        gray(front_strip), gray(canvas[:, split : split + overlap]), REGISTER_DOWNSCALE
     )
-    return np.asarray(out, dtype=np.uint8), round(float(cc), 3)
+    if found is None:
+        return None
+    matrix, cc = found
+    # Przekształcenie liczone we współrzędnych pasa; na płótnie pas zaczyna się w `split`.
+    return warp_back(canvas, shift_origin(matrix, split)), cc
 
 
 def outpainted_back(
@@ -546,7 +520,9 @@ class BackPainter:
                     back, front_px[:, :strip_px], strip_px, settings.seam_align_max
                 )
             seam = replace(
-                seam_check(back, front_px, strip_px, settings), align_shift=shift, register_cc=cc
+                seam_check(back, front_px, strip_px, settings, check_horizon=cc is None),
+                align_shift=shift,
+                register_cc=cc,
             )
             self.seams.append(seam)
             if best is None or seam.score < best[0]:

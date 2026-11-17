@@ -92,6 +92,15 @@ def test_seam_check_passes_matching_and_fails_shifted_horizon(repo_config: AppCo
     assert not other.passed and other.max_delta_e > settings.seam_max_delta_e
 
 
+def test_seam_check_without_horizon_condition(repo_config: AppConfig) -> None:
+    settings = repo_config.settings.cover
+    front = _landscape((100, 400), 0.6)
+    back = _landscape((100, 400), 0.65)  # wiersze między horyzontami są pominięte w ΔE
+    assert not seam_check(back, front, 5, settings).passed
+    loose = seam_check(back, front, 5, settings, check_horizon=False)
+    assert loose.passed and loose.horizon_ok and loose.horizon_back == pytest.approx(0.65, abs=0.01)
+
+
 def test_blend_seam_ends_in_front_colors() -> None:
     back = np.full((50, 40, 3), (200, 0, 0), np.uint8)
     front = np.full((50, 30, 3), (0, 0, 200), np.uint8)

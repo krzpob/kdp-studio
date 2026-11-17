@@ -2297,6 +2297,8 @@ def _make_cover(run: _CoverRun) -> ExitCode:
     typer.echo(f"Tekst na grzbiecie: {spine}.")
     if build.colorized and colorizer is not None:
         contours = "nałożone kontury 300 DPI" if build.contours_overlay else "kontury z modelu"
+        if build.register_cc is not None:
+            contours = f"obraz dopasowany do szkicu, {contours}"
         typer.echo(
             f"Przód pokolorowany ({plural(colorizer.attempts, 'próba', 'próby', 'prób')}, "
             f"zgodność konturów {build.contour_match:.0%}, {contours})."
@@ -2367,6 +2369,7 @@ def _front_info(
         info.raw_files = [p.relative_to(target).as_posix() for p in colorizer.raw_files]
     if build is not None:
         info.contour_match, info.contours_overlay = build.contour_match, build.contours_overlay
+        info.register_cc = build.register_cc
         info.title_thumb_px, info.title_contrast = build.title_thumb_px, build.title_contrast
     return info
 
