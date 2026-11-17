@@ -4,7 +4,9 @@ Modele obrazu przerysowują cały obraz wejściowy, także to, co miało zostać
 pokolorowany przód okładki i znany pas przodu przy dorysowaniu tyłu wracają lekko
 przesunięte i przeskalowane (na próbach z 17.11: o ~1–4% wysokości i 2–3%). Program mierzy
 to przesunięcie (OpenCV ECC na zmniejszonym obrazie) i cofa je, zanim nałoży ostre kontury
-albo zestawi tył z przodem.
+albo zestawi tył z przodem. Dopasowanie idzie w dwóch krokach: najpierw samo przesunięcie na
+mocno rozmytym obrazie, potem pełne przekształcenie afiniczne. Bez pierwszego kroku ECC
+startujące od tożsamości utyka przy przesunięciu ok. 6% wysokości (próba z 17.11).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import numpy as np
 MIN_CC = 0.5  # słabsza zgodność (ECC) to nieudane dopasowanie
 MAX_SCALE = 0.15  # dopuszczalna zmiana skali i pochylenia (±)
 MAX_SHIFT = 0.1  # dopuszczalne przesunięcie (ułamek wysokości)
+COARSE_BLUR = 0.01  # rozmycie przy zgrubnym przesunięciu (ułamek szerokości, min. 4 px)
 
 
 def ecc_affine(
@@ -37,10 +40,28 @@ def ecc_affine(
         return np.asarray(resized, dtype=np.float32)
 
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+    fine_template, fine_image = small(template), small(image)
+    sigma = max(4.0, COARSE_BLUR * fine_template.shape[1])
+
+    def blurred(img: np.ndarray) -> np.ndarray:
+        return np.asarray(cv2.GaussianBlur(img, (0, 0), sigma), dtype=np.float32)
+
     start = np.eye(2, 3, dtype=np.float32)
     try:
+        _, coarse = cv2.findTransformECC(
+            blurred(fine_template),
+            blurred(fine_image),
+            start,
+            cv2.MOTION_TRANSLATION,
+            criteria,
+            None,
+        )
+        start = np.asarray(coarse, dtype=np.float32)
+    except cv2.error:
+        start = np.eye(2, 3, dtype=np.float32)  # bez zgrubnego kroku: od tożsamości
+    try:
         cc, found = cv2.findTransformECC(
-            small(template), small(image), start, cv2.MOTION_AFFINE, criteria, None
+            fine_template, fine_image, start, cv2.MOTION_AFFINE, criteria, None
         )
     except cv2.error:
         return None

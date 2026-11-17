@@ -236,14 +236,21 @@ def test_aligned_color_keeps_k100_contours(repo_config: AppConfig, tmp_path: Pat
     assert layers.color.getpixel((rect[0] + 2, rect[1] + 2)) != (255, 255, 255)
 
 
+@pytest.mark.parametrize(
+    ("zoom", "dx", "dy"),
+    [(0.98, 0.03, 0.035), (0.965, 0.005, 0.06)],  # druga: jak trzecia próba kotków z 17.11
+    ids=["small", "large"],
+)
 def test_shifted_color_is_registered_and_keeps_contours(
-    repo_config: AppConfig, tmp_path: Path
+    repo_config: AppConfig, tmp_path: Path, zoom: float, dx: float, dy: float
 ) -> None:
     # Model przerysował szkic przesunięty i powiększony: program cofa to przed konturami.
     layers, geometry = _layers_with_art(repo_config, tmp_path)
     sketch = front_sketch(layers, geometry)
     tinted = _tinted(sketch)
-    shifted = tinted.transform(sketch.size, Image.Transform.AFFINE, (0.98, 0, 25, 0, 0.98, 30))
+    width, height = sketch.size
+    shift = (zoom, 0, dx * width, 0, zoom, dy * height)
+    shifted = tinted.transform(sketch.size, Image.Transform.AFFINE, shift)
     assert contour_match(np.asarray(sketch.convert("L")) < 128, shifted, 3) < 0.85
     match, overlay, register_cc = apply_front_color(
         layers, geometry, repo_config.settings.cover, shifted
