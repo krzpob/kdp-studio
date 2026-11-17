@@ -1081,8 +1081,9 @@ Cel: komplet stron przed kolorowankami w `interior.pdf` (FR-22). Strona 1 to tyt
 - `--first-page belongs-to` daje stronę z FR-14 bez zmian (`front_belongs_to.png`).
 
 **Strona 2: prawa autorskie**
-- Treść pochodzi z tłumaczeń w `config/markets.yaml` (FR-19), w sekcji `texts` według języka. Na start są wersje `pl`, `en` i `de`, które przygotował użytkownik. Rynek wybiera tłumaczenie przez swój `locale` (np. `en-GB`), a jeśli go nie ma, przez sam język (`en`). Dopóki FR-19 nie działa, książka ma rynek US, czyli wersję `en`.
-- Wstawki w tekście: `{year}` (rok z daty utworzenia książki w manifeście, więc ponowne `finalize` w styczniu go nie zmienia), `{author}` i `{title}`. `{author}` pochodzi z `--author` w `ideas` i `generate` albo z `publisher.author` w `settings.yaml` i jest zapisywany w manifeście. Brak tłumaczenia dla rynku książki albo brak autora, gdy tekst go używa, kończy się kodem 1 przed pierwszym wywołaniem API.
+- Treść pochodzi z tłumaczeń w `config/markets.yaml` (FR-19), w sekcji `texts` według języka. Na start są wersje `pl`, `en` i `de`, które przygotował użytkownik, każda w trzech wariantach: `minimal` (jedno zdanie), `short` (z zakazem kopiowania) i `full` (rozbudowany). Wariant wybiera `--copyright minimal|short|full` w `ideas`, `generate` i `front-matter`, domyślnie `front_matter.copyright: short` w `settings.yaml`; wybór zapisuje manifest. Rynek wybiera tłumaczenie przez swój `locale` (np. `en-GB`), a jeśli go nie ma, przez sam język (`en`). Dopóki FR-19 nie działa, książka ma rynek US, czyli wersję `en`.
+- Wstawki w tekście: `{year}` (rok z daty utworzenia książki w manifeście, więc ponowne `finalize` w styczniu go nie zmienia) i `{owner}`, czyli właściciel praw. Właściciel nie musi być autorem z KDP (pseudonim, firma), więc ma osobną wartość: `--copyright-owner` w `ideas` i `generate` albo `publisher.copyright_owner` w `settings.yaml`. Manifest go zapisuje. Brak tłumaczenia dla rynku książki albo brak właściciela praw kończy się kodem 1 przed pierwszym wywołaniem API.
+- Każdy wiersz tekstu w konfiguracji to osobny akapit, a program zawija go do szerokości obszaru treści i zostawia między akapitami odstęp pół wiersza. Pierwsze zdanie (`© … Wszelkie prawa zastrzeżone.`) jest więc zawsze osobnym akapitem, jak we wzorze.
 - Wygląd: zwykła, prosta czcionka bezszeryfowa (`front_matter.text_font`, czcionka OFL dołączona do repozytorium, z polskimi i niemieckimi znakami; kontrola znaków jak w FR-19), rozmiar `copyright_pt` (domyślnie 12 pt), wyrównanie do lewej. Blok tekstu stoi na dole obszaru treści, czyli tuż nad dolnym marginesem. Gdy się nie mieści, program zmniejsza czcionkę do `copyright_min_pt` (domyślnie 9 pt), a dalej kończy się kodem 1.
 - Plik `front_copyright.png`, kontrola druku jak NFR-07.
 
@@ -1098,9 +1099,14 @@ Cel: komplet stron przed kolorowankami w `interior.pdf` (FR-22). Strona 1 to tyt
 ```yaml
 texts:
   en:
-    copyright: |
-      Copyright © {year} {author}. All rights reserved.
-      …                                   # wersja angielska od użytkownika
+    copyright:
+      minimal: "© {year} {owner}. All rights reserved."
+      short: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced or distributed without prior written permission from the copyright owner, except as permitted by law.
+      full: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced, stored in a retrieval system, or transmitted in any form or by any means, including electronic, mechanical, photocopying, or recording, without prior written permission from the copyright owner, except as permitted by applicable law.
     instructions:
       heading: BEFORE YOU START
       intro: "Thank you so much for buying my book! I appreciate your support. Before starting your coloring journey, please read:"
@@ -1111,16 +1117,28 @@ texts:
       intro: "Thank you so much for buying my book! I appreciate your support. Before starting your colouring journey, please read:"
       body: "For the best results, test your colouring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are colouring."
   pl:
-    copyright: |
-      …                                   # wersja polska od użytkownika
+    copyright:
+      minimal: "© {year} {owner}. Wszelkie prawa zastrzeżone."
+      short: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Żadna część tej publikacji nie może być kopiowana ani rozpowszechniana bez uprzedniej pisemnej zgody właściciela praw, z wyjątkiem przypadków dozwolonych przez prawo.
+      full: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Bez uprzedniej pisemnej zgody właściciela praw żadna część tej publikacji nie może być powielana, przechowywana w systemach wyszukiwania informacji ani przekazywana w jakiejkolwiek formie lub za pomocą jakichkolwiek środków, w tym elektronicznych, mechanicznych, poprzez fotokopiowanie lub nagrywanie. Wyjątek stanowią przypadki dozwolone przez obowiązujące prawo.
     instructions:
       heading: ZANIM ZACZNIESZ
       intro: "Dziękuję za zakup tej książki! Bardzo doceniam Twoje wsparcie. Zanim zaczniesz kolorować, przeczytaj:"
       section: Jakość papieru
       body: "Najpierw wypróbuj swoje kredki i flamastry. Żeby kolor nie przebił na następną stronę, podłóż pod kolorowaną stronę czystą kartkę grubszego papieru."
   de:
-    copyright: |
-      …                                   # wersja niemiecka od użytkownika
+    copyright:
+      minimal: "© {year} {owner}. Alle Rechte vorbehalten."
+      short: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers vervielfältigt oder verbreitet werden, soweit dies nicht gesetzlich erlaubt ist.
+      full: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers in irgendeiner Form oder mit irgendwelchen Mitteln vervielfältigt, in einem Informationsabrufsystem gespeichert oder übertragen werden. Dies umfasst insbesondere elektronische und mechanische Verfahren sowie Fotokopien und Aufzeichnungen. Gesetzlich erlaubte Nutzungen bleiben unberührt.
     instructions:
       heading: BEVOR DU LOSLEGST
       intro: "Vielen Dank, dass du mein Buch gekauft hast! Ich freue mich sehr über deine Unterstützung. Bevor du mit dem Ausmalen beginnst, lies bitte:"
@@ -1128,7 +1146,7 @@ texts:
       body: "Teste deine Stifte am besten zuerst. Damit die Farbe nicht auf die nächste Seite durchdrückt, lege ein leeres Blatt dickeres Papier hinter die Seite, die du gerade ausmalst."
 ```
 
-- Walidacja (§7): każdy język ma komplet kluczy (po scaleniu `en-GB` z `en`), a wstawki są tylko z listy (`{year}`, `{author}`, `{title}`).
+- Walidacja (§7): każdy język ma komplet kluczy, z trzema wariantami praw autorskich (po scaleniu `en-GB` z `en`), a wstawki są tylko z listy (`{year}`, `{owner}`). Wersja `en-GB` nie potrzebuje własnych praw autorskich, bo angielski tekst nie ma różnic w pisowni.
 
 **Manifest i `canva.md`**
 - `front_matter` w manifeście ma wpisy `first_page` (rodzaj, układ, pliki jak w FR-14), `copyright` (język, hash tekstu) i `instructions`. Zmiana tekstu, czcionki albo autora przelicza stronę w `finalize` bez wywołań API, jak przy FR-14.
@@ -1136,7 +1154,7 @@ texts:
 
 **Uwagi do implementacji**
 - Wspólna logika ramki z pustym polem i układu zapasowego z FR-14 (`BelongsToMaker`, `BelongsToRenderer`) obsługuje rodzaje `belongs_to`, `title` i `instructions`.
-- Testy: wybór tłumaczenia (`en-GB` → `en`), brak tłumaczenia lub autora (kod 1 bez API), blok praw autorskich nad dolnym marginesem i zmniejszanie czcionki, strona 1 bez `front-matter` (sam tytuł), układ zapasowy instrukcji, zmiana `--no-instructions` (2 strony wstępne zamiast 4).
+- Testy: wybór tłumaczenia (`en-GB` → `en`) i wariantu (`minimal`, `short`, `full`), brak tłumaczenia lub właściciela praw (kod 1 bez API), blok praw autorskich nad dolnym marginesem i zmniejszanie czcionki, strona 1 bez `front-matter` (sam tytuł), układ zapasowy instrukcji, zmiana `--no-instructions` (2 strony wstępne zamiast 4).
 
 ## 7. Profile (konfiguracja YAML)
 
@@ -1290,7 +1308,7 @@ kdp-studio generate \
   [--no-review-ideas] \
   [--belongs-to-page] \
   [--first-page title|belongs-to] [--instructions|--no-instructions] \
-  [--single-sided|--double-sided] [--author "Jan Kowalski"] \
+  [--single-sided|--double-sided] [--copyright minimal|short|full] [--copyright-owner "Jan Kowalski"] \
   [--cover] \
   [--strict] \
   [--image-provider openai|comfyui] \
