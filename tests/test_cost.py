@@ -85,6 +85,15 @@ def test_cost_tracker_sums_kinds_and_checks_limit() -> None:
     assert costs.over_budget()
 
 
+def test_cost_tracker_counts_what_the_book_spent_before() -> None:
+    pricing = ApiPricing(models={"m": ModelPrice(input_per_1m=0, output_per_1m=1_000_000)})
+    costs = CostTracker(pricing, limit_usd=3.0, spent_before=2.5)
+    assert not costs.over_budget() and costs.total == 2.5
+    costs.add("images", "m", Usage(output_tokens=1))
+    assert (costs.spent, costs.total) == (1.0, 3.5)  # to uruchomienie i cała książka
+    assert costs.over_budget()
+
+
 # --- Worker -------------------------------------------------------------------------------
 
 
@@ -161,7 +170,7 @@ def test_generate_reports_and_records_costs(
     assert main([*GENERATE, "--pages", "3"]) == ExitCode.OK
     out = capsys.readouterr().out
     assert "Koszt pomysłów: $0.0004." in out  # generowanie + weryfikacja
-    assert "Limit kosztu: $5.00 (wydano $0.0004)." in out
+    assert "Limit kosztu książki: $5.00 (wydano dotąd $0.0004)." in out
     assert re.search(r"\[1/3\] page_0\d: ok \([\d.]+ s\), \$0\.01\n", out)
     assert "Czas kroku (grafiki): " in out and ", koszt $0.03." in out
     assert "Strony: 3/3 gotowe, 0 nieudanych." in out
@@ -183,7 +192,12 @@ def test_images_stops_at_limit_and_resumes(
     args = ["images", ARG, "--concurrency", "1"]
     assert main([*args, "--max-cost", "0.02"]) == ExitCode.BUDGET_EXCEEDED
     err = capsys.readouterr().err
-    assert "Błąd: przekroczony limit kosztu $0.02 (wydano $0.02), pominięto 4 strony" in err
+    # Limit książki obejmuje też koszt pomysłów z wcześniejszego `ideas`.
+    assert re.search(
+        r"Błąd: przekroczony limit kosztu książki \$0\.02 \(książka: \$0\.02, w tym to "
+        r"uruchomienie \$0\.02\), pominięto 4 strony",
+        err,
+    )
     assert f"kdp-studio images {ARG} --max-cost" in err
     data = _manifest()
     assert data["status"] == "budget_exceeded"
@@ -207,6 +221,41 @@ def test_regenerated_page_cost_accumulates(images: FakeImageProvider) -> None:
     assert main(["images", ARG]) == ExitCode.OK
     costs = [p["cost_usd"] for p in _manifest()["pages"]]
     assert costs == pytest.approx([2 * FAKE_IMAGE_COST, FAKE_IMAGE_COST, FAKE_IMAGE_COST])
+
+
+def test_book_over_its_limit_does_not_start(
+    images: FakeImageProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*IDEAS, "--pages", "3"]) == ExitCode.OK
+    assert main(["images", ARG]) == ExitCode.OK
+    book_cost = _manifest()["cost_usd"]
+    data = _manifest()
+    data["pages"][0]["action"] = "regenerate"
+    (BOOK / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    # Poprawka jednej strony z limitem, który książka już wydała: nic nie startuje.
+    limit = f"{book_cost:.6f}"
+    assert main(["images", ARG, "--max-cost", limit]) == ExitCode.BUDGET_EXCEEDED
+    err = capsys.readouterr().err
+    assert f"książka kosztowała już {format_usd(book_cost)}" in err
+    assert "podnieś limit" in err
+    assert len(images.requests) == 3
+    # Z limitem o jedną grafikę wyższym poprawka przechodzi.
+    higher = f"{book_cost + FAKE_IMAGE_COST * 1.5:.6f}"
+    assert main(["images", ARG, "--max-cost", higher]) == ExitCode.OK
+    assert len(images.requests) == 4
+    out = capsys.readouterr().out
+    assert (
+        f"Limit kosztu książki: ${float(higher):.2f} (wydano dotąd {format_usd(book_cost)})" in out
+    )
+
+
+def test_redo_counts_the_book_cost(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([*IDEAS, "--pages", "3"]) == ExitCode.OK
+    spent = _manifest()["cost_usd"]
+    code = main(["ideas", ARG, "--redo", "idea_02", "--max-cost", f"{spent:.6f}"])
+    assert code == ExitCode.BUDGET_EXCEEDED
+    assert "książka kosztowała już" in capsys.readouterr().err
 
 
 def test_generate_stops_before_images_when_ideas_use_the_budget(
