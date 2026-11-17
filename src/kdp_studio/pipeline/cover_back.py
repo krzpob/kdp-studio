@@ -1,7 +1,11 @@
 """FR-15 etap 3: tło tyłu i grzbietu z modelu, dopasowane do przodu.
 
-Tył i grzbiet powstają razem, jednym wywołaniem, z gotowym przodem jako referencją. Prompt
-narzuca horyzont i kolory lewej krawędzi przodu (z oceny modelem z wizją, uzupełnionej
+Tył i grzbiet powstają razem, jednym wywołaniem. Domyślnie jako dorysowanie przodu
+(`outpaint`): program składa płótno z lewym pasem gotowego przodu po prawej i pustym miejscem
+na tył po lewej, a maska każe modelowi wypełnić tylko puste miejsce, więc listwy, deski czy
+śnieg ciągną się dalej zamiast powstawać od nowa. Bez proporcji modelu, która zostawia na
+płótnie dość przodu, tył powstaje jak dawniej, z przodem tylko jako referencją. Prompt
+narzuca wtedy horyzont i kolory lewej krawędzi przodu (z oceny modelem z wizją, uzupełnionej
 próbkami pikseli). Model nie trzyma się podanej wysokości horyzontu (podłoga czy śnieg
 potrafią wyjść kilkanaście procent wyżej, listwa bywa cieńsza), więc program dopasowuje tył
 w pionie do przodu: pionowy profil kolorów przy grzbiecie wyrównuje do profilu lewej krawędzi
@@ -44,6 +48,7 @@ BLEND_SMOOTH_IN = 0.1  # wygładzenie kolorów krawędzi przodu w pionie przed p
 ALIGN_ROWS = 256  # rozdzielczość profilu przy dopasowaniu wierszy tyłu do przodu
 ALIGN_STEP_PENALTY = 2.0  # ΔE za krok poza przekątną: bez potrzeby tył się nie odkształca
 ALIGN_SMOOTH = 0.03  # okno wygładzenia mapy wierszy (ułamek wysokości)
+OUTPAINT_HEIGHT = 1024  # wysokość płótna do dorysowania; model i tak skaluje je do siebie
 
 
 # --- Próbki pikseli --------------------------------------------------------------------------
@@ -275,6 +280,80 @@ def back_prompt(
     return f"{text}\nStyle of the book: {style}."
 
 
+def outpaint_prompt(
+    settings: CoverSettings, style: str, geometry: CoverGeometry, area: float
+) -> str:
+    """Prompt dorysowania tyłu: `area` to część płótna do wypełnienia (tył z grzbietem)."""
+    width = geometry.folds_x[1]
+    text = " ".join(settings.outpaint_prompt.split()).format(
+        area_pct=round(area * 100),
+        spine_pct=round((geometry.spine_in + SPINE_SLACK_IN) / width * 100),
+        margin_pct=max(1, round(settings.key_margin_in / width * 100)),
+    )
+    return f"{text}\nStyle of the book: {style}."
+
+
+# --- Dorysowanie ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutpaintPlan:
+    """Płótno do dorysowania: proporcje modelu i szerokość pasa przodu (piksele okładki)."""
+
+    aspect: str
+    overlap_px: int
+
+
+def outpaint_plan(
+    back_size: tuple[int, int], front_width: int, aspects: list[str], overlap_min: float
+) -> OutpaintPlan | None:
+    """Proporcje modelu z najwęższym pasem przodu, który ma co najmniej `overlap_min` jego
+    szerokości (i nie więcej niż cały przód); None, gdy żadne nie pasują."""
+    width, height = back_size
+    best: OutpaintPlan | None = None
+    for aspect in aspects:
+        a, b = (int(v) for v in aspect.split(":"))
+        overlap = round(height * a / b) - width
+        if not overlap_min * front_width <= overlap <= front_width:
+            continue
+        if best is None or overlap < best.overlap_px:
+            best = OutpaintPlan(aspect, overlap)
+    return best
+
+
+def _png_bytes(img: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def outpaint_canvas(
+    front: np.ndarray, back_size: tuple[int, int], plan: OutpaintPlan
+) -> tuple[bytes, bytes]:
+    """(płótno, maska) w PNG: po prawej lewy pas przodu, po lewej białe miejsce na tył; maska
+    jest przezroczysta tam, gdzie model ma malować."""
+    width, height = back_size
+    canvas = Image.new("RGB", (width + plan.overlap_px, height), (255, 255, 255))
+    canvas.paste(Image.fromarray(front[:, : plan.overlap_px]), (width, 0))
+    scale = OUTPAINT_HEIGHT / height
+    size = (round(canvas.width * scale), OUTPAINT_HEIGHT)
+    canvas = canvas.resize(size, Image.Resampling.LANCZOS)
+    mask = Image.new("RGBA", size, (0, 0, 0, 255))
+    mask.paste((0, 0, 0, 0), (0, 0, round(width * scale), size[1]))
+    return _png_bytes(canvas), _png_bytes(mask)
+
+
+def outpainted_back(
+    painted: Image.Image, back_size: tuple[int, int], plan: OutpaintPlan
+) -> np.ndarray:
+    """Tył z grzbietem wycięty z dorysowanego płótna, w pikselach okładki."""
+    width, height = back_size
+    full = painted.convert("RGB").resize(
+        (width + plan.overlap_px, height), Image.Resampling.LANCZOS
+    )
+    return np.asarray(full)[:, :width]
+
+
 # --- Malowanie --------------------------------------------------------------------------------
 
 
@@ -282,7 +361,8 @@ def back_prompt(
 class BackPainter:
     """Tył z grzbietem z modelu: ponowienia przy błędach niekrytycznych i nieudanym styku.
 
-    `analyze(przód) -> FrontScene` to ocena przodu modelem z wizją (None: same próbki pikseli).
+    `analyze(przód) -> FrontScene` to ocena przodu modelem z wizją (None: same próbki pikseli);
+    potrzebna tylko bez dorysowania, gdzie prompt opisuje przód słowami.
     """
 
     provider: ImageProvider
@@ -306,6 +386,23 @@ class BackPainter:
     edge_colors: list[str] = field(default_factory=list)
     seams: list[SeamCheck] = field(default_factory=list)
     chosen: int | None = None  # numer użytej próby (1…)
+    mode: str | None = None  # outpaint: dorysowanie przodu; reference: przód jako referencja
+    overlap_px: int | None = None  # pas przodu na płótnie do dorysowania (piksele okładki)
+
+    def _analyze(self, front: Image.Image) -> None:
+        """Ocena przodu modelem z wizją do promptu; błąd niekrytyczny to próbki pikseli."""
+        if self.analyze is None:
+            return
+        self._check_budget()
+        try:
+            self.scene = self.analyze(front)
+        except ProviderError as e:
+            if e.fatal:
+                raise
+            self.scene_error = str(e)
+            self.warnings.append(
+                f"ocena przodu modelem z wizją nie powiodła się ({e}); tył według próbek pikseli"
+            )
 
     def _check_budget(self) -> None:
         if self.over_budget is not None and self.over_budget():
@@ -321,28 +418,25 @@ class BackPainter:
         edge = band_colors(front_px[:, :strip_px], settings.seam_bands)
         front_horizon = pixel_horizon(front_px[:, :strip_px])
         self.edge_colors = [hex_color(c) for c in edge]
-        if self.analyze is not None:
-            self._check_budget()
-            try:
-                self.scene = self.analyze(front)
-            except ProviderError as e:
-                if e.fatal:
-                    raise
-                self.scene_error = str(e)
-                self.warnings.append(
-                    f"ocena przodu modelem z wizją nie powiodła się ({e}); "
-                    "tył według próbek pikseli"
-                )
-        self.aspect = model_aspect(size, self.provider.supported_aspects())
-        self.prompt = back_prompt(
-            settings,
-            self.style,
-            geometry,
-            self.scene,
-            self.edge_colors,
-            front_horizon,
-        )
-        reference = reference_png(front, front_aspect(front.size))
+        aspects = self.provider.supported_aspects()
+        plan = None
+        if settings.outpaint:
+            plan = outpaint_plan(size, front_px.shape[1], aspects, settings.outpaint_overlap_min)
+        mask = None
+        if plan is not None:
+            self.mode, self.aspect, self.overlap_px = "outpaint", plan.aspect, plan.overlap_px
+            self.prompt = outpaint_prompt(
+                settings, self.style, geometry, size[0] / (size[0] + plan.overlap_px)
+            )
+            reference, mask = outpaint_canvas(front_px, size, plan)
+        else:
+            self.mode = "reference"
+            self._analyze(front)
+            self.aspect = model_aspect(size, aspects)
+            self.prompt = back_prompt(
+                settings, self.style, geometry, self.scene, self.edge_colors, front_horizon
+            )
+            reference = reference_png(front, front_aspect(front.size))
         best: tuple[float, np.ndarray, int] | None = None
         for _ in range(1 + settings.max_retries):
             self._check_budget()
@@ -354,6 +448,7 @@ class BackPainter:
                         aspect=self.aspect,
                         quality=self.quality,
                         reference_image=reference,
+                        mask=mask,
                     )
                 )
             except ProviderError as e:
@@ -369,12 +464,17 @@ class BackPainter:
             self.raw_files.append(path)
             try:
                 with Image.open(io.BytesIO(result.png_bytes)) as img:
-                    painted = img.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+                    if plan is not None:
+                        painted = outpainted_back(img, size, plan)
+                    else:
+                        painted = np.asarray(
+                            img.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+                        )
             except OSError as e:
                 self.errors.append(f"niepoprawny obraz z modelu: {e}")
                 continue
             back, shift = align_to_front(
-                np.asarray(painted), front_px[:, :strip_px], strip_px, settings.seam_align_max
+                painted, front_px[:, :strip_px], strip_px, settings.seam_align_max
             )
             seam = replace(seam_check(back, front_px, strip_px, settings), align_shift=shift)
             self.seams.append(seam)

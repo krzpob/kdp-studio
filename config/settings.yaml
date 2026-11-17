@@ -169,6 +169,26 @@ cover:
     calm background, because thumbnails of inner pages will be placed on it. Use vivid but
     print-friendly colors (no neon, no fluorescent colors). No text, no letters, no title,
     no logos, no frame, no border.
+  # Tył jako dorysowanie przodu: płótno z lewym pasem przodu (co najmniej outpaint_overlap_min
+  # jego szerokości) po prawej i maską na pustej części. Model ciągnie dalej listwy, deski czy
+  # śnieg zamiast malować podobną scenę. Bez pasującej proporcji modelu (albo outpaint: false)
+  # tył powstaje z back_prompt. Pola: {area_pct} (pusta część, % płótna), {spine_pct} (grzbiet
+  # z zapasem, % pustej części), {margin_pct} (key_margin_in, %).
+  outpaint: true
+  outpaint_overlap_min: 0.2
+  outpaint_prompt: >-
+    Extend this picture to the left. The right part is the left edge of the front cover of a
+    children's coloring book; the empty white area on the left ({area_pct}% of the width) is the
+    back cover and spine of the same book. Fill the empty area so that the picture continues
+    seamlessly: the same wall, floor, ground or sky, the same lines, boards and horizon at
+    exactly the same height, the same style, palette and lighting. Do not change the right part.
+    Do not continue characters or objects cut by the edge into the new area. The right
+    {spine_pct}% of the new area, next to the existing part, is the spine: only plain background
+    there, no objects. Keep the bottom right corner of the new area calm and plain. Keep any new
+    objects at least {margin_pct}% away from the edges of the new area and keep its middle
+    mostly calm background, because thumbnails of inner pages will be placed on it. Use vivid
+    but print-friendly colors (no neon, no fluorescent colors). No text, no letters, no title,
+    no logos, no frame, no border.
   seam_bands: 8                 # pasy poziome przy kontroli styku grzbiet/przód (ΔE)
   back_text_pt: 16              # opis z metadanych na tyle (back_text: true)
   back_text_min_pt: 10

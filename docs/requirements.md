@@ -472,7 +472,8 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 
 **Tył i grzbiet: jeden obraz, dopasowany do przodu**
 - Tył i grzbiet powstają **razem, jednym wywołaniem modelu**, w proporcji (tył + spad + grzbiet) : wysokość. Daje to ok. 0.78 dla letter i ok. 1.0 dla kwadratu, czyli proporcje dobrze obsługiwane przez modele. Między tyłem a grzbietem nie ma więc szwu, a grzbiet to ciąg dalszy tła tyłu.
-- Spójność z przodem:
+- **Dorysowanie do przodu** (zmiana z 17.11.2026, domyślne, `cover.outpaint`): tył nie powstaje jako nowy, podobny obraz, tylko jako ciąg dalszy przodu. Program składa płótno w proporcjach obsługiwanych przez model: po prawej lewy pas gotowego przodu (bez tytułu), po lewej puste miejsce na tył z grzbietem. Model dostaje je razem z maską, która jest przezroczysta tylko na pustym miejscu, i promptem `cover.outpaint_prompt` („przedłuż obraz w lewo”, z tymi samymi regułami kompozycji). Listwa, deski czy śnieg ciągną się wtedy dalej zamiast powstawać od nowa: na próbach z 17.11 nowy, podobny obraz miał cieńszą listwę i inny układ desek. Program wybiera proporcje z najwęższym pasem przodu, który ma co najmniej `outpaint_overlap_min` (0.2) jego szerokości (kwadrat: 4:3, ok. 1/3 przodu). Z wyniku bierze tylko część tył + grzbiet; przód na okładce zostaje programowy. Opis przodu modelem z wizją nie jest wtedy potrzebny. Gdy żadne proporcje nie pasują albo `outpaint: false`, tył powstaje jak niżej, z przodem jako referencją.
+- Spójność z przodem bez dorysowania:
   - przód jest obrazem referencyjnym;
   - program analizuje gotowy przód modelem z wizją: zwraca wysokość **linii horyzontu** jako ułamek wysokości (albo jej brak, np. przy tle-wzorze) i kolory tła w pasach poziomych przy lewej krawędzi przodu. Program uzupełnia to próbkami pikseli z lewej krawędzi;
   - prompt narzuca horyzont na tej samej wysokości, te kolory tła i styl przodu.
@@ -558,7 +559,7 @@ FR-15 powstaje w trzech PR-ach.
 - **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
 
 *Etap 2 (zrobiony):*
-- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`. Model, który tego parametru nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia, więc tył okładki idzie już bez parametru. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
+- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`, a z `mask` (dorysowanie tyłu) także z maską. Model, który któregoś z tych parametrów nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare` i `input_fidelity`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia. Bez maski model dostaje samo płótno z pustym białym miejscem, które prompt każe wypełnić. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
 - **Kolorowanie** (`pipeline/cover_front.py`):
   - szkic przodu ze spadem (kontury i pusty pas na tytuł) idzie do modelu jako referencja, rozciągnięty do najbliższych proporcji dostawcy (kwadrat → 1:1, letter → 3:4);
   - wynik wraca rozciągnięty z powrotem do przodu;
@@ -600,7 +601,7 @@ FR-15 powstaje w trzech PR-ach.
 
 **Wymagania wobec dostawców**
 - Adapter obrazu musi obsługiwać `reference_image` (OpenAI: endpoint edycji obrazu). Kontrakt już to przewiduje (§8.2).
-- Maska (dorysowanie tyłu na podstawie przodu) nie jest potrzebna w tym podejściu. Zostaje jako możliwe usprawnienie, gdyby kontrola styku zbyt często wymagała ponowień.
+- Maska (dorysowanie tyłu na podstawie przodu) jest od 17.11.2026 domyślnym sposobem malowania tyłu (`ImageRequest.mask`), bo sam prompt i referencja nie dawały ciągłej listwy ani desek.
 
 Konfiguracja (szkic):
 
@@ -625,6 +626,10 @@ cover:                          # nasze ustawienia
   seam_max_delta_e: 12
   horizon_tolerance: 0.03       # ułamek wysokości
   seam_align_max: 0.2           # największe przesunięcie wierszy tyłu przy dopasowaniu do przodu
+  outpaint: true                # tył jako dorysowanie przodu (płótno z pasem przodu + maska)
+  outpaint_overlap_min: 0.2     # najwęższy pas przodu na płótnie (część jego szerokości)
+  outpaint_prompt: >-           # pola {area_pct}, {spine_pct}, {margin_pct}
+    Extend this picture to the left. …
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
@@ -1115,7 +1120,8 @@ class ImageProvider(Protocol):
     name: str
     def supported_aspects(self) -> list[str]: ...
     def generate(self, req: ImageRequest) -> ImageResult: ...
-    # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie)
+    # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie),
+    #   mask (opcjonalnie, PNG z alfą: przezroczyste = do dorysowania; tylko z reference_image)
     #   + struktura promptu (scene, części stylu, negative) dla dostawców z osobnym promptem negatywnym (FR-18)
     # ImageResult: png_bytes, width, height, usage/cost, raw_response_meta
 

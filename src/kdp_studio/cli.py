@@ -2311,8 +2311,9 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             if used is not None
             else ""
         )
+        how = "dorysowane do przodu" if painter.mode == "outpaint" else "z przodem jako wzorem"
         typer.echo(
-            f"Tył i grzbiet z modelu ({plural(painter.attempts, 'próba', 'próby', 'prób')}"
+            f"Tył i grzbiet z modelu, {how} ({plural(painter.attempts, 'próba', 'próby', 'prób')}"
             f"{seam_text})."
         )
     if costs is not None:
@@ -2382,6 +2383,8 @@ def _back_info(
         model=painter.provider.model,
         quality=painter.quality,
         aspect=painter.aspect,
+        mode=painter.mode,
+        overlap_px=painter.overlap_px,
         prompt=painter.prompt,
         attempts=painter.attempts,
         chosen_attempt=painter.chosen,

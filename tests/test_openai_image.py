@@ -263,3 +263,46 @@ def test_generate_never_drops_parameters_on_bad_request() -> None:
     with pytest.raises(ProviderError):
         _generate(images)
     assert len(images.calls) == 1
+
+
+def _outpaint(provider: OpenAIImageProvider) -> Any:
+    return provider.generate(
+        ImageRequest(
+            prompt="extend it",
+            aspect="4:3",
+            quality="low",
+            reference_image=make_png(64, 48),
+            mask=make_png(64, 48),
+        )
+    )
+
+
+def test_mask_goes_to_the_edit_endpoint() -> None:
+    images = FakeImages(_response(make_png(1536, 1152), size="1536x1152"))
+    _outpaint(_provider(images))
+    (call,) = images.calls
+    assert call["endpoint"] == "edit" and call["size"] == "1536x1152"
+    assert call["mask"][0] == "mask.png" and call["mask"][2] == "image/png"
+    # Bez maski parametr nie trafia do zapytania.
+    images = FakeImages(_response(make_png(1024, 1024), size="1024x1024"))
+    _edit(_provider(images))
+    assert isinstance(images.calls[0]["mask"], openai.Omit)
+
+
+def test_rejected_mask_and_input_fidelity_are_dropped_and_remembered() -> None:
+    fidelity = _status_error(
+        openai.BadRequestError, 400, "The model does not support the 'input_fidelity' parameter."
+    )
+    mask = _status_error(openai.BadRequestError, 400, "The model does not support 'mask'.")
+    ok = _response(make_png(1536, 1152), size="1536x1152")
+    images = FakeImages(fidelity, mask, ok)
+    provider = _provider(images)
+    _outpaint(provider)
+    first, second, third = images.calls
+    assert first["input_fidelity"] == "high" and not isinstance(first["mask"], openai.Omit)
+    assert isinstance(second["input_fidelity"], openai.Omit)
+    assert not isinstance(second["mask"], openai.Omit)
+    assert isinstance(third["mask"], openai.Omit)  # samo płótno, bez maski
+    _outpaint(provider)
+    assert isinstance(images.calls[3]["mask"], openai.Omit)
+    assert isinstance(images.calls[3]["input_fidelity"], openai.Omit)

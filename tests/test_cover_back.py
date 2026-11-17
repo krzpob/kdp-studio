@@ -19,9 +19,12 @@ from kdp_studio.pipeline.cmyk import NaiveConverter
 from kdp_studio.pipeline.cover import build_cover, layout_back_text
 from kdp_studio.pipeline.cover_back import (
     BackPainter,
+    OutpaintPlan,
     align_to_front,
     back_prompt,
     blend_seam,
+    outpaint_canvas,
+    outpaint_plan,
     pixel_horizon,
     seam_check,
 )
@@ -111,6 +114,13 @@ def test_back_prompt_has_horizon_colors_and_zones(repo_config: AppConfig) -> Non
     assert "no horizon line" in flat and "#FFFFFF" in flat
 
 
+def test_bad_outpaint_prompt_placeholder_is_a_config_error(config_dir: ConfigDirFactory) -> None:
+    settings = fake_settings()
+    settings["cover"]["outpaint_prompt"] = "Extend {horizon}"
+    with pytest.raises(ConfigError, match="outpaint_prompt"):
+        load_config(config_dir(settings=settings))
+
+
 def test_bad_back_prompt_placeholder_is_a_config_error(config_dir: ConfigDirFactory) -> None:
     settings = fake_settings()
     settings["cover"]["back_prompt"] = "Paint {horizont}"
@@ -143,13 +153,19 @@ class Painter:
 
 
 def _painter(
-    repo_config: AppConfig, tmp_path: Path, provider: Painter, **kwargs: Any
+    repo_config: AppConfig,
+    tmp_path: Path,
+    provider: Painter,
+    *,
+    outpaint: bool = False,
+    **kwargs: Any,
 ) -> BackPainter:
+    """Domyślnie tył z przodem jako referencją; `outpaint=True` to dorysowanie z maską."""
     return BackPainter(
         provider=provider,
         quality="low",
         style="kawaii",
-        settings=repo_config.settings.cover,
+        settings=repo_config.settings.cover.model_copy(update={"outpaint": outpaint}),
         geometry=_geometry(),
         raw_dir=tmp_path,
         **kwargs,
@@ -259,13 +275,71 @@ def test_back_painter_aligns_horizon_the_model_missed(
 def test_shift_beyond_the_limit_is_not_fully_aligned(
     repo_config: AppConfig, tmp_path: Path
 ) -> None:
-    settings = repo_config.settings.cover.model_copy(update={"seam_align_max": 0.05})
     provider = Painter([_landscape((300, 300), 0.48)] * 3)
     painter = _painter(repo_config, tmp_path, provider)
-    painter.settings = settings
+    painter.settings = painter.settings.model_copy(update={"seam_align_max": 0.05})
     painter(_front(_geometry()))
     assert painter.attempts == 3
     assert all(not s.passed and (s.align_shift or 0) <= 0.06 for s in painter.seams)
+
+
+# --- Dorysowanie tyłu do przodu ------------------------------------------------------------
+
+
+def test_outpaint_plan_picks_narrowest_strip_that_is_wide_enough() -> None:
+    # Kwadratowa książka: tył z grzbietem ~ kwadrat, więc 1:1 nie zostawia miejsca na przód.
+    plan = outpaint_plan((886, 875), 875, ["1:1", "4:3", "3:2"], 0.2)
+    assert plan == OutpaintPlan("4:3", 281)
+    assert outpaint_plan((886, 875), 875, ["1:1"], 0.2) is None
+    assert outpaint_plan((886, 875), 875, ["3:1"], 0.2) is None  # więcej niż cały przód
+
+
+def test_outpaint_canvas_keeps_front_strip_and_masks_the_back() -> None:
+    front = _landscape((875, 875), 0.6)
+    canvas_png, mask_png = outpaint_canvas(front, (886, 875), OutpaintPlan("4:3", 281))
+    with Image.open(io.BytesIO(canvas_png)) as canvas, Image.open(io.BytesIO(mask_png)) as mask:
+        assert canvas.size == mask.size and canvas.height == 1024
+        assert canvas.width / canvas.height == pytest.approx(4 / 3, abs=0.01)
+        pixels = np.asarray(canvas.convert("RGB"))
+        alpha = np.asarray(mask)[:, :, 3]
+    split = round(886 * 1024 / 875)
+    assert (alpha[:, : split - 1] == 0).all() and (alpha[:, split + 1 :] == 255).all()
+    assert tuple(pixels[10, 5]) == (255, 255, 255)  # puste miejsce na tył
+    assert pixel_horizon(pixels[:, -20:]) == pytest.approx(0.6, abs=0.01)  # pas przodu
+
+
+def test_back_painter_outpaints_and_skips_scene_analysis(
+    repo_config: AppConfig, tmp_path: Path
+) -> None:
+    analyzed: list[Image.Image] = []
+
+    def analyze(front: Image.Image) -> FrontScene:
+        analyzed.append(front)
+        return FrontScene(0.6, [], "", Usage())
+
+    provider = Painter([_landscape((400, 300), 0.6)])
+    painter = _painter(repo_config, tmp_path, provider, outpaint=True, analyze=analyze)
+    geometry = _geometry()
+    back = painter(_front(geometry))
+    assert back.size == (geometry.px(geometry.front_panel)[0], geometry.size_px[1])
+    assert (painter.mode, painter.aspect) == ("outpaint", "4:3")
+    assert painter.overlap_px is not None and painter.overlap_px > 0
+    (req,) = provider.requests
+    assert req.mask is not None and req.reference_image is not None and req.aspect == "4:3"
+    assert painter.prompt is not None and painter.prompt.startswith("Extend this picture")
+    assert "Style of the book: kawaii." in painter.prompt and "{" not in painter.prompt
+    assert analyzed == [] and painter.seams[0].passed
+
+
+def test_back_painter_falls_back_to_reference_without_fitting_aspect(
+    repo_config: AppConfig, tmp_path: Path
+) -> None:
+    provider = Painter([_landscape((300, 300), 0.6)])
+    painter = _painter(repo_config, tmp_path, provider, outpaint=True)
+    painter.settings = painter.settings.model_copy(update={"outpaint_overlap_min": 0.9})
+    painter(_front(_geometry()))
+    assert (painter.mode, painter.aspect, painter.overlap_px) == ("reference", "1:1", None)
+    assert provider.requests[0].mask is None
 
 
 def test_back_painter_gives_up_and_respects_budget(repo_config: AppConfig, tmp_path: Path) -> None:
@@ -391,14 +465,19 @@ def test_qa_instructions_list_program_texts() -> None:
 # --- CLI ---------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def vision(monkeypatch: pytest.MonkeyPatch) -> CoverVision:
+def _cover_book(monkeypatch: pytest.MonkeyPatch) -> CoverVision:
+    """Gotowa książka do okładki: fałszywy model z wizją i konwersja CMYK bez profilu."""
     monkeypatch.setattr(cli, "cmyk_converter", lambda settings: NaiveConverter())
     responder = CoverVision()
     provider = FakeVisionProvider(responder)
     monkeypatch.setattr(cli, "create_vision_provider", lambda name, model: provider)
     assert main([*GENERATE, "--pages", "6"]) == ExitCode.OK
     return responder
+
+
+@pytest.fixture
+def vision(monkeypatch: pytest.MonkeyPatch) -> CoverVision:
+    return _cover_book(monkeypatch)
 
 
 def _manifest() -> dict[str, Any]:
@@ -462,15 +541,36 @@ def test_cover_paints_back_and_records_seam(
     capsys.readouterr()
     assert main(["cover", ARG, "--no-select-pages", "--image-quality", "low"]) == ExitCode.OK
     out = capsys.readouterr().out
-    assert vision.calls == ["scene"]
-    assert "Tył i grzbiet z modelu (1 próba, styk z przodem ΔE" in out
+    assert vision.calls == []  # dorysowanie: model widzi przód, opis sceny niepotrzebny
+    assert "Tył i grzbiet z modelu, dorysowane do przodu (1 próba, styk z przodem ΔE" in out
     back = _manifest()["cover"]["back"]
     assert back["painted"] and back["attempts"] == 1 and back["chosen_attempt"] == 1
+    assert (back["mode"], back["aspect"]) == ("outpaint", "1:1")
+    assert back["overlap_px"] > 0
     assert back["raw_files"] == ["cover/raw/back_try1.png"]
     assert back["seam_passed"] is True and back["seams"][0]["passed"]
     assert "align_shift" in back["seams"][0]
-    assert back["scene"]["background"] == "plain white background"
+    assert back["scene"] is None
     assert len(back["edge_colors"]) == 8
+    assert back["prompt"].startswith("Extend this picture to the left")
+
+
+def test_cover_back_from_reference_without_outpaint(
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: ConfigDirFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = fake_settings()
+    settings["cover"]["outpaint"] = False
+    config_dir(settings=settings)
+    responder = _cover_book(monkeypatch)
+    capsys.readouterr()
+    assert main(["cover", ARG, "--no-select-pages", "--image-quality", "low"]) == ExitCode.OK
+    assert "Tył i grzbiet z modelu, z przodem jako wzorem (1 próba" in capsys.readouterr().out
+    assert responder.calls == ["scene"]
+    back = _manifest()["cover"]["back"]
+    assert (back["mode"], back["overlap_px"]) == ("reference", None)
+    assert back["scene"]["background"] == "plain white background"
     assert back["prompt"].startswith("Paint the back cover")
 
 

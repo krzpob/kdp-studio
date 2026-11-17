@@ -268,6 +268,8 @@ class CoverBackInfo(_Model):
     model: str | None = None
     quality: str | None = None
     aspect: str | None = None
+    mode: str | None = None  # outpaint: dorysowanie przodu z maską; reference: przód jako wzór
+    overlap_px: int | None = None  # pas przodu na płótnie do dorysowania (piksele okładki)
     prompt: str | None = None
     attempts: int = 0
     chosen_attempt: int | None = None
