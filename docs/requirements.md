@@ -34,6 +34,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | FR-19 | ⬜ | | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. |
 | FR-20 | ⬜ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
+| FR-21 | ⬜ | | Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -145,7 +146,7 @@ Parametry techniczne opisuje sekcja 9. Wszystkie parametry można też podać w 
   - być unikalne w obrębie książki (różne sceny, nie tylko inne sformułowania);
   - pasować do formatu: `square` to centralny obiekt lub kompozycja koncentryczna, `letter` to postać lub scena w pionie;
   - pasować do wieku: liczba obiektów i złożoność sceny zgodne z profilem wieku.
-- Treści nie mogą zawierać postaci chronionych prawem autorskim ani znaków towarowych. LLM dostaje to jako twarde ograniczenie.
+- Treści nie mogą zawierać postaci chronionych prawem autorskim ani znaków towarowych. LLM dostaje to jako twarde ograniczenie, a temat z chronioną nazwą i kontrolę tekstów w kodzie opisuje FR-21.
 
 ### ✅ FR-03a: Weryfikacja pomysłów przed generowaniem grafik
 - Domyślnie włączona (`review_ideas: true` w `settings.yaml`); `--no-review-ideas` wyłącza.
@@ -177,7 +178,7 @@ Weryfikacja z FR-03a ocenia każdy pomysł osobno, a powtarzalność to cecha ca
 
 ### ✅ FR-04: Budowanie promptów obrazu
 - Prompt dla każdej strony składa się z: opisu sceny z FR-03, **wspólnego bloku stylu** (identycznego dla wszystkich stron książki), fragmentu z profilu wieku i fragmentu z profilu formatu.
-- Każdy prompt zawiera stałe ograniczenia: `black and white line art, coloring book page, single illustration, one scene, pure white background, closed outlines, no shading, no grayscale, no text, no grid, no multiple panels, no collage, no frame`.
+- Każdy prompt zawiera stałe ograniczenia: `black and white line art, coloring book page, single illustration, one scene, pure white background, closed outlines, no shading, no grayscale, no text, no grid, no multiple panels, no collage, no frame`. Po FR-21 lista kończy się `no logos, no brand marks`.
 - Gotowy prompt zapisuje się w manifeście (FR-08), żeby dało się odtworzyć i debugować wynik.
 
 ### ✅ FR-05: Generowanie grafik
@@ -219,7 +220,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 ### ✅ FR-07: Kontrola jakości (QA), opcjonalna
 - Włączana flagą `--qa` (domyślnie wyłączona w MVP).
 - Model z wizją ocenia każdą grafikę po FR-06 i zwraca JSON: `{pass: bool, issues: [...]}`.
-- Kryteria odrzucenia: kilka paneli, siatka lub kolaż; cieniowanie lub szarości; tekst lub litery; otwarte kontury uniemożliwiające kolorowanie; poziom szczegółowości niezgodny z profilem wieku; elementy niezgodne z opisem sceny; **temat książki niewidoczny w samym rysunku** (`theme_unclear`, zmiana z 17.11.2026).
+- Kryteria odrzucenia: kilka paneli, siatka lub kolaż; cieniowanie lub szarości; tekst lub litery; otwarte kontury uniemożliwiające kolorowanie; poziom szczegółowości niezgodny z profilem wieku; elementy niezgodne z opisem sceny; **temat książki niewidoczny w samym rysunku** (`theme_unclear`, zmiana z 17.11.2026); po FR-21 także **podobieństwo do znanej postaci, maskotki, zabawki lub logo** (`protected_character`).
 - `theme_unclear`: z czarno-białego rysunku, bez kolorów, dziecko ma się domyślić tematu kolorowanki. Na okładce zimowej książki z kucykami strona „snowy shore, winter waves, ice” bez kolorów wyglądała jak letnia plaża, i tak ją pokolorował model. Model z wizją dostaje temat po angielsku: tytuł z metadanych i słowa kluczowe tematu (`theme_anchors`, FR-03b). Wystarczy jedna wyraźnie narysowana wskazówka (płatki śniegu, sople, śnieg na ziemi, szaliki w zimowej książce); kryterium nie dotyczy strony FR-14, gdzie temat sprawdza `scene_mismatch`.
 - Odrzucona strona jest generowana ponownie **z tego samego pomysłu**, bez rozróżniania powodu (wada rysunku albo niewidoczny temat): model obrazu za każdym razem rysuje inaczej. Maks. `qa_max_retries` (domyślnie 2) ponowień na pomysł. Gdy żadna próba nie przejdzie, pozycja bierze **zapasowy pomysł** i znów ma `qa_max_retries` ponowień; łącznie najwyżej `qa_max_ideas` (domyślnie 2) pomysłów na pozycję, potem strona dostaje status `failed` w manifeście. Najgorszy przypadek to `qa_max_ideas × (1 + qa_max_retries)` grafik na stronę (domyślnie 6, ok. 0,27 USD przy `medium`). Do 17.11 każde odrzucenie od razu brało zapasowy pomysł.
 - Program kończy się sukcesem, jeśli jest co najmniej `--pages` stron ze statusem `ok`. W przeciwnym razie zwraca kod wyjścia 2 (sekcja 9.3).
@@ -1031,6 +1032,98 @@ cover:
 - Scalanie w jednej funkcji (np. `resolve_input(cli, file, config)`), która zwraca `BookInput` i mapę źródeł każdej wartości, użytą w komunikatach błędów i w `input.overrides`.
 - Testy: tabela pierwszeństwa (flaga, plik, settings), nieznany klucz, ścieżki względne od katalogu pliku, `manifest.json` jako plik wejściowy, niezgodność pliku z manifestem w `images`, brak sekretów w manifeście.
 
+### ⬜ FR-21: Chronione postacie, marki i produkty
+
+Cel: temat może zawierać chronioną nazwę („Lego”, „Barbie”, „Grinch na święta”, „Kubuś Puchatek”). Wtedy program traktuje ją jako inspirację dla ogólnego tematu i pilnuje, żeby nazwa nie trafiła ani do metadanych, ani do opisów scen i promptów obrazu.
+
+Dziś zakaz z FR-03 jest tylko zdaniem w prompcie. Reguła tematu (FR-03) każe jednocześnie trzymać się tematu, więc przy temacie „Grinch” model dostaje sprzeczne polecenia i nazwa może trafić do tytułu, słów kluczowych i scen. KDP traktuje cudze znaki towarowe i nazwy w tytule, opisie i słowach kluczowych jako mylące metadane, za co grozi zdjęcie książki, a przy powtórkach blokada konta.
+
+**Zasada inspiracji**
+- Z chronionej nazwy zostaje tylko ogólna kategoria: rodzaj zabawki, gatunek zwierzęcia, święto, nastrój, typ zabawy.
+- Nie zostaje nic, co wskazuje na konkretny utwór lub produkt: nazwa i imiona postaci, charakterystyczny wygląd (kolor futra, strój, znaki szczególne, kształt figurki, logo), fabuła, cytaty ani miejsca z utworu.
+- Wyjątek dla postaci z domeny publicznej jest możliwy tylko jawnie, dla wybranych rynków i stylów (niżej).
+
+| Temat | Rozpoznana nazwa | Temat ogólny (przykład) | Czego nie rysować |
+|---|---|---|---|
+| Lego | LEGO | budowanie z klocków: domy, pojazdy, roboty z klocków | figurek o kształcie ludzików LEGO, logo na wypustkach |
+| Barbie | Barbie | lalki i moda: przebieranki, sukienki, fryzury | charakterystycznej lalki, różowego logo, domku marki |
+| Grinch na święta | Grinch | święta z humorem: psotne stworki, zimowe figle | zielonego futrzaka, kradzieży prezentów, psa z porożem, miasteczka z bajki |
+| Kubuś Puchatek | Winnie-the-Pooh | misie i leśne zwierzątka, piknik, miód | czerwonej koszulki, prosiaczka, tygryska i osiołka, Stumilowego Lasu |
+
+**Wyjątek: postać z domeny publicznej**
+- Domyślnie każda nazwa z listy jest zablokowana. Wpis może dostać sekcję `public_domain`, którą dopisuje użytkownik po sprawdzeniu stanu prawnego, ze źródłem i datą. Lista startowa nie włącza jej dla żadnej postaci.
+- Ten sam bohater bywa wolny w jednym kraju, a chroniony w innym. Książkowy Kubuś Puchatek z 1926 roku jest w USA w domenie publicznej od 2022 roku, ale jego wersja z filmów Disneya (czerwona koszulka, wygląd z kreskówek) i znaki towarowe nadal są chronione. W Wielkiej Brytanii tekst Milne’a będzie wolny od 1.01.2027, a ilustracje Sheparda (zm. 1976) są tam i w UE chronione jeszcze przez ok. 20 lat. Dlatego wyjątek dotyczy tylko rynków z listy `markets` (FR-19; do tego czasu rynku US).
+- Wyjątek dotyczy tylko stylów z listy `styles`. To lista dozwolonych, nie zakazanych stylów: nowy styl dopisany do `styles.yaml` jest dla tej postaci zablokowany, dopóki ktoś go świadomie nie doda. Styl, który ciągnie rysunek w stronę chronionej wersji (np. `cartoon` przy Kubusiu, bo kreskówkowy Kubuś to wersja Disneya), zostaje poza listą.
+- Poza dozwolonym rynkiem albo stylem postać jest tylko inspiracją, jak w zasadzie wyżej. Konsola podaje powód, np. `Kubuś Puchatek: styl cartoon nie jest dozwolony dla postaci z domeny publicznej (dozwolone: cozy, chibi); książka powstanie dla tematu ogólnego`.
+- Co wyjątek zmienia: generator pomysłów może budować książkę wokół świata i postaci oryginału (`characters`), a imiona mogą stać w tytułach stron w `ideas.json`.
+- Czego wyjątek nie zmienia:
+  - **Metadane:** nazwa nadal nie trafia do tytułu, podtytułu, opisu ani słów kluczowych, bo znak towarowy nie wygasa razem z prawem autorskim.
+  - **Opisy scen i prompty obrazu:** nie zawierają imion. Model obrazu zna te postacie głównie z wersji filmowej i narysuje ją niezależnie od stylu, więc zamiast imienia scena dostaje opis wyglądu z oryginału (`look`), a kontrola z kodu sprawdza `scene` i `elements` jak dotąd.
+  - **Cechy wersji chronionej (`avoid`):** trafiają do QA jako kryterium `protected_character`, a nie do promptu, bo nazwana cecha przyciąga model.
+- `ideas.json` → `theme_check` zapisuje tryb (`generic` albo `public_domain`), rynek, styl oraz `source` i `checked` z wpisu.
+
+**Sprawdzenie tematu (przed pomysłami)**
+- Kod szuka chronionych nazw w temacie, zanim cokolwiek wyśle do modelu (lista z `config/protected_names.yaml`, niżej).
+- Wywołanie pomysłów (FR-03, nadal jedno, D5) dostaje regułę: jeśli temat zawiera chronioną nazwę, model wypisuje ją w `protected_terms`, pisze temat ogólny w `generic_theme` i planuje całą książkę od tematu ogólnego. Reguła tematu z FR-03 dotyczy wtedy tematu ogólnego. Nazwy znalezione przez kod trafiają do promptu jako podpowiedź, razem z polem `generic` z listy.
+- Konsola pokazuje ostrzeżenie po polsku: `Temat zawiera chronioną nazwę: Grinch. Książka powstanie dla tematu ogólnego: „…”`. `ideas.json` → `theme_check` zapisuje `protected_terms`, `generic_theme` i źródło każdej nazwy (`list` albo `model`).
+- `--strict` zamienia ostrzeżenie w błąd: nazwa z listy w temacie kończy się kodem 1 przed pierwszym wywołaniem API.
+- Katalog książki dalej bierze nazwę z tematu podanego przez użytkownika (FR-08). To nazwa lokalna, nigdy nie trafia do KDP.
+
+**Kontrola tekstów w kodzie**
+- Lista nazw do sprawdzenia dla książki to `config/protected_names.yaml` plus `protected_terms` od modelu. Nazwy od modelu sprawdzane są tylko jako całe słowa.
+- Kod sprawdza tytuł, podtytuł, opis, słowa kluczowe, `theme_anchors`, tytuły stron, `scene` i `elements` każdego pomysłu, prompty obrazu, teksty strony z FR-14 i okładki z FR-15 (tytuł, podtytuł, tekst na tyle) oraz opisy bohaterów z sekcji 14a, gdy powstaną.
+- Dopasowanie bez wielkości liter i polskich znaków (to samo składanie co `slugify`), tylko całe słowa, plus odmiany z pola `forms`. Fragment słowa się nie liczy: „Lego” nie łapie „legowiska”. Samo imię „Kubuś” też nie, bo to zwykłe imię; złapie je dopiero forma z listy („Kubuś Puchatek”, „Kubusia Puchatka”).
+- Nazwa w metadanych: jedno ponowienie wywołania z informacją, które pole zawiera którą nazwę. Gdy to nie pomoże, `ProviderError` (kod 4), jak przy błędnych metadanych w FR-03.
+- Nazwa w pomyśle: kod daje mu werdykt `reject` z powodem `chroniona nazwa: Grinch`, bez wywołania LLM, i pomysł jest zastępowany jak w FR-03a. Bez weryfikacji pomysłów (`--no-review-ideas`) taki pomysł trafia na koniec rezerwy i nie dostaje strony.
+- Ręcznie poprawiony `ideas.json` (FR-17): `images` sprawdza go przed pierwszą grafiką i przy trafieniu kończy się kodem 1 z listą pól.
+- `PromptBuilder` sprawdza gotowy prompt jeszcze raz, bo fragmenty profili i opisy bohaterów pochodzą od użytkownika.
+
+**Grafiki**
+- Do `FIXED_CONSTRAINTS` (FR-04) dochodzi `no logos, no brand marks`. Promptu nie uzupełnia się nazwami do unikania, np. `not Grinch`, bo nazwa w prompcie przyciąga model do tej postaci.
+- QA (FR-07) dostaje kryterium `protected_character`: strona przypomina znaną postać, maskotkę, zabawkę albo logo. Model z wizją podaje w szczegółach po polsku, co przypomina; strona wraca do ponownego generowania jak przy innych kryteriach. To samo kryterium dostaje QA strony z FR-14 i okładki z FR-15.
+- Gdy `theme_check` znalazł chronioną nazwę, a QA jest wyłączone, konsola zaleca `--qa`. Bez QA podobieństwo rysunku do postaci nie jest sprawdzane.
+
+**Konfiguracja: `config/protected_names.yaml`**
+
+```yaml
+# FR-21: nazwy, których nie może zawierać żaden tekst książki ani prompt.
+# Dopasowanie: całe słowa, bez wielkości liter i polskich znaków.
+names:
+  - name: LEGO
+    forms: [Legos]
+    generic: building bricks
+  - name: Barbie
+    generic: fashion dolls and dress-up
+  - name: Grinch
+    forms: [Grincha, Grinchem, Grinchu, Grinchowi]
+    generic: mischievous holiday creatures
+  - name: Winnie-the-Pooh
+    forms: [Winnie the Pooh, Pooh, Kubuś Puchatek, Kubusia Puchatka, Kubusiem Puchatkiem, Puchatek, Puchatka]
+    generic: teddy bears and woodland animals
+    # public_domain:                       # dopisuje użytkownik po sprawdzeniu stanu prawnego
+    #   markets: [US]                      # książka z 1926 r.; w UK tekst od 2027, ilustracje dłużej
+    #   styles: [cozy, chibi]              # bez cartoon: za blisko wersji filmowej
+    #   characters: [Pooh, Piglet, Eeyore, Owl, Rabbit, Kanga, Roo]
+    #   look:
+    #     Pooh: small round teddy bear with short limbs, wearing no clothes
+    #     Piglet: very small piglet in a striped knitted jumper
+    #   avoid: [red shirt, animated film character design]
+    #   source: https://web.law.duke.edu/cspd/publicdomainday/2022/bcvpd/
+    #   checked: 2026-11-17
+```
+
+- Lista startowa obejmuje popularne w kolorowankach marki zabawek, postacie z filmów, seriali, gier i książek oraz ligi sportowe, z polskimi tytułami i odmianami. Rozwija ją użytkownik. Brak w liście nie oznacza, że nazwa jest wolna.
+- Walidacja konfiguracji (§7): pusta nazwa albo zdublowana forma kończy się kodem 1. W `public_domain` klucze `styles` muszą istnieć w `styles.yaml`, `markets` w `markets.yaml` (FR-19), każda postać z `characters` musi mieć `look`, a `source` i `checked` są wymagane. Po FR-19 formy obejmują pisownię każdego rynku.
+
+**Ograniczenia**
+- Ani lista, ani model nie znają wszystkich chronionych nazw, a „inspiracja” może wyjść zbyt podobna. Program zmniejsza ryzyko, ale nie zastępuje porady prawnej. Ostateczną decyzję przed publikacją podejmuje użytkownik.
+- Podsumowanie `generate` i `canva.md` przypominają, gdy temat zawierał chronioną nazwę: przed publikacją sprawdź tytuł, słowa kluczowe i okładkę.
+
+**Uwagi do implementacji**
+- Moduł `pipeline/protected.py`: `ProtectedNames` z konfiguracji, `find(text) -> list[Hit]` i wspólna funkcja składania znaków z `slugify`.
+- Pola `protected_terms` i `generic_theme` w `_LLMIdeas` (opcjonalne przy wczytywaniu, żeby stare `ideas.json` działały). Werdykt kodu dla pomysłu przechodzi przez `IdeaReviewer._apply()`.
+- Testy: odmiany polskie, „legowisko” bez trafienia, samo „Kubuś” bez trafienia, ponowienie z informacją zwrotną, nazwa w ręcznie poprawionym `ideas.json` (kod 1), `--strict` (kod 1 bez wywołań API), kryterium QA w `FakeVisionProvider`, wyjątek `public_domain` (dozwolony styl i rynek: imiona tylko w tytułach stron; styl spoza listy albo inny rynek: temat ogólny z powodem w konsoli; nowy styl domyślnie zablokowany).
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -1310,7 +1403,7 @@ Treść `canva.md` (wartości w nawiasach wypełnia program):
 | NFR-09 | Obserwowalność | Logi strukturalne (poziomy INFO/DEBUG), pasek postępu w konsoli, podsumowanie kosztów i czasu na końcu. Logi to wiersze JSON w `kdp-studio.log` w katalogu książki, dopisywane przez każdy krok. `info` zapisuje kroki, strony, ostrzeżenia i błędy z czasami, `debug` dodatkowo każde wywołanie API (czas, tokeny, prompt grafiki). Do pliku trafiają tylko logi programu, nie bibliotek dostawców (NFR-10). Każdy krok podaje w konsoli swój czas, a `generate` na końcu czasy kroków i całości. |
 | NFR-10 | Bezpieczeństwo | Klucze API nigdy nie trafiają do logów, manifestu ani repozytorium. |
 | NFR-11 | Przenośność | Działa na Linux, macOS i Windows. Zależności natywne (cairo, potrace) opisane w README albo zastąpione czysto pythonowymi odpowiednikami. |
-| NFR-12 | Zgodność z KDP | Domyślne profile formatów zgodne ze specyfikacją KDP (trim, 300 DPI, marginesy, min. 24 strony). Przypomnienie o ujawnieniu AI (FR-13). Prompty nie generują postaci ani znaków chronionych prawem autorskim. |
+| NFR-12 | Zgodność z KDP | Domyślne profile formatów zgodne ze specyfikacją KDP (trim, 300 DPI, marginesy, min. 24 strony). Przypomnienie o ujawnieniu AI (FR-13). Prompty nie generują postaci ani znaków chronionych prawem autorskim; chronione nazwy w temacie, metadanych, pomysłach i promptach sprawdza kod (FR-21). |
 | NFR-13 | Jakość kodu | `ruff` (lint i format), `mypy --strict` dla `pipeline/` i `providers/`, pre-commit, CI w GitHub Actions (lint, typy, testy). |
 
 ## 12. Proponowana struktura repozytorium
@@ -1399,5 +1492,6 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Adobe: kredyty generatywne (zakres użycia): https://helpx.adobe.com/firefly/using/generative-credits-faq.html
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
+- KDP: słowa kluczowe i metadane (czego unikać): https://kdp.amazon.com/help/topic/G201298500
 - KDP: okładka paperback (CMYK zalecany, bez mieszania przestrzeni barw, profile kolorów usuwane przed publikacją, brak wskazanego profilu i limitu farb): https://kdp.amazon.com/en_US/help/topic/G201953020
 - Poradniki zewnętrzne o CMYK dla okładek (profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
