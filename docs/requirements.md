@@ -28,7 +28,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | 🟡 | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Zmiana z 17.11: osobne polecenie `belongs-to` i krok w `generate` (dziś strona powstaje w krokach `images` i `finalize`). |
-| FR-15 | ✅ | #31, #32, #39 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
+| FR-15 | ✅ | #31, #32, #39, #40 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
