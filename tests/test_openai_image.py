@@ -208,3 +208,58 @@ def test_reference_image_uses_the_edit_endpoint() -> None:
     assert call["image"] == ("reference.png", reference, "image/png")
     assert call["input_fidelity"] == "high"
     assert (call["size"], call["quality"], call["background"]) == ("1024x1024", "low", "opaque")
+
+
+def _edit(provider: OpenAIImageProvider) -> Any:
+    return provider.generate(
+        ImageRequest(
+            prompt="color it", aspect="1:1", quality="low", reference_image=make_png(64, 64)
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _status_error(
+            openai.BadRequestError,
+            400,
+            "The model 'gpt-image-2.6-flare' does not support the 'input_fidelity' parameter.",
+        ),
+        openai.BadRequestError(
+            "Error code: 400",
+            response=httpx2.Response(400, request=REQUEST),
+            body={"message": "Unsupported parameter.", "param": "input_fidelity"},
+        ),
+    ],
+    ids=["message", "param"],
+)
+def test_edit_retries_without_unsupported_input_fidelity(error: Exception) -> None:
+    images = FakeImages(error, _response(make_png(1024, 1024), size="1024x1024"))
+    provider = _provider(images)
+    result = _edit(provider)
+    assert (result.width, result.height) == (1024, 1024)
+    first, second = images.calls
+    assert first["input_fidelity"] == "high"
+    assert isinstance(second["input_fidelity"], openai.Omit)  # SDK nie wysyła parametru
+    # Adapter pamięta odmowę: kolejne zapytanie (np. tył okładki) od razu bez parametru.
+    _edit(provider)
+    assert isinstance(images.calls[2]["input_fidelity"], openai.Omit)
+
+
+def test_other_bad_request_on_edit_is_not_retried() -> None:
+    error = _status_error(openai.BadRequestError, 400, "Invalid size.")
+    images = FakeImages(error)
+    with pytest.raises(ProviderError, match="Invalid size"):
+        _edit(_provider(images))
+    assert len(images.calls) == 1
+
+
+def test_generate_never_drops_parameters_on_bad_request() -> None:
+    error = _status_error(
+        openai.BadRequestError, 400, "does not support the 'input_fidelity' parameter."
+    )
+    images = FakeImages(error)
+    with pytest.raises(ProviderError):
+        _generate(images)
+    assert len(images.calls) == 1

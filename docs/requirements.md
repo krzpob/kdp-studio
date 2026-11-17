@@ -28,7 +28,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | 🟡 | #30 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Zmiana z 17.11: osobne polecenie `belongs-to` i krok w `generate` (dziś strona powstaje w krokach `images` i `finalize`). |
-| FR-15 | ✅ | #31, #32, #39, #40 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
+| FR-15 | ✅ | #31, #32, #39, #40, #41 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -555,7 +555,7 @@ FR-15 powstaje w trzech PR-ach.
 - **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
 
 *Etap 2 (zrobiony):*
-- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`.
+- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`. Model, który tego parametru nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia, więc tył okładki idzie już bez parametru. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
 - **Kolorowanie** (`pipeline/cover_front.py`):
   - szkic przodu ze spadem (kontury i pusty pas na tytuł) idzie do modelu jako referencja, rozciągnięty do najbliższych proporcji dostawcy (kwadrat → 1:1, letter → 3:4);
   - wynik wraca rozciągnięty z powrotem do przodu;
