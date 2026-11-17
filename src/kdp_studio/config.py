@@ -104,6 +104,7 @@ ImageQuality = Literal["low", "medium", "high", "auto"]
 LogLevel = Literal["info", "debug"]  # NFR-09
 MAX_CONCURRENCY = 16
 MAX_QA_RETRIES = 5
+MAX_QA_IDEAS = 5  # pomysły na stronę przy QA (własny i zapasowe)
 
 
 class GutterRow(_Strict):
@@ -399,7 +400,8 @@ class Settings(_Strict):
     review_ideas: bool = True
     diversity: DiversitySettings = DiversitySettings()
     qa: bool = False
-    qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2  # na pomysł
+    qa_max_ideas: Annotated[int, Field(ge=1, le=MAX_QA_IDEAS)] = 2  # na stronę, z zapasowymi
     log_level: LogLevel = "info"
     belongs_to_page: BelongsToSettings = BelongsToSettings()
     kdp_cover: KdpCover = KdpCover()

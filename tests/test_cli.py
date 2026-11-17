@@ -493,57 +493,62 @@ def _vision(monkeypatch: pytest.MonkeyPatch, *rejected_titles: str) -> FakeVisio
     return vision
 
 
-def test_qa_replaces_rejected_page_with_reserve_idea(
+def test_qa_retries_same_idea_then_takes_reserve(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     vision = _vision(monkeypatch, "Dinosaur 2")
     assert main([*BASE, "--pages", "12", "--qa", "--concurrency", "1"]) == ExitCode.OK
-    assert len(vision.calls) == 13
+    assert len(vision.calls) == 15  # 12 stron + 2 ponowienia pomysłu 2 + zapasowy pomysł
 
     manifest = _manifest()
     assert manifest["status"] == "completed"
     assert manifest["input"]["qa"] is True
     assert manifest["providers"]["vision"] == {"provider": "fake", "model": "fake-vision"}
     page = manifest["pages"][1]
-    assert (page["status"], page["idea_id"], page["attempts"]) == ("ok", "idea_13", 2)
+    assert (page["status"], page["idea_id"], page["attempts"]) == ("ok", "idea_13", 4)
     assert "number 13 " in page["prompt"]
     assert page["qa"] == {"pass": True, "issues": []}
-    assert page["qa_usage"] == {"input_tokens": 2000, "output_tokens": 40}
+    assert page["qa_usage"] == {"input_tokens": 4000, "output_tokens": 80}
     assert page["rejected"] == [
         {
-            "attempt": 1,
+            "attempt": i,
             "idea_id": "idea_02",
-            "file": "rejected/page_02_try1.png",
+            "file": f"rejected/page_02_try{i}.png",
             "issues": [{"criterion": "panels", "detail": "siatka czterech obrazków"}],
         }
+        for i in (1, 2, 3)
     ]
     assert manifest["pages"][0]["rejected"] == []
-    assert (BOOK_DIR / "rejected" / "page_02_try1.png").exists()
+    assert (BOOK_DIR / "rejected" / "page_02_try3.png").exists()
     assert (BOOK_DIR / "page_02.png").exists()
     assert not list(BOOK_DIR.glob("*try*.png"))  # FR-08: w katalogu głównym tylko strony
 
     out = capsys.readouterr().out
-    assert "Kontrola jakości: fake, fake-vision; najwyżej 2 ponowienia na stronę" in out
-    assert "page_02: ok" in out and "2 próby, użyto idea_13" in out
+    assert (
+        "Kontrola jakości: fake, fake-vision; najwyżej 2 ponowienia pomysłu, potem zapasowy "
+        "(do 2 pomysłów na stronę)"
+    ) in out
+    assert "page_02: ok" in out and "4 próby, użyto idea_13" in out
     assert "QA odrzuciło próbę 1 (idea_02): panels: siatka czterech obrazków" in out
-    assert "QA: odrzucono 1 grafikę" in out and "zapasowe pomysły: użyto 1/3" in out
+    assert "QA: odrzucono 3 grafiki" in out and "zapasowe pomysły: użyto 1/3" in out
 
 
-def test_qa_gives_up_after_two_retries(
+def test_qa_gives_up_after_retries_and_reserve(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _vision(monkeypatch, "Dinosaur 2", "Dinosaur 13", "Dinosaur 14")
+    _vision(monkeypatch, "Dinosaur 2", "Dinosaur 13")
     assert main([*BASE, "--pages", "12", "--qa", "--concurrency", "1"]) == ExitCode.PARTIAL
     manifest = _manifest()
     assert manifest["status"] == "partial"
     page = manifest["pages"][1]
-    assert (page["status"], page["attempts"]) == ("failed", 3)
-    assert page["error"].startswith("QA odrzuciło 3 próby")
+    assert (page["status"], page["attempts"]) == ("failed", 6)  # 2 pomysły × 3 próby
+    assert page["error"].startswith("QA odrzuciło 6 prób")
     assert page["qa"]["pass"] is False
     assert page["files"]["png"] is None
     assert [r["file"] for r in page["rejected"]] == [
-        f"rejected/page_02_try{i}.png" for i in (1, 2, 3)
+        f"rejected/page_02_try{i}.png" for i in range(1, 7)
     ]
+    assert [r["idea_id"] for r in page["rejected"]] == ["idea_02"] * 3 + ["idea_13"] * 3
     assert not (BOOK_DIR / "page_02.png").exists()
     canva = (BOOK_DIR / "canva.md").read_text(encoding="utf-8")
     assert "brakuje 1 strony: `page_02.png`" in canva

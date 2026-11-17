@@ -835,7 +835,8 @@ def _step_images(
         typer.echo(
             f"Kontrola jakości: {vision.name}, {vision.model}; najwyżej "
             f"{plural(settings.qa_max_retries, 'ponowienie', 'ponowienia', 'ponowień')} "
-            f"na stronę, zapasowe pomysły: {pool.remaining}."
+            f"pomysłu, potem zapasowy (do {settings.qa_max_ideas} pomysłów na stronę), "
+            f"zapasowe pomysły: {pool.remaining}."
         )
     done = 0
     typer.echo(f"Limit kosztu: {format_usd(costs.limit_usd)} (wydano {format_usd(costs.spent)}).")
@@ -905,6 +906,7 @@ def _step_images(
         preview=preview,
         reserve=pool,
         max_retries=settings.qa_max_retries,
+        max_ideas=settings.qa_max_ideas,
         over_budget=costs.over_budget,
         on_spent=spend,
     )

@@ -2,8 +2,10 @@
 
 Model ocenia stronę po obróbce (FR-06), czyli to, co trafi do druku, według kryteriów
 ze spec: panele lub kolaż, cieniowanie, tekst, otwarte kontury, poziom szczegółów
-niezgodny z profilem wieku, elementy niezgodne ze sceną. Wynik `{pass, issues}` trafia
-do manifestu; odrzuconą stronę worker generuje ponownie z zapasowego pomysłu.
+niezgodny z profilem wieku, elementy niezgodne ze sceną oraz temat książki, którego nie widać
+w samym rysunku (`theme_unclear`: zimowy brzeg, który bez kolorów może być letnią plażą).
+Wynik `{pass, issues}` trafia do manifestu; odrzuconą stronę worker generuje ponownie z tego
+samego pomysłu, a po `qa_max_retries` ponowieniach z zapasowego.
 """
 
 from __future__ import annotations
@@ -18,7 +20,14 @@ from kdp_studio.models import BookIdeas, BookSpec, PageIdea
 from kdp_studio.providers.base import Usage, VisionProvider
 
 Criterion = Literal[
-    "panels", "shading", "text", "open_contours", "detail_level", "scene_mismatch", "other"
+    "panels",
+    "shading",
+    "text",
+    "open_contours",
+    "detail_level",
+    "scene_mismatch",
+    "theme_unclear",
+    "other",
 ]
 
 
@@ -68,6 +77,7 @@ would "leak" into each other. Tiny breaks in decorative lines do not count.
 book: line weight {line}; subjects {subjects}; background {background}; color-in areas \
 {fill_areas}.
 - scene_mismatch: {scene_rule}
+- theme_unclear: {theme_rule}
 - other: any other defect that would make a buyer return the book (cut-off subject, \
 deformed anatomy that looks broken, mostly empty page).
 
@@ -76,12 +86,15 @@ Calibration:
 imperfections, or because a listed element is small or simplified.
 - The scene does not need every element listed; reject for scene_mismatch only when the main \
 subject is wrong or most key elements are missing.
+- Judge theme_unclear on the black-and-white drawing as it is, without imagining colors. One \
+clearly drawn hint of the theme is enough; reject only when nothing drawn points to it.
 - White margins around the drawing are intended.
 
 When the page passes, return passed = true and an empty issues list. When it fails, list every \
 problem found. Write each issue's detail in Polish, briefly, pointing to where on the page it is.
 
 Style of the book: {style}
+Theme of the book: {theme}
 Page scene: {title}. {scene}
 Key elements: {elements}
 """
@@ -89,6 +102,13 @@ Key elements: {elements}
 
 PAGE_TEXT_RULE = "any letters, words, numbers, signatures, logos or watermarks."
 PAGE_SCENE_RULE = "the main subject or key elements of the scene below are missing or wrong."
+PAGE_THEME_RULE = (
+    "from the black-and-white line art alone a child cannot tell that the page belongs to a "
+    "coloring book with the theme below, because the theme would show only through the colors "
+    "chosen (for example a shore that could just as well be a summer beach in a winter book). "
+    "Drawn hints such as snowflakes, icicles, snow on the ground or scarves in a winter book "
+    "are enough."
+)
 # FR-14: napis i linię na imię dokłada program, więc kryteria text i scene_mismatch się zmieniają.
 BELONGS_TO_TEXT_RULE = (
     "any letters, words, numbers, signatures, logos or watermarks other than the printed line "
@@ -99,6 +119,7 @@ BELONGS_TO_SCENE_RULE = (
     "the decorative elements do not match the theme of the book (key elements below), or "
     "there is no clear empty space around the printed line and the name line."
 )
+BELONGS_TO_THEME_RULE = "not used for this page (scene_mismatch covers the theme); never report it."
 
 
 def _format(
@@ -108,8 +129,10 @@ def _format(
     title: str,
     scene: str,
     elements: list[str],
+    theme: str = "-",
     text_rule: str = PAGE_TEXT_RULE,
     scene_rule: str = PAGE_SCENE_RULE,
+    theme_rule: str = PAGE_THEME_RULE,
 ) -> str:
     age = config.ages[spec.age]
     return QA_INSTRUCTIONS.format(
@@ -124,11 +147,21 @@ def _format(
         elements=", ".join(elements) or "-",
         text_rule=text_rule,
         scene_rule=scene_rule,
+        theme=theme,
+        theme_rule=theme_rule,
     )
 
 
-def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea) -> str:
-    return _format(spec, config, title=idea.title, scene=idea.scene, elements=idea.elements)
+def book_theme(book: BookIdeas) -> str:
+    """Temat książki dla QA po angielsku: tytuł z metadanych i słowa kluczowe tematu."""
+    anchors = ", ".join(a for a in book.theme_anchors if a.strip())
+    return f"{book.book.title} ({anchors})" if anchors else book.book.title
+
+
+def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea, theme: str = "-") -> str:
+    return _format(
+        spec, config, title=idea.title, scene=idea.scene, elements=idea.elements, theme=theme
+    )
 
 
 def belongs_to_instructions(spec: BookSpec, config: AppConfig, elements: list[str]) -> str:
@@ -142,6 +175,7 @@ def belongs_to_instructions(spec: BookSpec, config: AppConfig, elements: list[st
         elements=elements,
         text_rule=BELONGS_TO_TEXT_RULE.format(text=settings.text),
         scene_rule=BELONGS_TO_SCENE_RULE,
+        theme_rule=BELONGS_TO_THEME_RULE,
     )
 
 
@@ -160,7 +194,8 @@ class QAChecker:
 
     def check(self, image_png: bytes, idea_id: str) -> tuple[QAResult, Usage]:
         idea = self._by_id[idea_id]
-        return self._assess(image_png, qa_instructions(self.spec, self.config, idea))
+        instructions = qa_instructions(self.spec, self.config, idea, book_theme(self.ideas))
+        return self._assess(image_png, instructions)
 
     def check_belongs_to(self, image_png: bytes, elements: list[str]) -> tuple[QAResult, Usage]:
         """Strona „This book belongs to…” z napisem programu (FR-14)."""

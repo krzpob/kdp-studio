@@ -4,14 +4,16 @@ Strony są generowane równolegle (`concurrency` wątków). Błąd jednej strony
 (moderacja, przeciążenie po ponowieniach) oznacza ją jako nieudaną, a reszta idzie
 dalej. Błąd krytyczny (zły klucz, brak środków, nieznany model) przerywa przebieg:
 nowe strony nie startują, a te w toku kończą się normalnie. Tak samo działa przekroczony
-limit budżetu (FR-10, `over_budget`), z tą różnicą, że strona w toku nie bierze już
-kolejnego zapasowego pomysłu po odrzuceniu przez QA.
+limit budżetu (FR-10, `over_budget`), z tą różnicą, że strona w toku nie ponawia już
+grafiki po odrzuceniu przez QA.
 
 Worker zapisuje tylko surowe grafiki w `raw/`; gotowe strony robi krok 3 (FR-17). Z QA
 (FR-07) grafika przechodzi tymczasową obróbkę (`preview`, katalog tymczasowy), bo kontrola
 jest skalibrowana na tym, co idzie do druku. Odrzucona surowa grafika trafia do `rejected/`,
-a pozycja jest generowana ponownie z kolejnego zapasowego pomysłu (wspólna pula dla
-wszystkich stron), najwyżej `max_retries` razy.
+a pozycja jest generowana ponownie z tego samego pomysłu, najwyżej `max_retries` razy (model
+obrazu za każdym razem rysuje inaczej, więc wada albo niewidoczny temat często znika). Dopiero
+gdy żadna próba nie przejdzie, pozycja bierze kolejny zapasowy pomysł (wspólna pula dla
+wszystkich stron), najwyżej `max_ideas` pomysłów na pozycję.
 """
 
 from __future__ import annotations
@@ -168,7 +170,8 @@ class PageWorker:
     # None: QA ocenia surową grafikę.
     preview: PagePostprocessor | None = None
     reserve: ReservePool | None = None  # zapasowe pomysły dla stron odrzuconych przez QA
-    max_retries: int = 2  # ponowienia na pozycję po odrzuceniu przez QA
+    max_retries: int = 2  # ponowienia tego samego pomysłu po odrzuceniu przez QA
+    max_ideas: int = 2  # pomysły na pozycję: własny i zapasowe, gdy ponowienia nie pomogą
     # FR-10: True, gdy limit budżetu jest przekroczony; nowe grafiki wtedy nie powstają.
     over_budget: Callable[[], bool] | None = None
     # FR-10: wołane w wątku roboczym zaraz po stronie, zanim wątek weźmie następną, żeby
@@ -226,6 +229,8 @@ class PageWorker:
         usage = qa_usage = Usage()
         rejected: list[RejectedAttempt] = []
         attempt = 0
+        idea_attempts = 0  # próby obecnego pomysłu
+        ideas_tried = 1
 
         def outcome(
             render: _Render, error: str | None, qa: QAResult | None = None, *, moved: bool = False
@@ -251,6 +256,7 @@ class PageWorker:
 
         while True:
             attempt += 1
+            idea_attempts += 1
             render = self._render(job.name, prompt)
             usage += render.usage
             if render.error is not None or self.qa is None:
@@ -277,11 +283,9 @@ class PageWorker:
             rejected.append(RejectedAttempt(attempt, idea_id, moved, verdict.issues))
             tries = plural(attempt, "próbę", "próby", "prób")
             reason = f"QA odrzuciło {tries}, ostatnio: {verdict.summary()}"
-            if attempt > self.max_retries:
+            exhausted = idea_attempts > self.max_retries  # ten pomysł się wyczerpał
+            if exhausted and ideas_tried >= self.max_ideas:
                 return outcome(render, reason, verdict, moved=True)
-            replacement = self.reserve.take() if self.reserve is not None else None
-            if replacement is None:
-                return outcome(render, f"{reason} (brak zapasowych pomysłów)", verdict, moved=True)
             if self._stop.is_set():
                 return outcome(
                     render, f"{reason} (przerwano po błędzie krytycznym)", verdict, moved=True
@@ -290,7 +294,15 @@ class PageWorker:
                 return outcome(
                     render, f"{reason} (przerwano: przekroczony limit kosztu)", verdict, moved=True
                 )
-            idea_id, prompt = replacement.idea_id, replacement.prompt
+            if exhausted:
+                replacement = self.reserve.take() if self.reserve is not None else None
+                if replacement is None:
+                    return outcome(
+                        render, f"{reason} (brak zapasowych pomysłów)", verdict, moved=True
+                    )
+                idea_id, prompt = replacement.idea_id, replacement.prompt
+                ideas_tried += 1
+                idea_attempts = 0
 
     def run(
         self,
