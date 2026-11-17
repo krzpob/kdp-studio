@@ -36,6 +36,8 @@ def fake_settings(**overrides: Any) -> dict[str, Any]:
         (DEFAULT_CONFIG_DIR / "settings.yaml").read_text(encoding="utf-8")
     )
     settings["api_pricing"]["models"].update(FAKE_PRICES)
+    # Testy nie zależą od lokalnej ścieżki profilu CMYK (licencja: plik pobiera użytkownik).
+    settings["cover"]["cmyk"]["profile"] = None
     settings.update(overrides)
     return settings
 

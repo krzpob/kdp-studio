@@ -30,6 +30,16 @@ def _api_message(error: openai.APIStatusError) -> str:
     return error.message
 
 
+def rejects_parameter(error: Exception, name: str) -> bool:
+    """HTTP 400, bo model nie obsługuje parametru `name` (np. `input_fidelity`)."""
+    if not isinstance(error, openai.BadRequestError):
+        return False
+    body = error.body
+    if isinstance(body, dict) and body.get("param") == name:
+        return True
+    return f"'{name}'" in _api_message(error)
+
+
 def _retry_after_header(error: openai.APIStatusError) -> float | None:
     try:
         return float(error.response.headers.get("retry-after", ""))

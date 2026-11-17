@@ -555,7 +555,7 @@ FR-15 powstaje w trzech PR-ach.
 - **Ostrzeżenie w `images`**, gdy strony okładki zostały wygenerowane ponownie.
 
 *Etap 2 (zrobiony):*
-- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`.
+- **Adapter OpenAI:** zapytanie z `reference_image` idzie do `images.edit` z `input_fidelity: high`. Model, który tego parametru nie obsługuje (HTTP 400, np. `gpt-image-2.6-flare`), dostaje od razu to samo zapytanie bez niego; adapter zapamiętuje to do końca uruchomienia, więc tył okładki idzie już bez parametru. Odrzucone zapytanie nie zwraca zużycia tokenów, więc nie liczy się do `--max-cost`.
 - **Kolorowanie** (`pipeline/cover_front.py`):
   - szkic przodu ze spadem (kontury i pusty pas na tytuł) idzie do modelu jako referencja, rozciągnięty do najbliższych proporcji dostawcy (kwadrat → 1:1, letter → 3:4);
   - wynik wraca rozciągnięty z powrotem do przodu;
