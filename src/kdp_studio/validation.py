@@ -64,6 +64,7 @@ def validate_book_spec(
     strict: bool,
     config: AppConfig,
     market: str | None = None,
+    instructions: bool | None = None,
 ) -> ValidationResult:
     """Sprawdza wszystkie parametry i zwraca BookSpec z ostrzeżeniami.
 
@@ -95,7 +96,9 @@ def validate_book_spec(
                 f"(dozwolone: {_allowed(style_profile.allowed_ages or [])})"
             )
 
-    front = config.settings.front_matter_pages
+    # FR-23: strona 1 i prawa autorskie, z instrukcją także instrukcja i pusta strona za nią.
+    front_matter = config.settings.front_matter
+    front = front_matter.pages if instructions is None else (4 if instructions else 2)
     if pages_ok:
         total = pages_in_book(pages, front)
         if total < KDP_MIN_BOOK_PAGES:

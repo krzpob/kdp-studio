@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from kdp_studio.config import AppConfig, Settings
+from kdp_studio.config import AppConfig
 from kdp_studio.validation import (
     InputValidationError,
     ValidationResult,
@@ -20,6 +20,7 @@ VALID: dict[str, Any] = {
     "format": "square",
     "pages": 30,
     "strict": False,
+    "instructions": False,  # 2 strony wstępne (FR-23 bez instrukcji)
 }
 
 
@@ -31,10 +32,6 @@ def _errors(config: AppConfig, **overrides: Any) -> list[str]:
     with pytest.raises(InputValidationError) as exc:
         _validate(config, **overrides)
     return exc.value.errors
-
-
-def _with_front_matter(config: AppConfig, pages: int) -> AppConfig:
-    return config.model_copy(update={"settings": Settings(front_matter_pages=pages)})
 
 
 # --- FR-01 ---------------------------------------------------------------------------
@@ -138,11 +135,14 @@ def test_below_kdp_minimum_with_strict_is_an_error(repo_config: AppConfig) -> No
     assert error.endswith("Ustaw --pages na co najmniej 11 (--strict)")
 
 
-def test_front_matter_pages_comes_from_settings(repo_config: AppConfig) -> None:
-    config = _with_front_matter(repo_config, 0)
-    assert _validate(config, pages=12).warnings == []
-    [warning] = _validate(config, pages=11).warnings
-    assert "co najmniej 12" in warning
+def test_instructions_add_two_front_matter_pages(repo_config: AppConfig) -> None:
+    # FR-23: z instrukcją 4 strony wstępne (strona 1, prawa, instrukcja, pusta).
+    assert _validate(repo_config, pages=10, instructions=True).warnings == []
+    [warning] = _validate(repo_config, pages=9, instructions=True).warnings
+    assert "co najmniej 10" in warning and "4 strony wstępne" in warning
+    assert _validate(repo_config, instructions=True).spec.front_matter_pages == 4
+    # Bez flagi: front_matter.instructions z settings.yaml (domyślnie tak).
+    assert _validate(repo_config, instructions=None).spec.front_matter_pages == 4
 
 
 def test_no_kdp_warning_for_invalid_pages(repo_config: AppConfig) -> None:

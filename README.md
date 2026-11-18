@@ -83,6 +83,15 @@ echo 'KDP_STUDIO_CMYK_PROFILE=~/icc/USWebCoatedSWOP.icc' >> .env
 
 Zmienna ma pierwszeństwo przed `cover.cmyk.profile` w `config/settings.yaml`, a `.gitignore` pomija wszystkie pliki `*.icc` poza domyślnym. Ostateczną kontrolą kolorów jest egzemplarz próbny z KDP.
 
+### Strony wstępne (FR-23)
+
+Przed kolorowankami są strony wstępne: [1] strona 1, [2] prawa autorskie, a z instrukcją (domyślnie) także [3] instrukcja i [4] pusta strona. Strona 1 to tytułowa do kolorowania (`--first-page title`: scena z motywem książki i tytuł konturowymi literami) albo „This book belongs to…” (`--first-page belongs-to`, domyślnie). Instrukcja ma teksty w języku rynku i ilustrację z główną postacią książki. Strony z modelem obrazu robi polecenie `front-matter` albo krok `generate` (`--no-front-matter` go wyłącza); bez niego `finalize` robi stronę 1 z samym tytułem i instrukcję z grafiką zapasową. Prawa autorskie wpisuje program w `finalize`, czcionką Noto Sans 12 pt nad dolnym marginesem; tekst (`--copyright minimal|short|full`) jest w `config/markets.yaml` (`texts`, dziś po polsku, angielsku i niemiecku), a właściciela praw podajesz raz w `publisher.copyright_owner` w `config/settings.yaml` albo flagą `--copyright-owner`. Bez właściciela nowa książka nie powstanie.
+
+```bash
+uv run kdp-studio front-matter output/<książka> [--first-page title|belongs-to] [--no-instructions] [--qa]
+uv run kdp-studio finalize output/<książka>
+```
+
 ### Rynek Amazona (FR-19)
 
 Książka powstaje dla jednego rynku Amazona: `--market US|UK|CA|AU|DE|FR|ES|IT|NL|PL|SE|JP` w `ideas` albo `generate` (domyślnie `default_market: US` z `config/settings.yaml`). Od rynku zależą odmiana języka tytułu, opisu i słów kluczowych („Coloring Book” na US, „Colouring Book” na UK), napis strony „This book belongs to…” i dane cenowe (FR-16). Prompty obrazów i opisy scen zostają po angielsku. Słowa z innej odmiany angielskiego (np. „color” w książce na UK) program poprawia w metadanych sam i wypisuje ostrzeżenie. Lista rynków: `uv run kdp-studio profiles market`; dane rynków są w `config/markets.yaml`. Ta sama kolorowanka na inny rynek to osobna książka (katalog z przyrostkiem, np. `…_square_uk`).

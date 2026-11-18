@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -24,6 +26,9 @@ from kdp_studio.config import (
     AppConfig,
     CmykSettings,
     ConfigError,
+    CopyrightVariant,
+    FirstPage,
+    FrontTexts,
     ImageQuality,
     LogLevel,
     load_config,
@@ -95,10 +100,28 @@ from kdp_studio.pipeline.cover_vision import (
 from kdp_studio.pipeline.cover_vision import qa_instructions as cover_qa_instructions
 from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
 from kdp_studio.pipeline.fonts import FontError, missing_chars
+from kdp_studio.pipeline.front_matter import (
+    COPYRIGHT_NAME,
+    INSTRUCTIONS_IDEA,
+    INSTRUCTIONS_NAME,
+    TITLE_IDEA,
+    TITLE_NAME,
+    FrontMatterError,
+    InstructionsRenderer,
+    TitleRenderer,
+    book_year,
+    copyright_paragraphs,
+    fallback_instructions_art,
+    front_texts,
+    instructions_prompt,
+    render_copyright,
+    title_prompt,
+)
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
+    CopyrightPage,
     CoverBackInfo,
     CoverCmykInfo,
     CoverFiles,
@@ -109,6 +132,7 @@ from kdp_studio.pipeline.manifest import (
     CoverSelectionInfo,
     CoverTemplateInfo,
     FinalInfo,
+    FrontKind,
     FrontPage,
     ImageProviderInfo,
     Manifest,
@@ -121,6 +145,8 @@ from kdp_studio.pipeline.manifest import (
     ManifestWriter,
     ProviderInfo,
     sha256_bytes,
+    sha256_file,
+    sha256_text,
 )
 from kdp_studio.pipeline.output import (
     IDEAS_FILE,
@@ -140,7 +166,7 @@ from kdp_studio.pipeline.postprocess import (
     page_margin_in,
 )
 from kdp_studio.pipeline.prompts import PromptBuilder
-from kdp_studio.pipeline.qa import QAChecker
+from kdp_studio.pipeline.qa import QAChecker, QAResult
 from kdp_studio.pipeline.worker import (
     PageOutcome,
     PageWorker,
@@ -181,6 +207,7 @@ STEP_LABELS = {
     "images": "grafiki",
     "finalize": "obróbka",
     "belongs-to": "strona „belongs to”",
+    "front-matter": "strony wstępne",
     "cover": "okładka",
 }
 COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA"}
@@ -310,9 +337,49 @@ BelongsToOpt = Annotated[
     bool | None,
     typer.Option(
         "--belongs-to-page/--no-belongs-to-page",
-        help="Strona „This book belongs to…” w motywie książki (FR-14) jako krok po images, "
-        "jak kdp-studio belongs-to: ramka z modelu obrazu, napis wpisuje program. "
-        "Domyślnie belongs_to_page.enabled z settings.yaml.",
+        help="Skrót: strona 1 to „This book belongs to…” (FR-14) albo, z --no-belongs-to-page, "
+        "strona tytułowa do kolorowania (--first-page title).",
+    ),
+]
+FirstPageOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--first-page",
+        help="Strona 1 (FR-23): title (tytułowa do kolorowania) albo belongs-to (FR-14). "
+        "Domyślnie front_matter.first_page z settings.yaml.",
+    ),
+]
+InstructionsOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--instructions/--no-instructions",
+        help="Strona z instrukcją i pusta strona za nią (FR-23): 4 strony wstępne zamiast 2. "
+        "Domyślnie front_matter.instructions z settings.yaml.",
+    ),
+]
+CopyrightOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--copyright",
+        help="Tekst praw autorskich (FR-23): minimal, short albo full. Domyślnie "
+        "front_matter.copyright z settings.yaml.",
+    ),
+]
+CopyrightOwnerOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--copyright-owner",
+        help="Właściciel praw autorskich na stronie praw (FR-23): pseudonim, imię i nazwisko "
+        "albo firma. Domyślnie publisher.copyright_owner z settings.yaml.",
+    ),
+]
+GenerateFrontOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--front-matter/--no-front-matter",
+        help="Strony wstępne z modelem obrazu (strona 1, ilustracja instrukcji) przed finalize, "
+        "jak kdp-studio front-matter. Bez nich finalize robi stronę 1 z samym tytułem. "
+        "Domyślnie front_matter.in_generate z settings.yaml.",
     ),
 ]
 MaxCostOpt = Annotated[
@@ -348,6 +415,7 @@ def _book_spec(
     pages: int,
     strict: bool,
     market: str | None = None,
+    instructions: bool | None = None,
 ) -> BookSpec:
     try:
         result = validate_book_spec(
@@ -359,6 +427,7 @@ def _book_spec(
             strict=strict,
             config=config,
             market=market,
+            instructions=instructions,
         )
     except InputValidationError as e:
         raise _fail(e.errors) from e
@@ -409,12 +478,74 @@ def _log_level(config: AppConfig, level: str | None) -> LogLevel:
     raise _fail([f"--log-level: dozwolone {', '.join(LOG_LEVELS)} (podano '{value}')"])
 
 
-def _belongs(config: AppConfig, flag: bool | None) -> bool:
-    """`generate --belongs-to-page` z flagą albo z settings.yaml; włączony wymaga czcionki."""
-    belongs = config.settings.belongs_to_page.enabled if flag is None else flag
-    if belongs:
-        _check_font(config)
-    return belongs
+@dataclass(frozen=True)
+class _FrontChoice:
+    """Ustawienia stron wstępnych nowej książki (FR-23), sprawdzone przed wywołaniem API."""
+
+    copyright: str
+    owner: str
+    instructions: bool
+    first_page: str
+
+
+def _first_page(config: AppConfig, flag: str | None, belongs: bool | None = None) -> str:
+    if belongs is not None:
+        return "belongs-to" if belongs else "title"
+    page = config.settings.front_matter.first_page if flag is None else flag
+    if page not in get_args(FirstPage):
+        raise _fail([f"--first-page: dozwolone {', '.join(get_args(FirstPage))} (podano '{page}')"])
+    return page
+
+
+def _front_choice(
+    config: AppConfig,
+    market: str,
+    copyright_: str | None,
+    owner: str | None,
+    instructions: bool | None,
+    first_page: str,
+) -> _FrontChoice:
+    """Wariant praw autorskich, właściciel praw, tłumaczenie dla rynku i znaki czcionek:
+    brak czegokolwiek to kod 1 przed pierwszym wywołaniem API (FR-23)."""
+    settings = config.settings
+    front = settings.front_matter
+    variant = front.copyright if copyright_ is None else copyright_
+    errors: list[str] = []
+    variants = get_args(CopyrightVariant)
+    if variant not in variants:
+        errors.append(f"--copyright: dozwolone {', '.join(variants)} (podano '{variant}')")
+    who = (settings.publisher.copyright_owner if owner is None else owner) or ""
+    if not who.strip():
+        errors.append(
+            "brak właściciela praw autorskich do strony praw (FR-23): podaj --copyright-owner "
+            '"…" albo publisher.copyright_owner w config/settings.yaml'
+        )
+    try:
+        texts = front_texts(config, market)
+    except FrontMatterError as e:
+        errors.append(str(e))
+    else:
+        if not errors:
+            body = "".join(copyright_paragraphs(texts, variant, 2026, who))
+            body += "".join(texts.instructions.values())
+            font = front.text_font_path
+            missing = missing_chars(font, body) if font.is_file() else ""
+            if missing:
+                errors.append(
+                    f"czcionka {font.name} (front_matter.text_font) nie ma znaków „{missing}” "
+                    f"z tekstów stron wstępnych rynku {market}"
+                )
+            errors += _glyph_problems(config, market, "cover", texts.instructions["heading"])
+    if not front.text_font_path.is_file():
+        errors.append(f"brak czcionki {front.text_font_path} (front_matter.text_font)")
+    if errors:
+        raise _fail(errors)
+    return _FrontChoice(
+        copyright=variant,
+        owner=who.strip(),
+        instructions=front.instructions if instructions is None else instructions,
+        first_page=first_page,
+    )
 
 
 def _glyph_problems(config: AppConfig, market: str, which: str, extra: str = "") -> list[str]:
@@ -592,6 +723,7 @@ def _step_ideas(
     provider: TextProvider,
     do_review: bool,
     costs: CostTracker,
+    front: _FrontChoice | None = None,
 ) -> BookIdeas:
     """Pomysły, weryfikacja, prompty i manifest ze stronami `pending` (FR-17 krok 1)."""
     settings = config.settings
@@ -682,6 +814,10 @@ def _step_ideas(
             concurrency=settings.concurrency,
             review_ideas=do_review,
             qa=settings.qa,
+            copyright=front.copyright if front else "short",
+            copyright_owner=front.owner if front else None,
+            first_page=front.first_page if front else None,
+            instructions=front.instructions if front else None,
         ),
         providers=ManifestProviders(
             text=ProviderInfo(provider=provider.name, model=provider.model),
@@ -805,6 +941,9 @@ def ideas(
             "wymaga katalogu książki."
         ),
     ] = None,
+    copyright_: CopyrightOpt = None,
+    copyright_owner: CopyrightOwnerOpt = None,
+    instructions: InstructionsOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
@@ -819,6 +958,10 @@ def ideas(
             raise _fail(["--redo działa na istniejącej książce: nie podawaj --theme/--age/--style"])
         if market is not None:
             raise _fail(["--redo: rynek książki jest w manifeście, nie podawaj --market"])
+        if copyright_ is not None or copyright_owner is not None or instructions is not None:
+            raise _fail(
+                ["--redo: strony wstępne zmienia kdp-studio front-matter, nie --copyright itp."]
+            )
         ids = [i.strip() for i in redo.split(",") if i.strip()]
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
@@ -830,14 +973,20 @@ def ideas(
     if redo is not None:
         raise _fail(["--redo wymaga katalogu książki: kdp-studio ideas <katalog> --redo …"])
 
-    spec = _book_spec(config, theme, age, style, format_, pages, strict, market)
+    instructions = (
+        config.settings.front_matter.instructions if instructions is None else instructions
+    )
+    spec = _book_spec(config, theme, age, style, format_, pages, strict, market, instructions)
+    front = _front_choice(
+        config, spec.market, copyright_, copyright_owner, instructions, _first_page(config, None)
+    )
     target = _new_book_dir(output_dir, spec)
     _warn_glyphs(config, spec.market)
     provider = _text_provider(config)
     costs = _cost_tracker(config, max_cost, [provider.model])
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
     with _locked(target, level), _timed(timer, "ideas", costs):
-        _step_ideas(config, spec, target, provider, do_review, costs)
+        _step_ideas(config, spec, target, provider, do_review, costs, front)
     typer.echo(f"Przejrzyj {target / IDEAS_FILE}, a potem: kdp-studio images {target}")
 
 
@@ -1086,6 +1235,99 @@ def _step_images(
     return ExitCode.OK
 
 
+@dataclass(frozen=True)
+class _FrontKindInfo:
+    """Strona wstępna z grafiką (FR-14, FR-23): plik, opis w konsoli i polecenie ponowienia."""
+
+    name: str
+    label: str
+    command: str
+    idea: str
+    box_label: str
+
+
+FRONT_KINDS: dict[FrontKind, _FrontKindInfo] = {
+    "belongs_to": _FrontKindInfo(
+        FRONT_NAME, "Strona „This book belongs to…”", "belongs-to", "belongs_to", "pole na imię"
+    ),
+    "title": _FrontKindInfo(
+        TITLE_NAME, "Strona tytułowa", "front-matter", TITLE_IDEA, "pole na tytuł"
+    ),
+    "instructions": _FrontKindInfo(
+        INSTRUCTIONS_NAME, "Instrukcja", "front-matter", INSTRUCTIONS_IDEA, "pole na tekst"
+    ),
+}
+
+
+def _texts(config: AppConfig, market: str) -> FrontTexts:
+    try:
+        return front_texts(config, market)
+    except FrontMatterError as e:
+        raise _fail([str(e)]) from e
+
+
+def _front_renderer(
+    config: AppConfig,
+    spec: BookSpec,
+    target: Path,
+    kind: FrontKind = "belongs_to",
+    title: str = "",
+) -> BelongsToRenderer | TitleRenderer | InstructionsRenderer:
+    """Renderer strony wstępnej; `config` już dla rynku książki (napis i czcionki, FR-19)."""
+    config = config.for_market(spec.market)
+    _, geometry = _layout(config, spec)
+    age = config.ages[spec.age]
+    settings = config.settings
+    if kind == "title":
+        return TitleRenderer(
+            book_dir=target,
+            geometry=geometry,
+            params=age.postprocess,
+            settings=settings.title_page,
+            font_path=settings.cover.title_font_path,
+            title=title,
+        )
+    if kind == "instructions":
+        return InstructionsRenderer(
+            book_dir=target,
+            geometry=geometry,
+            params=age.postprocess,
+            settings=settings.instructions,
+            front=settings.front_matter,
+            heading_font=settings.cover.title_font_path,
+            texts=_texts(config, spec.market).instructions,
+        )
+    return BelongsToRenderer(
+        book_dir=target,
+        geometry=geometry,
+        params=age.postprocess,
+        settings=settings.belongs_to_page,
+        age=age.belongs_to,
+    )
+
+
+def _front_prompt(
+    config: AppConfig, spec: BookSpec, ideas: BookIdeas, kind: FrontKind
+) -> tuple[str, list[str]]:
+    """Prompt grafiki strony wstępnej i elementy motywu (dla instrukcji: główna postać)."""
+    if kind == "title":
+        return title_prompt(spec, config, ideas)
+    if kind == "instructions":
+        prompt, subject = instructions_prompt(spec, config, ideas)
+        return prompt, [subject]
+    return belongs_to_prompt(spec, config, ideas)
+
+
+def _front_qa(
+    checker: QAChecker | None, kind: FrontKind, elements: list[str], title: str
+) -> Callable[[bytes], tuple[QAResult, Usage]] | None:
+    if checker is None or kind == "belongs_to":
+        return None
+    if kind == "title":
+        return lambda png: checker.check_title_page(png, elements, title)
+    return lambda png: checker.check_instructions(png, elements[0] if elements else "character")
+
+
 def _step_front(
     config: AppConfig,
     spec: BookSpec,
@@ -1097,38 +1339,57 @@ def _step_front(
     checker: QAChecker | None,
     prompt: str,
     reason: str,
+    kind: FrontKind = "belongs_to",
+    title: str = "",
 ) -> bool:
-    """Ramka strony „This book belongs to…” z modelu albo układ zapasowy (FR-14); False, gdy
-    się nie udała. ProviderError z fatal=True przechodzi wyżej (kod 4).
+    """Grafika strony wstępnej z modelu albo układ zapasowy (FR-14, FR-23); False, gdy się nie
+    udała. ProviderError z fatal=True przechodzi wyżej (kod 4).
     """
-    front = writer.front
+    info = FRONT_KINDS[kind]
+    front = writer.front_page(kind)
     assert front is not None
-    for path in (target / f"{FRONT_NAME}.png", target / SVG_DIR / f"{FRONT_NAME}.svg"):
+    for path in (target / f"{info.name}.png", target / SVG_DIR / f"{info.name}.svg"):
         path.unlink(missing_ok=True)  # nieaktualna strona nie może trafić do Canvy
-    front_raw_path(target).unlink(missing_ok=True)
-    typer.echo(f"Strona „This book belongs to…” ({reason}): ramka z motywem książki…")
+    front_raw_path(target, info.name).unlink(missing_ok=True)
+    typer.echo(f"{info.label} ({reason}): grafika z motywem książki…")
     maker = BelongsToMaker(
         provider=images,
         book_dir=target,
         aspect=config.formats[spec.format].aspect,
         quality=quality,
-        renderer=_front_renderer(config, spec, target),
+        renderer=_front_renderer(config, spec, target, kind, title),
         elements=front.elements,
         qa=checker,
         over_budget=costs.over_budget,
+        name=info.name,
+        idea=info.idea,
+        qa_check=_front_qa(checker, kind, front.elements, title),
+        box_label=info.box_label,
     )
-    outcome = maker.make(prompt, fallback_art(target, writer.manifest))
+    fallback: tuple[str, Path] | None
+    with tempfile.TemporaryDirectory(prefix="kdp-studio-front-") as tmp:
+        if kind == "instructions":
+            svg = config.settings.instructions.fallback_art_path
+            fallback = (svg.name, fallback_instructions_art(svg, Path(tmp) / "fallback.png"))
+        else:
+            fallback = fallback_art(target, writer.manifest)
+        outcome = maker.make(prompt, fallback)
     cost = costs.add("images", images.model, outcome.usage)
     if checker is not None:
         cost += costs.add("qa", checker.vision.model, outcome.qa_usage)
     writer.record_front_raw(
-        outcome, provider=images.name, model=images.model, quality=quality, cost_usd=cost
+        outcome,
+        provider=images.name,
+        model=images.model,
+        quality=quality,
+        cost_usd=cost,
+        kind=kind,
     )
-    _report_front(outcome, cost)
+    _report_front(outcome, cost, info.name)
     return outcome.status == "ok"
 
 
-def _report_front(outcome: BelongsToOutcome, cost: float) -> None:
+def _report_front(outcome: BelongsToOutcome, cost: float, name: str = FRONT_NAME) -> None:
     for rejected in outcome.rejected:
         issues = "; ".join(f"{i.criterion}: {i.detail}" for i in rejected.issues)
         typer.echo(f"  odrzucona próba {rejected.attempt}: {issues}")
@@ -1140,14 +1401,14 @@ def _report_front(outcome: BelongsToOutcome, cost: float) -> None:
     else:
         line = (
             f"ok, układ zapasowy: grafika {outcome.fallback_source} i napis pod nią "
-            f"({tries} bez pustego pola na imię)"
+            f"({tries} bez udanej grafiki z modelu)"
         )
-    typer.echo(f"{FRONT_NAME}: {line}, {format_usd(cost)}")
+    typer.echo(f"{name}: {line}, {format_usd(cost)}")
     log_event(
         _log,
         logging.INFO,
         "front_raw",
-        name=FRONT_NAME,
+        name=name,
         status=outcome.status,
         layout=outcome.layout,
         fallback_source=outcome.fallback_source,
@@ -1159,18 +1420,6 @@ def _report_front(outcome: BelongsToOutcome, cost: float) -> None:
             for r in outcome.rejected
         ],
         cost_usd=round(cost, 6),
-    )
-
-
-def _front_renderer(config: AppConfig, spec: BookSpec, target: Path) -> BelongsToRenderer:
-    _, geometry = _layout(config, spec)
-    age = config.ages[spec.age]
-    return BelongsToRenderer(
-        book_dir=target,
-        geometry=geometry,
-        params=age.postprocess,
-        settings=config.belongs_to_settings(spec.market),
-        age=age.belongs_to,
     )
 
 
@@ -1242,6 +1491,7 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
             advance()
     if not todo:
         typer.echo("Gotowe strony są aktualne, nic do obróbki.")
+    _finalize_front_matter(config, spec, writer, target, geometry, ideas)
 
     status = writer.update_status()
     ok = len(manifest.ok_pages)
@@ -1258,11 +1508,17 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     missing = [p.name for p in manifest.pages if p.status != "ok"]
     if missing:
         _warn([f"brakujące strony: {', '.join(missing)}; ponów: kdp-studio images {target}"])
+    failed_front = [p for p in manifest.front_matter.pages() if p.status != "ok"]
+    for front_page in failed_front:
+        command = "belongs-to" if front_page.name == FRONT_NAME else "front-matter"
+        _warn([f"brakuje strony {front_page.name}; ponów: kdp-studio {command} {target}"])
     front = writer.front
-    if front is not None and front.status != "ok":
-        _warn([f"brakuje strony {FRONT_NAME}; ponów: kdp-studio belongs-to {target}"])
-    elif front is not None and front_needs_finalize(
-        target, front, _front_params_sha256(config, spec, geometry, front.layout)
+    if (
+        front is not None
+        and front.status == "ok"
+        and front_needs_finalize(
+            target, front, _front_params_sha256(config, spec, geometry, front.layout)
+        )
     ):
         _warn(
             [
@@ -1270,24 +1526,49 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
                 f"odśwież ją bez nowej grafiki: kdp-studio belongs-to {target}"
             ]
         )
-    if missing or (front is not None and front.status != "ok"):
+    if missing or failed_front:
         return ExitCode.PARTIAL
     return ExitCode.OK
 
 
+def _font_sha(path: Path) -> str:
+    return sha256_bytes(path.read_bytes() if path.is_file() else b"")
+
+
 def _front_params_sha256(
-    config: AppConfig, spec: BookSpec, geometry: PageGeometry, layout: str | None
+    config: AppConfig,
+    spec: BookSpec,
+    geometry: PageGeometry,
+    layout: str | None,
+    kind: FrontKind = "belongs_to",
+    title: str = "",
 ) -> str:
-    """Suma wszystkiego, co zmienia gotową stronę FR-14: obróbka, napis, czcionka, układ."""
+    """Suma wszystkiego, co zmienia gotową stronę wstępną: obróbka, napisy, czcionki, układ."""
+    config = config.for_market(spec.market)
     age = config.ages[spec.age]
-    settings = config.belongs_to_settings(spec.market)
-    font = settings.font_path.read_bytes() if settings.font_path.is_file() else b""
-    parts = [
-        age.postprocess.model_dump_json(),
-        age.belongs_to.model_dump_json(),
-        settings.model_dump_json(exclude={"enabled", "composition", "max_retries"}),
-        sha256_bytes(font),
-    ]
+    settings = config.settings
+    if kind == "title":
+        parts = [
+            settings.title_page.model_dump_json(exclude={"composition", "max_retries"}),
+            _font_sha(settings.cover.title_font_path),
+            title,
+        ]
+    elif kind == "instructions":
+        parts = [
+            settings.instructions.model_dump_json(exclude={"composition", "max_retries"}),
+            settings.front_matter.model_dump_json(),
+            _font_sha(settings.cover.title_font_path),
+            _font_sha(settings.front_matter.text_font_path),
+            json.dumps(_texts(config, spec.market).instructions, sort_keys=True),
+        ]
+    else:
+        belongs = settings.belongs_to_page
+        parts = [
+            age.belongs_to.model_dump_json(),
+            belongs.model_dump_json(exclude={"composition", "max_retries"}),
+            _font_sha(belongs.font_path),
+        ]
+    parts.insert(0, age.postprocess.model_dump_json())
     return postprocess_sha256("|".join(parts), geometry) + f"|{layout}"
 
 
@@ -1297,39 +1578,157 @@ def _finalize_front(
     writer: ManifestWriter,
     target: Path,
     geometry: PageGeometry,
+    kind: FrontKind = "belongs_to",
+    title: str = "",
 ) -> bool:
-    """Gotowa strona „This book belongs to…” z napisem (FR-14); True, gdy była obrabiana."""
-    front = writer.front
-    if front is None or front.layout is None or front.raw_sha256 is None:
+    """Gotowa strona wstępna z napisami (FR-14, FR-23); True, gdy była obrabiana."""
+    info = FRONT_KINDS[kind]
+    front = writer.front_page(kind)
+    if front is None or front.layout is None:
         return False
-    params_sha = _front_params_sha256(config, spec, geometry, front.layout)
-    if not front_needs_finalize(target, front, params_sha):
+    params_sha = _front_params_sha256(config, spec, geometry, front.layout, kind, title)
+    text_only = front.layout == "text_only"
+    if text_only:  # strona 1 bez modelu: nie ma surowej grafiki
+        final_now = front.final
+        fresh = (
+            front.status == "ok"
+            and final_now is not None
+            and final_now.postprocess_sha256 == params_sha
+            and (target / f"{info.name}.png").is_file()
+        )
+        if fresh:
+            return False
+    elif front.raw_sha256 is None or not front_needs_finalize(target, front, params_sha, info.name):
         return False
-    final = FinalInfo(raw_sha256=front.raw_sha256, postprocess_sha256=params_sha)
+    final = FinalInfo(raw_sha256=front.raw_sha256 or "", postprocess_sha256=params_sha)
     started = time.monotonic()
     error = None
+    renderer = _front_renderer(config, spec, target, kind, title)
+    png: Path | None = None
+    svg: Path | None = None
     try:
-        files = _front_renderer(config, spec, target).render(front_raw_path(target), front.layout)
+        if text_only:
+            assert isinstance(renderer, TitleRenderer)
+            png = renderer.render_text_only()
+        else:
+            files = renderer.render(front_raw_path(target, info.name), front.layout)
+            png, svg = files.page, files.svg
     except PostprocessError as e:
         error = f"obróbka: {e}"
-        writer.record_front_final(png=None, svg=None, final=final, error=error)
-    else:
-        writer.record_front_final(png=files.page, svg=files.svg, final=final, error=None)
+    writer.record_front_final(png=png, svg=svg, final=final, error=error, kind=kind)
     duration = time.monotonic() - started
     log_event(
         _log,
         logging.INFO,
         "front_final",
-        name=FRONT_NAME,
+        name=info.name,
         layout=front.layout,
         status="ok" if error is None else "failed",
         duration_s=round(duration, 2),
         error=error,
     )
     result = "ok" if error is None else f"nieudana: {error}"
-    layout = "ramka" if front.layout == "frame" else "układ zapasowy"
-    typer.echo(f"{FRONT_NAME}: {result} ({layout}, {format_duration(duration)})")
+    layout = {"frame": "ramka", "fallback": "układ zapasowy", "text_only": "sam tytuł"}[
+        front.layout
+    ]
+    typer.echo(f"{info.name}: {result} ({layout}, {format_duration(duration)})")
     return True
+
+
+def _finalize_front_matter(
+    config: AppConfig,
+    spec: BookSpec,
+    writer: ManifestWriter,
+    target: Path,
+    geometry: PageGeometry,
+    ideas: BookIdeas,
+) -> None:
+    """Strony wstępne FR-23 w kroku 3, bez wywołań API: strona 1 (gdy nie było
+    `front-matter`, sam tytuł), instrukcja (bez ilustracji z modelu: grafika zapasowa)
+    i prawa autorskie. Książki sprzed FR-23 (bez właściciela praw) zostają bez zmian."""
+    manifest = writer.manifest
+    owner = manifest.input.copyright_owner
+    if owner is None:
+        return
+    config = config.for_market(spec.market)
+    title = ideas.book.title
+    matter = manifest.front_matter
+    if matter.title is None and matter.belongs_to is None:
+        page = FrontPage(name=TITLE_NAME, provider="program", model="-", prompt="")
+        page.layout = "text_only"
+        writer.set_front(page, "title")
+        typer.echo(
+            f"Strona 1 bez modelu: sam tytuł ({TITLE_NAME}.png). Stronę tytułową do "
+            f"kolorowania albo „This book belongs to…” zrobi: kdp-studio front-matter {target}"
+        )
+    if matter.title is not None:
+        _finalize_front(config, spec, writer, target, geometry, "title", title)
+    if manifest.input.instructions:
+        if matter.instructions is None:
+            svg = config.settings.instructions.fallback_art_path
+            try:
+                raw = fallback_instructions_art(svg, front_raw_path(target, INSTRUCTIONS_NAME))
+            except PostprocessError as e:
+                raise _fail([f"instrukcja: {e}"]) from e
+            page = FrontPage(name=INSTRUCTIONS_NAME, provider="program", model="-", prompt="")
+            page.layout, page.fallback_source, page.status = "fallback", svg.name, "raw_ok"
+            page.raw_sha256 = sha256_file(raw)
+            writer.set_front(page, "instructions")
+            typer.echo(
+                f"Instrukcja bez ilustracji z postacią z książki (grafika zapasowa {svg.name}); "
+                f"ilustrację z modelu zrobi: kdp-studio front-matter {target}"
+            )
+        _finalize_front(config, spec, writer, target, geometry, "instructions", title)
+    elif _drop_front(writer, target, "instructions"):
+        typer.echo(f"Bez instrukcji: usunięto {INSTRUCTIONS_NAME}.png z książki.")
+    _finalize_copyright(config, spec, writer, target, geometry, owner)
+
+
+def _finalize_copyright(
+    config: AppConfig,
+    spec: BookSpec,
+    writer: ManifestWriter,
+    target: Path,
+    geometry: PageGeometry,
+    owner: str,
+) -> None:
+    """Strona praw autorskich (FR-23); zmiana tekstu, czcionki albo właściciela ją przelicza.
+    Tekst, który się nie mieści, albo brak znaku w czcionce to kod 1."""
+    manifest = writer.manifest
+    texts = _texts(config, spec.market)
+    variant = manifest.input.copyright
+    year = book_year(manifest.created_at)
+    paragraphs = copyright_paragraphs(texts, variant, year, owner)
+    settings = config.settings.front_matter
+    missing = missing_chars(settings.text_font_path, "".join(paragraphs))
+    if missing:
+        raise _fail(
+            [
+                f"czcionka {settings.text_font_path.name} (front_matter.text_font) nie ma znaków "
+                f"„{missing}” z tekstu praw autorskich"
+            ]
+        )
+    text_sha = sha256_text("\n".join(paragraphs))
+    parts = [settings.model_dump_json(), _font_sha(settings.text_font_path), text_sha]
+    params = postprocess_sha256("|".join(parts), geometry)
+    page = manifest.front_matter.copyright
+    path = target / f"{COPYRIGHT_NAME}.png"
+    unchanged = page is not None and page.final is not None
+    if unchanged and page is not None and page.final is not None:
+        unchanged = page.final.postprocess_sha256 == params
+    if unchanged and page is not None and (page.status == "failed" or path.is_file()):
+        return  # aktualna albo nieudana z tymi samymi danymi
+    page = CopyrightPage(
+        language=texts.language, variant=variant, owner=owner, year=year, text_sha256=text_sha
+    )
+    final = FinalInfo(raw_sha256="", postprocess_sha256=params)
+    try:
+        png = render_copyright(target, geometry, settings, paragraphs)
+    except PostprocessError as e:
+        writer.record_copyright(page, png=None, final=final, error=f"obróbka: {e}")
+        raise _fail([f"prawa autorskie: {e}"]) from e
+    writer.record_copyright(page, png=png, final=final, error=None)
+    typer.echo(f"{COPYRIGHT_NAME}: ok ({texts.language}, {variant})")
 
 
 def _finalize_page(
@@ -1389,6 +1788,99 @@ def _belongs_to_blocker(target: Path, manifest: Manifest) -> str | None:
     return None
 
 
+def _make_front_page(
+    config: AppConfig,
+    target: Path,
+    writer: ManifestWriter,
+    ideas: BookIdeas,
+    kind: FrontKind,
+    images: ImageProvider,
+    vision: VisionProvider | None,
+    quality: str,
+    costs: CostTracker,
+) -> ExitCode | None:
+    """Grafika strony wstępnej z modelu, gdy jej brakuje albo jest nieaktualna, potem napisy
+    i kontrola druku. None: strona zrobiona albo nieudana (status w manifeście); kod 3 albo 4
+    przerywa dalsze strony."""
+    info = FRONT_KINDS[kind]
+    manifest = writer.manifest
+    spec = spec_from_manifest(manifest)
+    title = ideas.book.title
+    prompt, elements = _front_prompt(config, spec, ideas, kind)
+    front = writer.front_page(kind)
+    if front is None:
+        front = FrontPage(
+            name=info.name,
+            provider=images.name,
+            model=images.model,
+            prompt=prompt,
+            elements=elements,
+        )
+        writer.set_front(front, kind)
+        typer.echo(
+            f"{info.label}: nowy wpis w manifeście (elementy motywu: {', '.join(elements) or '-'})."
+        )
+    front.elements = elements
+    reason = plan_front(target, front, prompt, info.name)
+    if reason is not None:
+        if costs.over_budget():
+            message = (
+                f"przekroczony limit kosztu książki {format_usd(costs.limit_usd)} "
+                f"({_spent_text(costs)}), pominięto {info.name}"
+            )
+            writer.update_status(budget_error=message)
+            _fail_lines(
+                [message, f"z wyższym limitem: kdp-studio {info.command} {target} --max-cost …"]
+            )
+            return ExitCode.BUDGET_EXCEEDED
+        checker = None if vision is None else QAChecker(vision, spec, config, ideas)
+        try:
+            _step_front(
+                config,
+                spec,
+                writer,
+                target,
+                images,
+                quality,
+                costs,
+                checker,
+                prompt,
+                reason,
+                kind,
+                title,
+            )
+        except ProviderError as e:
+            writer.update_status(str(e))
+            _fail_lines([str(e), f"po usunięciu przyczyny: kdp-studio {info.command} {target}"])
+            return ExitCode.PROVIDER_ERROR
+    _, geometry = _layout(config, spec)
+    rendered = _finalize_front(config, spec, writer, target, geometry, kind, title)
+    if reason is None and not rendered:
+        typer.echo(f"{info.name} jest aktualna, nic do zrobienia.")
+    return None
+
+
+def _refresh_canva(target: Path, manifest: Manifest, title: str) -> None:
+    """Po kroku 3 (jest canva.md) instrukcja składania odświeża się z manifestu."""
+    canva = target / CANVA_FILE
+    if canva.is_file():
+        write_bytes_atomic(canva, render_canva_md(manifest, title).encode("utf-8"))
+        typer.echo(f"Odświeżono instrukcję składania w Canvie: {canva}")
+
+
+def _front_result(writer: ManifestWriter, kinds: Sequence[FrontKind]) -> ExitCode:
+    status = writer.update_status()
+    typer.echo(f"Manifest: {writer.path} (status: {status})")
+    failed = [
+        page
+        for kind in kinds
+        if (page := writer.front_page(kind)) is not None and page.status != "ok"
+    ]
+    for page in failed:
+        _warn([f"nieudana strona {page.name}: {page.error}"])
+    return ExitCode.PARTIAL if failed else ExitCode.OK
+
+
 def _step_belongs_to(
     config: AppConfig,
     target: Path,
@@ -1400,82 +1892,108 @@ def _step_belongs_to(
     refresh_canva: bool,
 ) -> ExitCode:
     """Cała strona „This book belongs to…” (FR-14): ramka z modelu, gdy jej brakuje albo jest
-    nieaktualna, potem napis i kontrola druku. Zmiana napisu czy czcionki nie kosztuje grafiki."""
+    nieaktualna, potem napis i kontrola druku. Zmiana napisu czy czcionki nie kosztuje grafiki.
+    W książce ze stronami FR-23 to strona 1 zamiast tytułowej (`--first-page belongs-to`)."""
     writer = _open_book(target)
-    manifest = writer.manifest
-    spec = spec_from_manifest(manifest)
+    ideas = _load_book_ideas(target)
+    if writer.manifest.input.first_page is not None:
+        _set_first_page(writer, target, "belongs-to")
+    code = _make_front_page(
+        config, target, writer, ideas, "belongs_to", images, vision, quality, costs
+    )
+    if code is not None:
+        return code
+    if refresh_canva:
+        _refresh_canva(target, writer.manifest, ideas.book.title)
+    return _front_result(writer, ["belongs_to"])
+
+
+def _load_book_ideas(target: Path) -> BookIdeas:
     try:
-        ideas = load_ideas(target)
+        return load_ideas(target)
     except BookError as e:
         raise _fail(e.errors) from e
-    prompt, elements = belongs_to_prompt(spec, config, ideas)
-    front = writer.front
-    if front is None:
-        front = _new_front(config, spec, ideas, images.name, images.model)
-        writer.set_front(front)
+
+
+def _drop_front(writer: ManifestWriter, target: Path, kind: FrontKind) -> bool:
+    """Usuwa stronę wstępną z książki (plik strony i wektory); surowa grafika zostaje."""
+    info = FRONT_KINDS[kind]
+    if writer.front_page(kind) is None:
+        return False
+    writer.set_front(None, kind)
+    for path in (target / f"{info.name}.png", target / SVG_DIR / f"{info.name}.svg"):
+        path.unlink(missing_ok=True)
+    return True
+
+
+def _set_first_page(writer: ManifestWriter, target: Path, first_page: str) -> None:
+    """Strona 1 to tytułowa albo FR-14 (FR-23): druga z nich znika z książki."""
+    writer.manifest.input.first_page = first_page
+    other: FrontKind = "title" if first_page == "belongs-to" else "belongs_to"
+    if _drop_front(writer, target, other):
+        typer.echo(f"Strona 1: {first_page}; usunięto {FRONT_KINDS[other].name}.png z książki.")
+    writer.save()
+
+
+def _set_instructions(writer: ManifestWriter, target: Path, instructions: bool) -> None:
+    """Instrukcja z pustą stroną za nią albo bez: 4 albo 2 strony wstępne (FR-23)."""
+    manifest = writer.manifest
+    manifest.input.instructions = instructions
+    pages = 4 if instructions else 2
+    if manifest.input.front_matter_pages != pages:
         typer.echo(
-            f"Strona „This book belongs to…”: nowy wpis w manifeście (elementy motywu: "
-            f"{', '.join(elements) or '-'})."
+            f"Strony wstępne: {pages} (instrukcja {'tak' if instructions else 'nie'}); "
+            "finalize przeliczy marginesy stron, jeśli zmienił się grzbiet."
         )
-    front.elements = elements
-    reason = plan_front(target, front, prompt)
-    if reason is not None:
-        if costs.over_budget():
-            message = (
-                f"przekroczony limit kosztu książki {format_usd(costs.limit_usd)} "
-                f"({_spent_text(costs)}), pominięto {FRONT_NAME}"
-            )
-            writer.update_status(budget_error=message)
-            _fail_lines(
-                [message, f"z wyższym limitem: kdp-studio belongs-to {target} --max-cost …"]
-            )
-            return ExitCode.BUDGET_EXCEEDED
-        checker = None if vision is None else QAChecker(vision, spec, config, ideas)
-        try:
-            _step_front(
-                config, spec, writer, target, images, quality, costs, checker, prompt, reason
-            )
-        except ProviderError as e:
-            writer.update_status(str(e))
-            _fail_lines([str(e), f"po usunięciu przyczyny: kdp-studio belongs-to {target}"])
-            return ExitCode.PROVIDER_ERROR
-    _, geometry = _layout(config, spec)
-    rendered = _finalize_front(config, spec, writer, target, geometry)
-    if reason is None and not rendered:
-        typer.echo(f"{FRONT_NAME} jest aktualna, nic do zrobienia.")
-    canva = target / CANVA_FILE
-    if refresh_canva and canva.is_file():
-        write_bytes_atomic(canva, render_canva_md(manifest, ideas.book.title).encode("utf-8"))
-        typer.echo(f"Odświeżono instrukcję składania w Canvie: {canva}")
-    status = writer.update_status()
-    typer.echo(f"Manifest: {writer.path} (status: {status})")
-    if front.status != "ok":
-        _warn([f"nieudana strona {FRONT_NAME}: {front.error}"])
-        return ExitCode.PARTIAL
-    return ExitCode.OK
+    manifest.input.front_matter_pages = pages
+    if not instructions and _drop_front(writer, target, "instructions"):
+        typer.echo(f"Usunięto {INSTRUCTIONS_NAME}.png z książki.")
+    writer.save()
+
+
+def _step_front_matter(
+    config: AppConfig,
+    target: Path,
+    images: ImageProvider,
+    vision: VisionProvider | None,
+    quality: str,
+    costs: CostTracker,
+    *,
+    first_page: str,
+    instructions: bool,
+    refresh_canva: bool,
+) -> ExitCode:
+    """Strony wstępne z modelem (FR-23): strona 1 (tytułowa albo FR-14) i ilustracja
+    instrukcji. Prawa autorskie i strona bez modelu powstają w finalize."""
+    writer = _open_book(target)
+    ideas = _load_book_ideas(target)
+    if first_page == "title":  # tytuł znany dopiero po pomysłach; litery przed API
+        _check_glyphs(config, writer.manifest.input.market, "cover", ideas.book.title)
+    _set_first_page(writer, target, first_page)
+    _set_instructions(writer, target, instructions)
+    kinds: list[FrontKind] = ["title" if first_page == "title" else "belongs_to"]
+    if instructions:
+        kinds.append("instructions")
+    for kind in kinds:
+        code = _make_front_page(config, target, writer, ideas, kind, images, vision, quality, costs)
+        if code is not None:
+            return code
+    if refresh_canva:
+        _refresh_canva(target, writer.manifest, ideas.book.title)
+    return _front_result(writer, kinds)
 
 
 def _remove_front(target: Path) -> None:
     """`belongs-to --remove`: strona znika z książki i z canva.md, surowa grafika zostaje."""
     writer = _open_book(target)
-    if writer.front is None:
+    if not _drop_front(writer, target, "belongs_to"):
         typer.echo("Książka nie ma strony „This book belongs to…”, nic do usunięcia.")
         return
-    writer.set_front(None)
-    for path in (target / f"{FRONT_NAME}.png", target / SVG_DIR / f"{FRONT_NAME}.svg"):
-        path.unlink(missing_ok=True)
     typer.echo(
         f"Usunięto stronę „This book belongs to…” ({FRONT_NAME}.png i wpis w manifeście); "
         f"surowa grafika zostaje w {front_raw_path(target)}."
     )
-    canva = target / CANVA_FILE
-    if canva.is_file():
-        try:
-            title = load_ideas(target).book.title
-        except BookError as e:
-            raise _fail(e.errors) from e
-        write_bytes_atomic(canva, render_canva_md(writer.manifest, title).encode("utf-8"))
-        typer.echo(f"Odświeżono instrukcję składania w Canvie: {canva}")
+    _refresh_canva(target, writer.manifest, _load_book_ideas(target).book.title)
     status = writer.update_status()
     typer.echo(f"Manifest: {writer.path} (status: {status})")
 
@@ -1527,6 +2045,74 @@ def belongs_to(
     raise typer.Exit(code)
 
 
+@app.command("front-matter")
+def front_matter_cmd(
+    book: Annotated[Path, typer.Argument(help="Katalog książki po kroku kdp-studio images.")],
+    first_page: FirstPageOpt = None,
+    instructions: InstructionsOpt = None,
+    copyright_: CopyrightOpt = None,
+    copyright_owner: CopyrightOwnerOpt = None,
+    image_quality: QualityOpt = None,
+    qa: QaOpt = None,
+    max_cost: MaxCostOpt = None,
+    log_level: LogLevelOpt = None,
+) -> None:
+    """Strony wstępne z modelem obrazu (FR-23): strona 1 (tytułowa do kolorowania albo
+    „This book belongs to…”) i ilustracja instrukcji. Prawa autorskie wpisuje finalize."""
+    config = _config()
+    level = _log_level(config, log_level)
+    writer = _open_book(book)
+    manifest = writer.manifest
+    market = manifest.input.market
+    config = config.for_market(market)
+    page_one = _first_page(config, first_page or manifest.input.first_page)
+    if instructions is None:
+        saved = manifest.input.instructions
+        instructions = config.settings.front_matter.instructions if saved is None else saved
+    variant = copyright_ or manifest.input.copyright
+    front = _front_choice(
+        config,
+        market,
+        variant,
+        copyright_owner or manifest.input.copyright_owner,
+        instructions,
+        page_one,
+    )
+    if page_one == "belongs-to":
+        _check_font(config)
+        _check_glyphs(config, market, "belongs_to")
+    else:
+        _check_glyphs(config, market, "cover", _load_book_ideas(book).book.title)
+    blocker = _belongs_to_blocker(book, manifest)
+    if blocker is not None:
+        raise _fail([blocker])
+    quality = _quality(config, image_quality)
+    do_qa = config.settings.qa if qa is None else qa
+    images_provider, vision = _image_providers(
+        config, manifest.input.format, manifest.providers.image.provider, do_qa
+    )
+    costs = _cost_tracker(config, max_cost, _models(images_provider, vision), manifest.cost_usd)
+    with _locked(book, level), _timed(StepTimer(), "front-matter", costs):
+        writer = _open_book(book)
+        writer.manifest.input.copyright = front.copyright
+        writer.manifest.input.copyright_owner = front.owner
+        writer.save()
+        code = _step_front_matter(
+            config,
+            book,
+            images_provider,
+            vision,
+            quality,
+            costs,
+            first_page=front.first_page,
+            instructions=front.instructions,
+            refresh_canva=True,
+        )
+    if (book / CANVA_FILE).is_file():
+        typer.echo(f"Prawa autorskie i strony bez modelu: kdp-studio finalize {book}")
+    raise typer.Exit(code)
+
+
 # --- Wszystkie kroki -----------------------------------------------------------------------
 
 
@@ -1545,7 +2131,12 @@ def generate(
     image_quality: QualityOpt = None,
     review_ideas: ReviewOpt = None,
     qa: QaOpt = None,
+    front_matter: GenerateFrontOpt = None,
+    first_page: FirstPageOpt = None,
     belongs_to_page: BelongsToOpt = None,
+    instructions: InstructionsOpt = None,
+    copyright_: CopyrightOpt = None,
+    copyright_owner: CopyrightOwnerOpt = None,
     cover_: GenerateCoverOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
@@ -1555,8 +2146,16 @@ def generate(
     timer = StepTimer()
     config = _config()
     level = _log_level(config, log_level)
-    spec = _book_spec(config, theme, age, style, format_, pages, strict, market)
+    instructions = (
+        config.settings.front_matter.instructions if instructions is None else instructions
+    )
+    spec = _book_spec(config, theme, age, style, format_, pages, strict, market, instructions)
     config = config.for_market(spec.market)  # napis FR-14 i czcionki napisów rynku (FR-19)
+    page_one = _first_page(config, first_page, belongs_to_page)
+    front = _front_choice(config, spec.market, copyright_, copyright_owner, instructions, page_one)
+    explicit = first_page is not None or belongs_to_page is not None
+    do_front = config.settings.front_matter.in_generate if front_matter is None else front_matter
+    do_front = do_front or explicit
     workers = _workers(config, concurrency)
     quality = _quality(config, image_quality)
     target = _new_book_dir(output_dir, spec)
@@ -1564,9 +2163,8 @@ def generate(
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
     do_cover = config.settings.cover.in_generate if cover_ is None else cover_
     cover_setup = _generate_cover_setup(config, spec) if do_cover else None
-    if belongs_to_page is True or (
-        belongs_to_page is None and config.settings.belongs_to_page.enabled
-    ):
+    if do_front and page_one == "belongs-to":
+        _check_font(config)
         _check_glyphs(config, spec.market, "belongs_to")
     if not do_cover:
         _warn_glyphs(config, spec.market)
@@ -1575,12 +2173,11 @@ def generate(
     need_vision = do_qa or (cover_setup is not None and cover_setup.needs_vision)
     images_provider, vision = _image_providers(config, spec.format, image_provider, need_vision)
     costs = _cost_tracker(config, max_cost, [provider.model, *_models(images_provider, vision)])
-    belongs = _belongs(config, belongs_to_page)
 
     with _locked(target, level):
         log_event(_log, logging.INFO, "run_start", command="generate", book=str(target))
         with _timed(timer, "ideas", costs):
-            _step_ideas(config, spec, target, provider, do_review, costs)
+            _step_ideas(config, spec, target, provider, do_review, costs, front)
         if costs.over_budget():
             code = _stop_after_ideas(target, costs)
         else:
@@ -1594,10 +2191,10 @@ def generate(
                     quality,
                     costs,
                 )
-        if belongs and code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
+        if do_front and code not in (ExitCode.PROVIDER_ERROR, ExitCode.BUDGET_EXCEEDED):
             code = max(
                 code,
-                _generate_belongs_to(
+                _generate_front_matter(
                     config,
                     target,
                     images_provider,
@@ -1605,6 +2202,7 @@ def generate(
                     quality,
                     costs,
                     timer,
+                    front,
                 ),
             )
         # Po błędzie krytycznym albo przekroczonym limicie krok 3 czeka na dokończenie kroku 2.
@@ -1620,7 +2218,7 @@ def generate(
     raise typer.Exit(code)
 
 
-def _generate_belongs_to(
+def _generate_front_matter(
     config: AppConfig,
     target: Path,
     images: ImageProvider,
@@ -1628,14 +2226,25 @@ def _generate_belongs_to(
     quality: str,
     costs: CostTracker,
     timer: StepTimer,
+    front: _FrontChoice,
 ) -> ExitCode:
-    """`generate --belongs-to-page`: krok między images a finalize; canva.md pisze finalize."""
+    """Krok `generate` między images a finalize (FR-23); canva.md pisze finalize."""
     blocker = _belongs_to_blocker(target, _open_book(target).manifest)
     if blocker is not None:
-        _warn([f"strona „This book belongs to…” pominięta: {blocker}"])
+        _warn([f"strony wstępne z modelem pominięte: {blocker}"])
         return ExitCode.PARTIAL
-    with _timed(timer, "belongs-to", costs):
-        return _step_belongs_to(config, target, images, vision, quality, costs, refresh_canva=False)
+    with _timed(timer, "front-matter", costs):
+        return _step_front_matter(
+            config,
+            target,
+            images,
+            vision,
+            quality,
+            costs,
+            first_page=front.first_page,
+            instructions=front.instructions,
+            refresh_canva=False,
+        )
 
 
 def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:

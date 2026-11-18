@@ -284,7 +284,10 @@ def test_generate_writes_raw_pages(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Generuję 12 grafik (fake, fake-image, jakość medium, równolegle 4)" in out
     assert "page_07: ok (" in out
     assert "Surowe grafiki: 12/12 ok" in out
-    assert sorted(p.name for p in book.glob("*.png")) == [f"page_{i:02d}.png" for i in range(1, 13)]
+    front = ["front_copyright.png", "front_title.png"]  # FR-23: strony wstępne bez modelu
+    assert sorted(p.name for p in book.glob("*.png")) == front + [
+        f"page_{i:02d}.png" for i in range(1, 13)
+    ]
     assert sorted(p.name for p in (book / "svg").iterdir()) == [
         f"page_{i:02d}.svg" for i in range(1, 13)
     ]
@@ -473,6 +476,7 @@ def test_root_has_only_page_pngs(capsys: pytest.CaptureFixture[str]) -> None:
     names = sorted(p.name for p in BOOK_DIR.iterdir() if p.is_file())
     assert names == sorted(
         ["canva.md", "ideas.json", "kdp-studio.log", "manifest.json", "prompts.json"]
+        + ["front_copyright.png", "front_title.png"]  # FR-08: tylko strony front_* i page_*
         + [f"page_{i:02d}.png" for i in range(1, 13)]
     )
 

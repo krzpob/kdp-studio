@@ -374,7 +374,7 @@ def test_generate_with_belongs_to_page(
     assert "Strona „This book belongs to…”: nowy wpis w manifeście" in out
     assert f"{FRONT_NAME}: ok, ramka (1 próba" in out
     assert f"{FRONT_NAME}: ok (ramka, " in out
-    assert "Czas kroku (strona „belongs to”)" in out
+    assert "Czas kroku (strony wstępne)" in out
     # Krok między images a finalize; canva.md pisze dopiero finalize.
     assert out.index("Surowe grafiki:") < out.index(f"{FRONT_NAME}: ok, ramka")
     assert out.index(f"{FRONT_NAME}: ok (ramka") < out.index("Gotowe strony:")
@@ -389,8 +389,9 @@ def test_generate_with_belongs_to_page(
     data = _manifest()
     assert data["status"] == "completed"
     canva = (BOOK / "canva.md").read_text(encoding="utf-8")
-    assert f"| 2 | `{FRONT_NAME}.png` |" in canva and "| 1 | strona wstępna |" in canva
-    assert "wstaw ją jako stronę wstępną nr 2" in canva
+    # FR-23: strona 1 to „This book belongs to…”, strona 2 prawa autorskie.
+    assert f"| 1 | `{FRONT_NAME}.png` |" in canva and "| 2 | `front_copyright.png` |" in canva
+    assert "w kolejności z tabeli niżej" in canva
 
 
 def test_fallback_layout_after_busy_plaques(
@@ -419,7 +420,7 @@ def test_generate_skips_front_page_without_ready_pages(
     provider.pages.fail = lambda req: ProviderError("moderacja", fatal=False)
     assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.PARTIAL
     err = capsys.readouterr().err
-    assert "strona „This book belongs to…” pominięta: brak gotowych surowych grafik" in err
+    assert "strony wstępne z modelem pominięte: brak gotowych surowych grafik" in err
     assert _manifest()["front_matter"]["belongs_to"] is None
     assert provider.front_requests == []
 

@@ -25,7 +25,7 @@ def test_repo_config_is_valid(repo_config: AppConfig) -> None:
         "dorosli",
     ]
     assert set(repo_config.formats) == {"letter", "square"}
-    assert repo_config.settings.front_matter_pages == 2
+    assert repo_config.settings.front_matter.pages == 4  # FR-23: z instrukcją
 
 
 def test_speck_area_shrinks_with_thinner_lines(repo_config: AppConfig) -> None:
@@ -43,15 +43,15 @@ def test_style_allowed_ages(repo_config: AppConfig) -> None:
 def test_env_var_selects_config_dir(
     config_dir: ConfigDirFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = config_dir(settings={"front_matter_pages": 4})
+    directory = config_dir(settings={"front_matter": {"instructions": False}})
     monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(directory))
-    assert load_config().settings.front_matter_pages == 4
+    assert load_config().settings.front_matter.pages == 2
 
 
 def test_missing_settings_key_uses_default(config_dir: ConfigDirFactory) -> None:
     directory = config_dir()
     (directory / "settings.yaml").write_text("", encoding="utf-8")
-    assert load_config(directory).settings.front_matter_pages == 2
+    assert load_config(directory).settings.front_matter.pages == 4
 
 
 def test_missing_file(config_dir: ConfigDirFactory) -> None:

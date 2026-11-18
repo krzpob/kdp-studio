@@ -7,7 +7,9 @@ puste; jeśli nie, generuje ramkę ponownie, a po wyczerpaniu prób przechodzi n
 zapasowy: grafika pierwszej gotowej strony książki w górnej części i napis pod nią.
 
 Krok 2 (`BelongsToMaker`) zapisuje surową grafikę `raw/front_belongs_to.png` i wybiera
-układ; krok 3 (`BelongsToRenderer.render`) robi z niej gotową stronę z napisem.
+układ; krok 3 (`BelongsToRenderer.render`) robi z niej gotową stronę z napisem. Ten sam
+`BelongsToMaker` robi też stronę tytułową i ilustrację instrukcji (FR-23) z ich rendererami
+(`FrontRenderer`).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -46,7 +48,7 @@ from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError
 
 FRONT_NAME = "front_belongs_to"  # alfabetycznie przed page_*, więc w Canvie jest pierwszy
 FRONT_IDEA = "belongs_to"  # id „pomysłu” w odrzuconych próbach
-Layout = Literal["frame", "fallback"]
+Layout = Literal["frame", "fallback", "text_only"]  # text_only: strona 1 bez modelu (FR-23)
 Rect = tuple[int, int, int, int]
 
 NAME_LINE_WIDTH = 0.85  # długość linii na imię względem szerokości pola
@@ -166,6 +168,14 @@ class BelongsToRenderer:
     settings: BelongsToSettings
     age: BelongsToAge
 
+    @property
+    def max_retries(self) -> int:
+        return self.settings.max_retries
+
+    @property
+    def max_ink_ratio(self) -> float | None:
+        return self.settings.max_ink_ratio
+
     def text_rect(self, layout: Layout) -> Rect:
         if layout == "frame":
             box = self.settings.text_box
@@ -213,6 +223,20 @@ class BelongsToRenderer:
 # --- Krok 2: surowa grafika i wybór układu ----------------------------------------------------
 
 
+class FrontRenderer(Protocol):
+    """Renderer strony wstępnej z grafiką z modelu (FR-14, FR-23)."""
+
+    @property
+    def max_retries(self) -> int: ...
+
+    @property
+    def max_ink_ratio(self) -> float | None: ...  # None: bez kontroli pustego pola na tekst
+
+    def text_box_ink(self, raw: Path) -> float: ...
+
+    def preview(self, raw: Path, layout: Layout) -> bytes: ...
+
+
 @dataclass(frozen=True)
 class BelongsToOutcome:
     status: Literal["ok", "failed"]
@@ -238,18 +262,29 @@ class BelongsToMaker:
     book_dir: Path
     aspect: str
     quality: str
-    renderer: BelongsToRenderer
+    renderer: FrontRenderer
     elements: list[str]
     qa: QAChecker | None = None
     over_budget: Callable[[], bool] | None = None
     clock: Callable[[], float] = time.monotonic
+    name: str = FRONT_NAME  # plik strony (front_belongs_to, front_title, front_instructions)
+    idea: str = FRONT_IDEA  # id „pomysłu” w odrzuconych próbach
+    # Ocena QA gotowej strony; None: kryteria strony FR-14 (`QAChecker.check_belongs_to`).
+    qa_check: Callable[[bytes], tuple[QAResult, Usage]] | None = None
+    box_label: str = "pole na imię"  # w komunikacie o niepustym polu na tekst
 
     @property
     def raw_path(self) -> Path:
-        return self.book_dir / RAW_DIR / f"{FRONT_NAME}.png"
+        return self.book_dir / RAW_DIR / f"{self.name}.png"
+
+    def _assess(self, page: bytes) -> tuple[QAResult, Usage]:
+        if self.qa_check is not None:
+            return self.qa_check(page)
+        assert self.qa is not None
+        return self.qa.check_belongs_to(page, self.elements)
 
     def _reject(self, attempt: int) -> Path:
-        target = self.book_dir / REJECTED_DIR / f"{FRONT_NAME}_try{attempt}.png"
+        target = self.book_dir / REJECTED_DIR / f"{self.name}_try{attempt}.png"
         target.parent.mkdir(parents=True, exist_ok=True)
         self.raw_path.replace(target)
         return target
@@ -266,7 +301,7 @@ class BelongsToMaker:
         last_error: str | None = None
         budget = False
         attempt = 0
-        max_attempts = 1 + self.renderer.settings.max_retries
+        max_attempts = 1 + self.renderer.max_retries
         while attempt < max_attempts:
             if self.over_budget is not None and self.over_budget():
                 budget = True
@@ -284,11 +319,9 @@ class BelongsToMaker:
             usage += result.usage
             write_bytes_atomic(self.raw_path, result.png_bytes)
             issue = self._check()
-            if issue is None and self.qa is not None:
+            if issue is None and (self.qa is not None or self.qa_check is not None):
                 try:
-                    qa, used = self.qa.check_belongs_to(
-                        self.renderer.preview(self.raw_path, "frame"), self.elements
-                    )
+                    qa, used = self._assess(self.renderer.preview(self.raw_path, "frame"))
                 except ProviderError as e:
                     if e.fatal:
                         raise
@@ -311,7 +344,7 @@ class BelongsToMaker:
                     rejected=rejected,
                 )
             moved = self._reject(attempt)
-            rejected.append(RejectedAttempt(attempt, FRONT_IDEA, moved, issue))
+            rejected.append(RejectedAttempt(attempt, self.idea, moved, issue))
             last_error = "; ".join(f"{i.criterion}: {i.detail}" for i in issue)
 
         reason = "przekroczony limit kosztu" if budget else last_error or "brak grafiki"
@@ -346,12 +379,12 @@ class BelongsToMaker:
             ink = self.renderer.text_box_ink(self.raw_path)
         except PostprocessError as e:
             return [QAIssue(criterion="other", detail=f"obróbka: {e}")]
-        limit = self.renderer.settings.max_ink_ratio
-        if ink > limit:
+        limit = self.renderer.max_ink_ratio
+        if limit is not None and ink > limit:
             return [
                 QAIssue(
                     criterion="other",
-                    detail=f"pole na imię nie jest puste ({ink:.1%} tuszu, limit {limit:.1%})",
+                    detail=f"{self.box_label} nie jest puste ({ink:.1%} tuszu, limit {limit:.1%})",
                 )
             ]
         return None

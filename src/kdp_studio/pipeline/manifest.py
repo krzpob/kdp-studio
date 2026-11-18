@@ -41,6 +41,8 @@ BookStatus = Literal[
 # pending: brak surowej grafiki, raw_ok: surowa grafika gotowa, ok: gotowa strona do Canvy.
 PageStatus = Literal["pending", "raw_ok", "ok", "failed"]
 PageAction = Literal["regenerate"]
+# Strony wstępne z grafiką (FR-14, FR-23): klucz wpisu w `front_matter`.
+FrontKind = Literal["belongs_to", "title", "instructions"]
 
 
 class ManifestError(Exception):
@@ -75,6 +77,11 @@ class ManifestInput(_Model):
     pages: int
     front_matter_pages: int
     market: str = "US"  # FR-19; stara książka bez tego pola to US
+    # FR-23; stara książka bez tych pól nie ma stron praw autorskich ani instrukcji.
+    copyright: str = "short"  # wariant tekstu praw autorskich: minimal, short, full
+    copyright_owner: str | None = None
+    first_page: str | None = None  # title albo belongs-to
+    instructions: bool | None = None
     concurrency: int
     review_ideas: bool
     qa: bool = False
@@ -191,8 +198,29 @@ class FrontPage(_Model):
     rejected: list[ManifestRejected] = []
 
 
+class CopyrightPage(_Model):
+    """Strona praw autorskich (FR-23): tekst z `texts` rynku, wpisany przez program."""
+
+    name: str = "front_copyright"
+    status: PageStatus = "pending"
+    language: str  # klucz tłumaczenia z markets.yaml (np. en-GB albo en)
+    variant: str
+    owner: str
+    year: int
+    text_sha256: str | None = None
+    final: FinalInfo | None = None
+    files: PageFilesInfo = Field(default_factory=PageFilesInfo)
+    error: str | None = None
+
+
 class FrontMatter(_Model):
-    belongs_to: FrontPage | None = None  # po kdp-studio belongs-to
+    belongs_to: FrontPage | None = None  # strona 1 „This book belongs to…” (FR-14)
+    title: FrontPage | None = None  # strona 1 tytułowa do kolorowania (FR-23)
+    copyright: CopyrightPage | None = None  # strona 2 (FR-23)
+    instructions: FrontPage | None = None  # strona 3 (FR-23)
+
+    def pages(self) -> list[FrontPage | CopyrightPage]:
+        return [p for p in (self.belongs_to, self.title, self.copyright, self.instructions) if p]
 
 
 class CoverTemplateInfo(_Model):
@@ -518,8 +546,27 @@ class ManifestWriter:
     def front(self) -> FrontPage | None:
         return self.manifest.front_matter.belongs_to
 
-    def set_front(self, front: FrontPage | None) -> None:
-        self.manifest.front_matter.belongs_to = front
+    def front_page(self, kind: FrontKind) -> FrontPage | None:
+        page: FrontPage | None = getattr(self.manifest.front_matter, kind)
+        return page
+
+    def set_front(self, front: FrontPage | None, kind: FrontKind = "belongs_to") -> None:
+        setattr(self.manifest.front_matter, kind, front)
+        self.save()
+
+    def set_copyright(self, page: CopyrightPage | None) -> None:
+        self.manifest.front_matter.copyright = page
+        self.save()
+
+    def record_copyright(
+        self, page: CopyrightPage, *, png: Path | None, final: FinalInfo, error: str | None
+    ) -> None:
+        """Strona praw autorskich po `finalize` (FR-23); `final` zostaje po błędzie."""
+        page.status = "ok" if error is None else "failed"
+        page.error = error
+        page.final = final
+        page.files = PageFilesInfo(png=_relative(png, self.book_dir) if error is None else None)
+        self.manifest.front_matter.copyright = page
         self.save()
 
     def record_front_raw(
@@ -530,9 +577,10 @@ class ManifestWriter:
         model: str,
         quality: str,
         cost_usd: float = 0.0,
+        kind: FrontKind = "belongs_to",
     ) -> None:
-        """Ramka strony FR-14 z modelu (albo układ zapasowy) i jej koszt, albo błąd."""
-        front = self.front
+        """Grafika strony wstępnej z modelu (albo układ zapasowy) i jej koszt, albo błąd."""
+        front = self.front_page(kind)
         assert front is not None
         ok = outcome.status == "ok" and outcome.raw_file is not None
         front.status = "raw_ok" if ok else "failed"
@@ -565,10 +613,16 @@ class ManifestWriter:
         self.save()
 
     def record_front_final(
-        self, *, png: Path | None, svg: Path | None, final: FinalInfo, error: str | None
+        self,
+        *,
+        png: Path | None,
+        svg: Path | None,
+        final: FinalInfo,
+        error: str | None,
+        kind: FrontKind = "belongs_to",
     ) -> None:
-        """Gotowa strona FR-14 z napisem; jak w record_final, `final` zostaje po błędzie."""
-        front = self.front
+        """Gotowa strona wstępna z napisem; jak w record_final, `final` zostaje po błędzie."""
+        front = self.front_page(kind)
         assert front is not None
         front.status = "ok" if error is None else "failed"
         front.error = error
@@ -587,8 +641,8 @@ class ManifestWriter:
         a przekroczony limit kosztu (FR-10) `budget_exceeded`."""
         manifest = self.manifest
         statuses = {p.status for p in manifest.pages}
-        if self.front is not None:  # FR-14: strona wstępna liczy się jak strona książki
-            statuses.add(self.front.status)
+        for front in manifest.front_matter.pages():  # strony wstępne liczą się jak strony
+            statuses.add(front.status)
         manifest.error = fatal_error or budget_error
         if fatal_error is not None:
             manifest.status = "failed"

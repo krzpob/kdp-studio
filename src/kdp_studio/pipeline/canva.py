@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kdp_studio.pipeline.belongs_to import FRONT_NAME
+from kdp_studio.pipeline.front_matter import COPYRIGHT_NAME, INSTRUCTIONS_NAME, TITLE_NAME
 from kdp_studio.pipeline.manifest import AI_DISCLOSURE, Manifest
 from kdp_studio.validation import plural
 
@@ -20,12 +21,31 @@ def belongs_to_position(manifest: Manifest) -> int | None:
     return min(2, manifest.input.front_matter_pages)
 
 
+def front_matter_files(manifest: Manifest) -> list[str | None]:
+    """Strony wstępne FR-23 w kolejności druku (FR-22): plik albo None dla pustej strony."""
+    matter = manifest.front_matter
+    first = FRONT_NAME if matter.belongs_to is not None else TITLE_NAME
+    files: list[str | None] = [first, COPYRIGHT_NAME]
+    if manifest.input.front_matter_pages >= 4:
+        files += [INSTRUCTIONS_NAME, None]
+    return files
+
+
+def _fr23(manifest: Manifest) -> bool:
+    """Książka ze stronami wstępnymi FR-23 (ma właściciela praw autorskich)."""
+    return manifest.input.copyright_owner is not None
+
+
 def _page_order(manifest: Manifest) -> list[str]:
     """Kolejność stron książki: strony wstępne, potem grafika i pusta strona (D8)."""
     front = manifest.input.front_matter_pages
     belongs = belongs_to_position(manifest)
     lines = []
-    for number in range(1, front + 1):
+    if _fr23(manifest):
+        for number, name in enumerate(front_matter_files(manifest), start=1):
+            lines.append(f"| {number} | `{name}.png` |" if name else f"| {number} | pusta |")
+        front = len(front_matter_files(manifest))
+    for number in range(1, front + 1 if not _fr23(manifest) else 1):
         if number == belongs:
             lines.append(f"| {number} | `{FRONT_NAME}.png` |")
         elif belongs is None and number == 1:
@@ -49,9 +69,9 @@ def render_canva_md(manifest: Manifest, title: str) -> str:
     names = [p.name for p in manifest.pages]
     missing = [p.name for p in manifest.pages if p.status != "ok"]
     belongs = belongs_to_position(manifest)
-    front_page = manifest.front_matter.belongs_to
-    if front_page is not None and front_page.status != "ok":
-        missing.insert(0, FRONT_NAME)
+    for front_page in reversed(manifest.front_matter.pages()):
+        if front_page.status != "ok":
+            missing.insert(0, front_page.name)
     count = len(names)
     front = manifest.input.front_matter_pages
     pages_in_book = layout.pages_in_book
@@ -75,12 +95,21 @@ def render_canva_md(manifest: Manifest, title: str) -> str:
         "## Kroki",
         "",
         f"1. Utwórz projekt o wymiarach własnych **{_inches(width)} × {_inches(height)} in**.",
-        f"2. Strony wstępne: **{front}** (domyślnie strona tytułowa i „This book belongs to…”)."
-        + (
-            f" Gotowa strona „This book belongs to…” to `{FRONT_NAME}.png`: wstaw ją jako "
-            f"stronę wstępną nr {belongs}."
-            if belongs is not None
-            else ""
+        (
+            f"2. Strony wstępne: **{front}**, gotowe pliki `front_*.png` (strona 1, prawa "
+            "autorskie"
+            + (", instrukcja i pusta strona za nią" if front >= 4 else "")
+            + "). Wstaw je w kolejności z tabeli niżej, nie alfabetycznej, i rozciągnij na "
+            "całą stronę jak grafiki."
+            if _fr23(manifest)
+            else f"2. Strony wstępne: **{front}** (domyślnie strona tytułowa i „This book "
+            "belongs to…”)."
+            + (
+                f" Gotowa strona „This book belongs to…” to `{FRONT_NAME}.png`: wstaw ją jako "
+                f"stronę wstępną nr {belongs}."
+                if belongs is not None
+                else ""
+            )
         ),
         f"3. Prześlij wszystkie pliki `{names[0]}.png` … `{names[-1]}.png` naraz "
         "(kolejność alfabetyczna to kolejność stron)"

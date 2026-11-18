@@ -262,11 +262,13 @@ def plan_finalize(book_dir: Path, manifest: Manifest, params_sha256: str) -> lis
 # --- FR-14: strona „This book belongs to…” ------------------------------------------------------
 
 
-def front_raw_path(book_dir: Path) -> Path:
-    return book_dir / RAW_DIR / f"{FRONT_NAME}.png"
+def front_raw_path(book_dir: Path, name: str = FRONT_NAME) -> Path:
+    return book_dir / RAW_DIR / f"{name}.png"
 
 
-def plan_front(book_dir: Path, front: FrontPage | None, prompt: str) -> str | None:
+def plan_front(
+    book_dir: Path, front: FrontPage | None, prompt: str, name: str = FRONT_NAME
+) -> str | None:
     """Dlaczego `belongs-to` ma (ponownie) wygenerować ramkę FR-14; None, gdy jest aktualna.
 
     Nieudany napis przy aktualnej surowej grafice (`failed` z `raw_sha256`) to sprawa obróbki,
@@ -276,8 +278,10 @@ def plan_front(book_dir: Path, front: FrontPage | None, prompt: str) -> str | No
         return None
     if front.action == "regenerate":
         return "action: regenerate"
-    if front.raw_sha256 is None or not front_raw_path(book_dir).is_file():
+    if front.raw_sha256 is None or not front_raw_path(book_dir, name).is_file():
         return "nieudana" if front.status == "failed" else "brak grafiki"
+    if front.layout == "text_only":  # strona 1 z finalize: model jej jeszcze nie rysował
+        return "brak grafiki"
     if front.prompt_sha256 != sha256_text(prompt):
         return "zmieniony prompt"
     return None
@@ -292,11 +296,14 @@ def fallback_art(book_dir: Path, manifest: Manifest) -> tuple[str, Path] | None:
     return None
 
 
-def front_needs_finalize(book_dir: Path, front: FrontPage | None, params_sha256: str) -> bool:
-    """Strona FR-14 ma surową grafikę, a gotowej strony brakuje albo jest nieaktualna."""
+def front_needs_finalize(
+    book_dir: Path, front: FrontPage | None, params_sha256: str, name: str = FRONT_NAME
+) -> bool:
+    """Strona wstępna ma surową grafikę, a gotowej strony brakuje albo jest nieaktualna."""
     if front is None or front.raw_sha256 is None or front.layout is None:
         return False
-    if front.status not in ("raw_ok", "ok", "failed") or not front_raw_path(book_dir).is_file():
+    raw_ok = front_raw_path(book_dir, name).is_file()
+    if front.status not in ("raw_ok", "ok", "failed") or not raw_ok:
         return False
     final = front.final
     return (
@@ -304,5 +311,5 @@ def front_needs_finalize(book_dir: Path, front: FrontPage | None, params_sha256:
         or final is None
         or final.raw_sha256 != front.raw_sha256
         or final.postprocess_sha256 != params_sha256
-        or (front.status == "ok" and not (book_dir / f"{FRONT_NAME}.png").is_file())
+        or (front.status == "ok" and not (book_dir / f"{name}.png").is_file())
     )
