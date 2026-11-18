@@ -25,6 +25,7 @@ class BookSpec(BaseModel):
     format: str
     pages: Annotated[int, Field(ge=PAGES_MIN, le=PAGES_MAX)]
     front_matter_pages: Annotated[int, Field(ge=0)]
+    market: str = "US"  # FR-19, klucz z markets.yaml; stara książka bez rynku to US
 
     @property
     def pages_in_book(self) -> int:

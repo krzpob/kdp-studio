@@ -166,7 +166,7 @@ def qa_instructions(spec: BookSpec, config: AppConfig, idea: PageIdea, theme: st
 
 def belongs_to_instructions(spec: BookSpec, config: AppConfig, elements: list[str]) -> str:
     """Kryteria FR-07 dla strony „This book belongs to…” (FR-14)."""
-    settings = config.settings.belongs_to_page
+    settings = config.belongs_to_settings(spec.market)
     return _format(
         spec,
         config,

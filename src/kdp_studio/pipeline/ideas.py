@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, ValidationError
@@ -100,7 +101,10 @@ action or place, and do not show one character sitting beside an object again an
 - Match the composition to the page format.
 
 Metadata rules:
-- Write title, subtitle, description and keywords in {language}.
+- The book is sold on {domain} ({locale}). Write title, subtitle, description and keywords in \
+{language}, with its spelling and the words that buyers there type when they search.
+- Call the book a "{coloring_book}" (exactly this word, not another spelling or synonym) and, \
+when the subtitle names the audience, write it as "{audience}".
 - Description: plain text, no HTML, at most 4000 characters, no claims like "bestseller" or \
 "free", no mention of AI.
 - Keywords: at most {max_keywords}, each at most {keyword_chars} characters, no trademarks, \
@@ -150,8 +154,13 @@ def reserve_count(pages: int, reserve_ratio: float) -> int:
 def build_prompts(spec: BookSpec, config: AppConfig) -> tuple[str, str]:
     settings = config.settings
     reserve = reserve_count(spec.pages, settings.reserve_ratio)
+    market = config.markets.markets[spec.market]
     system = SYSTEM_PROMPT.format(
-        language=settings.metadata_language,
+        domain=market.domain,
+        locale=market.locale,
+        language=market.language,
+        coloring_book=market.terms.coloring_book,
+        audience=market.terms.age_phrase(config.ages[spec.age].age_range),
         max_keywords=KDP_MAX_KEYWORDS,
         keyword_chars=KDP_KEYWORD_MAX_CHARS,
         theme_rule=THEME_RULE,
@@ -271,6 +280,51 @@ def _metadata(book: _LLMBook) -> BookMetadata:
     )
 
 
+def _respell(text: str, spelling: Mapping[str, str]) -> tuple[str, list[str]]:
+    """Słowa innej odmiany języka zamienione na pisownię rynku, z zachowaniem wielkości liter."""
+    if not spelling:
+        return text, []
+    changes: list[str] = []
+    pattern = re.compile(r"\b(" + "|".join(map(re.escape, spelling)) + r")\b", re.IGNORECASE)
+
+    def fix(match: re.Match[str]) -> str:
+        word = match.group(0)
+        right = spelling[word.casefold()]
+        if word.isupper():
+            right = right.upper()
+        elif word[0].isupper():
+            right = right[0].upper() + right[1:]
+        changes.append(f"{word} → {right}")
+        return right
+
+    return pattern.sub(fix, text), changes
+
+
+def apply_spelling(
+    book: BookMetadata, spelling: Mapping[str, str]
+) -> tuple[BookMetadata, list[str]]:
+    """Metadane w pisowni rynku (FR-19, kontrola FR-03a): np. „Coloring” → „Colouring” na UK.
+
+    Model dostaje odmianę języka w prompcie, ale potrafi wpleść słowo z innej odmiany; te
+    kilka słów program poprawia sam, bez ponownego wywołania. Zwraca też listę zmian.
+    """
+    lowered = {wrong.casefold(): right for wrong, right in spelling.items()}
+    changes: list[str] = []
+
+    def fixed(text: str) -> str:
+        new, made = _respell(text, lowered)
+        changes.extend(made)
+        return new
+
+    result = BookMetadata(
+        title=fixed(book.title),
+        subtitle=fixed(book.subtitle),
+        description=fixed(book.description),
+        keywords=_clean_list([fixed(k) for k in book.keywords]),
+    )
+    return result, changes
+
+
 def _page_id(index: int) -> str:
     return f"idea_{index:02d}"
 
@@ -332,6 +386,11 @@ class IdeaGenerator:
                 continue
 
             warnings: list[str] = []
+            book, changes = apply_spelling(book, self.config.markets.markets[spec.market].spelling)
+            if changes:
+                counts = Counter(changes)
+                listed = ", ".join(f"{c} ({n}×)" if n > 1 else c for c, n in counts.items())
+                warnings.append(f"pisownia rynku {spec.market} w metadanych: {listed}")
             if len(pages) < expected:
                 warnings.append(
                     f"model zwrócił {len(pages)} unikalnych pomysłów zamiast {expected}; "

@@ -35,8 +35,10 @@ def slugify(text: str, fallback: str = "kolorowanka") -> str:
 
 
 def book_dir(output_dir: Path, spec: BookSpec) -> Path:
-    """`<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (FR-08)."""
-    return output_dir / f"{slugify(spec.theme)}_{spec.age}_{spec.style}_{spec.format}"
+    """`<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (FR-08), z `_<rynek>` na końcu dla
+    rynku innego niż US (FR-19): ta sama kolorowanka na inny rynek to osobna książka."""
+    name = f"{slugify(spec.theme)}_{spec.age}_{spec.style}_{spec.format}"
+    return output_dir / (name if spec.market == "US" else f"{name}_{spec.market.lower()}")
 
 
 def write_bytes_atomic(path: Path, data: bytes) -> None:

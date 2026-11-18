@@ -1,0 +1,275 @@
+# Rynki Amazona (FR-19): jedno źródło danych o rynku książki.
+#
+# Klucz rynku = wartość parametru --market (ideas, generate); domyślny: default_market w
+# settings.yaml. Książka powstaje dla jednego rynku, bo tytuł w KDP ma jeden język i jeden zestaw
+# metadanych. Ta sama kolorowanka w innej odmianie języka to w KDP osobna książka.
+#
+# Dla każdego rynku:
+#   name, domain, locale  – nazwa do `kdp-studio profiles market`, domena Amazona, kod języka
+#   language              – odmiana języka do promptu metadanych (FR-03), po angielsku
+#   currency, printing_cost, royalty – dane cenowe FR-16; rynki o wspólnych tabelach KDP wskazują
+#                           grupę (pricing_group), żeby nie powielać liczb
+#   terms                 – stałe teksty, które wpisuje program (nie model, bo bez literówek):
+#     coloring_book       – nazwa gatunku w podtytule (FR-03, FR-15)
+#     belongs_to          – napis strony „This book belongs to…” (FR-14), chyba że
+#                           belongs_to_page.text w settings.yaml jest ustawione ręcznie
+#     ages                – wzór wieku dzieci ({min} i {max} z age_range profilu wieku)
+#     adults              – zamiast wzoru wieku dla profilu bez age_range (dorośli)
+#   spelling              – słowa innej odmiany języka → pisownia rynku (np. color → colour na
+#                           rynku brytyjskim); program poprawia nimi metadane po wygenerowaniu (FR-03a)
+#   alphabet              – znaki języka spoza podstawowego ASCII; czcionki napisów (FR-14,
+#                           FR-15) muszą je mieć, zanim program wyda pieniądze na API
+#   font                  – czcionka napisów programu na tym rynku (strona FR-14, tytuł okładki),
+#                           zamiast belongs_to_page.font i cover.title_font; warianty grubości
+#                           (font_variation, title_font_variation) zostają z settings.yaml.
+#                           Fredoka (US, UK) nie ma polskich liter, więc pozostałe rynki dostają
+#                           Baloo 2; japońskich znaków nie ma żadna z nich (JP bez FR-14 i okładki)
+#
+# Ceny: paperback, czarny atrament, papier biały, z dwóch stron pomocy KDP (sources). Koszt druku
+# to koszt stały do fixed_only_max_pages stron, potem fixed + strony × per_page. Format jest duży
+# (large), gdy ma ponad 6.12" szerokości albo ponad 9" wysokości (oba nasze formaty są duże).
+# Stawka tantiemy: 50% do rate_50_max_price włącznie, 60% od rate_60_min_price. Przed publikacją
+# sprawdź liczby w kalkulatorze KDP; przy dodawaniu rynku sprawdź też, czy KDP przyjmuje
+# paperbacki w jego języku.
+
+sources:
+  printing_cost: https://kdp.amazon.com/en_US/help/topic/G201834340
+  royalty: https://kdp.amazon.com/en_US/help/topic/G201834330
+  calculator: https://kdp.amazon.com/en_US/royalty-calculator
+checked: 2026-11-18
+large_trim: {width_over_in: 6.12, height_over_in: 9.0}
+
+pricing_groups:
+  EU:                              # Amazon.de, .fr, .es, .it, .nl, .ie, .com.be: wspólne tabele KDP
+    currency: EUR
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.05, fixed: 0.75, per_page: 0.012}
+      large: {fixed_only: 2.48, fixed: 0.75, per_page: 0.016}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+
+markets:
+  US:
+    name: Amazon.com (USA)
+    domain: amazon.com
+    locale: en-US
+    language: American English
+    currency: USD
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.30, fixed: 1.00, per_page: 0.012}
+      large: {fixed_only: 2.84, fixed: 1.00, per_page: 0.017}
+    royalty: {rate_50_max_price: 9.98, rate_60_min_price: 9.99, max_price: 250}
+    terms:
+      coloring_book: Coloring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+      adults: for Adults
+    spelling:                      # pisownia rynku: słowo innej odmiany → poprawne
+      colour: color
+      colours: colors
+      coloured: colored
+      colouring: coloring
+      favourite: favorite
+      favourites: favorites
+
+  UK:
+    name: Amazon.co.uk (Wielka Brytania)
+    domain: amazon.co.uk
+    locale: en-GB
+    language: British English
+    currency: GBP
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 1.93, fixed: 0.85, per_page: 0.010}
+      large: {fixed_only: 2.15, fixed: 0.85, per_page: 0.012}
+    royalty: {rate_50_max_price: 7.98, rate_60_min_price: 7.99, max_price: 250}
+    terms:
+      coloring_book: Colouring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+      adults: for Adults
+    spelling:
+      color: colour
+      colors: colours
+      colored: coloured
+      coloring: colouring
+      favorite: favourite
+      favorites: favourites
+
+  CA:
+    name: Amazon.ca (Kanada)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.ca
+    locale: en-CA
+    language: Canadian English
+    currency: CAD
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 2.99, fixed: 1.26, per_page: 0.016}
+      large: {fixed_only: 3.53, fixed: 1.26, per_page: 0.021}
+    royalty: {rate_50_max_price: 13.98, rate_60_min_price: 13.99, max_price: 350}
+    terms:
+      coloring_book: Colouring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+      adults: for Adults
+    spelling:
+      color: colour
+      colors: colours
+      colored: coloured
+      coloring: colouring
+      favorite: favourite
+      favorites: favourites
+
+  AU:
+    name: Amazon.com.au (Australia)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.com.au
+    locale: en-AU
+    language: Australian English
+    currency: AUD
+    printing_cost:
+      fixed_only_max_pages: 108          # na Amazon.com.au koszt stały do 108 stron
+      regular: {fixed_only: 4.74, fixed: 2.42, per_page: 0.022}
+      large: {fixed_only: 5.28, fixed: 2.42, per_page: 0.027}
+    royalty: {rate_50_max_price: 13.98, rate_60_min_price: 13.99, max_price: 350}
+    terms:
+      coloring_book: Colouring Book
+      belongs_to: "This book belongs to:"
+      ages: "for Kids Ages {min}–{max}"
+      adults: for Adults
+    spelling:
+      color: colour
+      colors: colours
+      colored: coloured
+      coloring: colouring
+      favorite: favourite
+      favorites: favourites
+
+  DE:
+    name: Amazon.de (Niemcy)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.de
+    locale: de-DE
+    language: German
+    pricing_group: EU
+    terms:
+      coloring_book: Malbuch
+      belongs_to: "Dieses Buch gehört:"
+      ages: "für Kinder von {min} bis {max} Jahren"
+      adults: für Erwachsene
+    alphabet: äöüßÄÖÜ
+
+  FR:
+    name: Amazon.fr (Francja)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.fr
+    locale: fr-FR
+    language: French
+    pricing_group: EU
+    terms:
+      coloring_book: Livre de coloriage
+      belongs_to: "Ce livre appartient à :"
+      ages: "pour enfants de {min} à {max} ans"
+      adults: pour adultes
+    alphabet: àâæçéèêëîïôœùûüÿÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸ«»
+
+  ES:
+    name: Amazon.es (Hiszpania)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.es
+    locale: es-ES
+    language: Spanish
+    pricing_group: EU
+    terms:
+      coloring_book: Libro para colorear
+      belongs_to: "Este libro pertenece a:"
+      ages: "para niños de {min} a {max} años"
+      adults: para adultos
+    alphabet: áéíóúüñÁÉÍÓÚÜÑ¿¡
+
+  IT:
+    name: Amazon.it (Włochy)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.it
+    locale: it-IT
+    language: Italian
+    pricing_group: EU
+    terms:
+      coloring_book: Libro da colorare
+      belongs_to: "Questo libro appartiene a:"
+      ages: "per bambini da {min} a {max} anni"
+      adults: per adulti
+    alphabet: àèéìíòóùúÀÈÉÌÍÒÓÙÚ
+
+  NL:
+    name: Amazon.nl (Holandia)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.nl
+    locale: nl-NL
+    language: Dutch
+    pricing_group: EU
+    terms:
+      coloring_book: Kleurboek
+      belongs_to: "Dit boek is van:"
+      ages: "voor kinderen van {min} tot {max} jaar"
+      adults: voor volwassenen
+    alphabet: éëïöüÉËÏÖÜ
+
+  PL:
+    name: Amazon.pl (Polska)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.pl
+    locale: pl-PL
+    language: Polish
+    currency: PLN
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 9.58, fixed: 3.51, per_page: 0.056}
+      large: {fixed_only: 11.61, fixed: 3.51, per_page: 0.075}
+    royalty: {rate_50_max_price: 39, rate_60_min_price: 40, max_price: 1200}
+    terms:
+      coloring_book: Kolorowanka
+      belongs_to: "Ta książka należy do:"
+      ages: "dla dzieci w wieku {min}–{max} lat"
+      adults: dla dorosłych
+    alphabet: ąćęłńóśźżĄĆĘŁŃÓŚŹŻ
+
+  SE:
+    name: Amazon.se (Szwecja)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.se
+    locale: sv-SE
+    language: Swedish
+    currency: SEK
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 22.84, fixed: 8.37, per_page: 0.134}
+      large: {fixed_only: 27.67, fixed: 8.37, per_page: 0.179}
+    royalty: {rate_50_max_price: 109, rate_60_min_price: 110, max_price: 2500}
+    terms:
+      coloring_book: Målarbok
+      belongs_to: "Den här boken tillhör:"
+      ages: "för barn {min}–{max} år"
+      adults: för vuxna
+    alphabet: åäöéÅÄÖÉ
+
+  JP:
+    name: Amazon.co.jp (Japonia)
+    font: assets/fonts/Baloo2-Variable.ttf
+    domain: amazon.co.jp
+    locale: ja-JP
+    language: Japanese
+    currency: JPY
+    printing_cost:
+      fixed_only_max_pages: 110
+      regular: {fixed_only: 422, fixed: 206, per_page: 2}
+      large: {fixed_only: 530, fixed: 206, per_page: 3}
+    royalty: {rate_50_max_price: 999, rate_60_min_price: 1000, max_price: 30000}
+    terms:
+      coloring_book: ぬりえ
+      belongs_to: "この本の持ち主："
+      ages: "{min}〜{max}歳向け"
+      adults: 大人向け
+    alphabet: ぬりえこの本持ち主歳向け大人

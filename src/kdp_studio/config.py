@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from datetime import date
+from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
@@ -54,8 +56,16 @@ class AgeProfile(_Strict):
     prompt_fragment: str
     # FR-03b: minimalny udział stron z 2+ postaciami; 0 wyłącza (np. jeden obiekt dla maluchów)
     multi_subject_share: Annotated[float, Field(ge=0, le=1)] = 0.0
+    # FR-19: wiek dzieci [od, do] do wzoru wieku rynku (terms.ages); brak = dorośli (terms.adults)
+    age_range: tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]] | None = None
     belongs_to: BelongsToAge = BelongsToAge()
     postprocess: PostprocessParams
+
+    @model_validator(mode="after")
+    def _age_range_order(self) -> Self:
+        if self.age_range is not None and self.age_range[0] > self.age_range[1]:
+            raise ValueError(f"age_range: od > do ({self.age_range[0]} > {self.age_range[1]})")
+        return self
 
 
 class StyleProfile(_Strict):
@@ -196,7 +206,8 @@ class BelongsToSettings(_Strict):
     """Strona „This book belongs to…” (FR-14)."""
 
     enabled: bool = False
-    text: Annotated[str, Field(min_length=1)] = "This book belongs to:"
+    # None: napis z `terms.belongs_to` rynku książki (FR-19); tekst tu ma pierwszeństwo.
+    text: Annotated[str, Field(min_length=1)] | None = None
     composition: Annotated[str, Field(min_length=1)] = (
         "a decorative frame made of theme elements around a large empty blank plaque in the "
         "center of the page, the plaque is completely empty with nothing written or drawn inside it"
@@ -391,7 +402,7 @@ class CoverSettings(_Strict):
 class Settings(_Strict):
     front_matter_pages: Annotated[int, Field(ge=0)] = 2
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
-    metadata_language: Annotated[str, Field(min_length=1)] = "English"
+    default_market: Annotated[str, Field(min_length=1)] = "US"  # FR-19, klucz z markets.yaml
     providers: ProviderSettings = ProviderSettings()
     models: ModelSettings = ModelSettings()
     image_quality: ImageQuality = "medium"
@@ -410,11 +421,147 @@ class Settings(_Strict):
     max_cost_usd: Annotated[float, Field(gt=0)] = DEFAULT_MAX_COST_USD
 
 
+# --- Rynki (FR-19) i dane cenowe (FR-16): config/markets.yaml ---------------------------------
+
+Money = Annotated[Decimal, Field(ge=0)]  # kwoty z tabel KDP; FR-16 liczy na Decimal
+
+
+class PrintingTrim(_Strict):
+    """Koszt druku jednego rozmiaru: stały do progu stron, potem stały + strony × per_page."""
+
+    fixed_only: Money
+    fixed: Money
+    per_page: Money
+
+
+class PrintingCost(_Strict):
+    fixed_only_max_pages: Annotated[int, Field(gt=0)]
+    regular: PrintingTrim
+    large: PrintingTrim
+
+
+class Royalty(_Strict):
+    rate_50_max_price: Money  # stawka 50% do tej ceny włącznie
+    rate_60_min_price: Money  # stawka 60% od tej ceny
+    max_price: Money
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if not self.rate_50_max_price < self.rate_60_min_price <= self.max_price:
+            raise ValueError("royalty: wymagane rate_50_max_price < rate_60_min_price ≤ max_price")
+        return self
+
+
+class MarketPricing(_Strict):
+    currency: Annotated[str, Field(min_length=3, max_length=3)]
+    printing_cost: PrintingCost
+    royalty: Royalty
+
+
+class MarketTerms(_Strict):
+    """Stałe teksty rynku, które wpisuje program (FR-14, FR-15) i wskazuje modelowi (FR-03)."""
+
+    coloring_book: Annotated[str, Field(min_length=1)]
+    belongs_to: Annotated[str, Field(min_length=1)]
+    ages: Annotated[str, Field(min_length=1)]  # z polami {min} i {max}
+    adults: Annotated[str, Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def _ages_fields(self) -> Self:
+        try:
+            filled = self.ages.format(min=0, max=0)
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(f"terms.ages: nieznane pole {e}; dozwolone: {{min}}, {{max}}") from e
+        if filled == self.ages:
+            raise ValueError("terms.ages: brak pól {min} i {max}")
+        return self
+
+    def age_phrase(self, age_range: tuple[int, int] | None) -> str:
+        """Wzór wieku dla profilu, np. „for Kids Ages 3–5”; bez zakresu wieku: `adults`."""
+        if age_range is None:
+            return self.adults
+        return self.ages.format(min=age_range[0], max=age_range[1])
+
+
+class MarketProfile(_Strict):
+    name: Annotated[str, Field(min_length=1)]
+    domain: Annotated[str, Field(min_length=1)]
+    locale: Annotated[str, Field(min_length=2)]
+    language: Annotated[str, Field(min_length=1)]  # odmiana języka do promptu, po angielsku
+    currency: Annotated[str, Field(min_length=3, max_length=3)] | None = None
+    printing_cost: PrintingCost | None = None
+    royalty: Royalty | None = None
+    pricing_group: str | None = None  # wspólne tabele KDP (np. EU) zamiast własnych liczb
+    terms: MarketTerms
+    # Pisownia rynku: słowo innej odmiany języka → poprawne (np. color → colour na UK).
+    spelling: dict[Annotated[str, Field(min_length=1)], Annotated[str, Field(min_length=1)]] = {}
+    alphabet: str = ""  # znaki języka spoza ASCII, które muszą mieć czcionki napisów
+    # Czcionka napisów programu na tym rynku (strona FR-14, tytuł okładki), względna wobec repo;
+    # ma pierwszeństwo przed belongs_to_page.font i cover.title_font. None: czcionki z settings.
+    font: str | None = None
+
+    @property
+    def description(self) -> str:
+        return f"{self.language}, {self.locale}."
+
+    @model_validator(mode="after")
+    def _pricing_source(self) -> Self:
+        own = (self.currency, self.printing_cost, self.royalty)
+        if self.pricing_group is not None and any(v is not None for v in own):
+            raise ValueError("pricing_group wyklucza własne currency, printing_cost i royalty")
+        if self.pricing_group is None and any(v is None for v in own):
+            raise ValueError("podaj pricing_group albo currency, printing_cost i royalty")
+        return self
+
+    def required_chars(self) -> str:
+        """Znaki, które czcionki napisów muszą mieć dla tego rynku (FR-19): stałe teksty
+        i alfabet języka."""
+        terms = self.terms
+        texts = [terms.coloring_book, terms.belongs_to, terms.age_phrase((0, 0)), terms.adults]
+        return "".join(sorted(set("".join(texts) + self.alphabet) - set(" 0123456789")))
+
+
+class LargeTrim(_Strict):
+    width_over_in: Annotated[float, Field(gt=0)]
+    height_over_in: Annotated[float, Field(gt=0)]
+
+
+class MarketsConfig(_Strict):
+    sources: dict[str, str]
+    checked: date
+    large_trim: LargeTrim
+    pricing_groups: dict[str, MarketPricing] = {}
+    markets: dict[str, MarketProfile]
+
+    @model_validator(mode="after")
+    def _groups_exist(self) -> Self:
+        if not self.markets:
+            raise ValueError("brak rynków w markets.yaml")
+        for key, market in self.markets.items():
+            if market.pricing_group is not None and market.pricing_group not in self.pricing_groups:
+                raise ValueError(
+                    f"rynek '{key}': nieznana pricing_group '{market.pricing_group}' "
+                    f"(dostępne: {', '.join(self.pricing_groups) or '-'})"
+                )
+        return self
+
+    def pricing(self, key: str) -> MarketPricing:
+        """Dane cenowe FR-16 rynku: własne albo z jego grupy."""
+        market = self.markets[key]
+        if market.pricing_group is not None:
+            return self.pricing_groups[market.pricing_group]
+        assert market.currency and market.printing_cost and market.royalty
+        return MarketPricing(
+            currency=market.currency, printing_cost=market.printing_cost, royalty=market.royalty
+        )
+
+
 class AppConfig(_Strict):
     ages: dict[str, AgeProfile]
     styles: dict[str, StyleProfile]
     formats: dict[str, FormatProfile]
     settings: Settings
+    markets: MarketsConfig
 
     @model_validator(mode="after")
     def _references_exist(self) -> Self:
@@ -436,7 +583,38 @@ class AppConfig(_Strict):
             unknown = [a for a in style.allowed_ages or [] if a not in self.ages]
             if unknown:
                 raise ValueError(f"styl '{key}': allowed_ages zawiera nieznany wiek {unknown}")
+        if self.settings.default_market not in self.markets.markets:
+            raise ValueError(
+                f"default_market '{self.settings.default_market}' nie ma w markets.yaml "
+                f"(dostępne: {', '.join(self.markets.markets)})"
+            )
         return self
+
+    def belongs_to_text(self, market: str) -> str:
+        """Napis strony FR-14: ręczny z settings.yaml albo z `terms` rynku książki (FR-19)."""
+        text = self.settings.belongs_to_page.text
+        return text if text is not None else self.markets.markets[market].terms.belongs_to
+
+    def belongs_to_settings(self, market: str) -> BelongsToSettings:
+        """Ustawienia strony FR-14 z napisem i czcionką ustalonymi dla rynku książki."""
+        return self.for_market(market).settings.belongs_to_page
+
+    def for_market(self, market: str) -> AppConfig:
+        """Konfiguracja dla książki na danym rynku (FR-19): napis strony FR-14 z `terms`
+        i czcionka rynku (`font`) zamiast czcionek strony FR-14 i tytułu okładki."""
+        profile = self.markets.markets[market]
+        page_update: dict[str, Any] = {"text": self.belongs_to_text(market)}
+        cover_update: dict[str, Any] = {}
+        if profile.font is not None:
+            page_update["font"] = profile.font
+            cover_update["title_font"] = profile.font
+        settings = self.settings.model_copy(
+            update={
+                "belongs_to_page": self.settings.belongs_to_page.model_copy(update=page_update),
+                "cover": self.settings.cover.model_copy(update=cover_update),
+            }
+        )
+        return self.model_copy(update={"settings": settings})
 
 
 def resolve_config_dir(config_dir: Path | None = None) -> Path:
@@ -461,11 +639,11 @@ def _read_yaml(path: Path) -> Any:
 
 
 def load_config(config_dir: Path | None = None) -> AppConfig:
-    """Wczytuje ages/styles/formats/settings.yaml i waliduje ich schemat."""
+    """Wczytuje ages/styles/formats/settings/markets.yaml i waliduje ich schemat."""
     directory = resolve_config_dir(config_dir)
     raw = {
         name: _read_yaml(directory / f"{name}.yaml")
-        for name in ("ages", "styles", "formats", "settings")
+        for name in ("ages", "styles", "formats", "settings", "markets")
     }
     try:
         return AppConfig.model_validate(raw)

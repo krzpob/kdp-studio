@@ -55,11 +55,25 @@ def test_prompt_contains_profiles_and_count(repo_config: AppConfig) -> None:
     assert "scenes with several characters: not required" in user  # przedszkole
 
 
-def test_prompt_uses_metadata_language_from_settings(repo_config: AppConfig) -> None:
-    settings = repo_config.settings.model_copy(update={"metadata_language": "Polish"})
-    config = repo_config.model_copy(update={"settings": settings})
-    system, _ = build_prompts(_spec(), config)
-    assert "keywords in Polish" in system
+@pytest.mark.parametrize(
+    ("market", "language", "word", "audience"),
+    [
+        ("US", "American English", "Coloring Book", "for Kids Ages 3–5"),
+        ("UK", "British English", "Colouring Book", "for Kids Ages 3–5"),
+        ("DE", "German", "Malbuch", "für Kinder von 3 bis 5 Jahren"),
+    ],
+)
+def test_prompt_uses_the_market_language(
+    repo_config: AppConfig, market: str, language: str, word: str, audience: str
+) -> None:
+    system, _ = build_prompts(_spec(market=market), repo_config)
+    domain = repo_config.markets.markets[market].domain
+    assert f"sold on {domain}" in system
+    assert f"keywords in {language}," in system
+    assert f'Call the book a "{word}"' in system
+    assert f'write it as "{audience}"' in system
+    adults, _ = build_prompts(_spec(market=market, age="dorosli", style="mandala"), repo_config)
+    assert repo_config.markets.markets[market].terms.adults in adults
 
 
 def test_prompt_follows_format(repo_config: AppConfig) -> None:
