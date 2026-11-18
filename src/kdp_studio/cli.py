@@ -3183,6 +3183,42 @@ def _cover_qa(
     return result, None, usage, ExitCode.OK if result.passed else ExitCode.PARTIAL
 
 
+def _cover_cost_text(run: _CoverRun, cost: float) -> str:
+    """Koszt okładki i, przy osobnym `cover`, koszt całej książki względem limitu (FR-10)."""
+    costs = run.costs
+    text = f"Koszt okładki: {format_usd(cost)}"
+    if costs is not None:
+        text += f"; książka: {format_usd(costs.total)} z limitu {format_usd(costs.limit_usd)}"
+    return f"{text}."
+
+
+def _record_failed_cover(
+    run: _CoverRun, error: Exception, selection_info: CoverSelectionInfo | None
+) -> None:
+    """Nieudana okładka w manifeście, z kosztem wywołań modeli doliczonym do książki."""
+    costs, pick = run.costs, run.pick
+    cost = costs.spent - run.cost_start if costs is not None else 0.0
+    run.writer.manifest.cover = CoverInfo(
+        status="failed",
+        error=str(error),
+        geometry=run.geometry.summary(),
+        front_page=pick.front.name,
+        thumbnails=[p.name for p in pick.thumbs],
+        selection=pick.selection,
+        selection_info=selection_info,
+        title=run.ideas.book.title,
+        subtitle=run.ideas.book.subtitle,
+        spine_text=False,
+        front=_front_info(run.target, run.colorizer, None),
+        back=_back_info(run.target, run.painter, None),
+        cost_usd=round(cost, 6),
+    )
+    run.writer.manifest.cost_usd = round(run.writer.manifest.cost_usd + cost, 6)
+    run.writer.save()
+    if costs is not None:
+        typer.echo(_cover_cost_text(run, cost))
+
+
 def _make_cover(run: _CoverRun) -> ExitCode:
     target, writer, geometry, config = run.target, run.writer, run.geometry, run.config
     colorizer, painter, costs, pick = run.colorizer, run.painter, run.costs, run.pick
@@ -3206,9 +3242,15 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             colorizer.prompt = color_prompt(
                 run.spec, config, front_idea.scene if front_idea is not None else None
             )
+            limit = (
+                f"limit książki {format_usd(costs.limit_usd)}, wydano dotąd "
+                f"{format_usd(costs.total)}"
+                if costs is not None
+                else "bez limitu"
+            )
             typer.echo(
                 f"Koloruję przód ({colorizer.provider.name}, {colorizer.provider.model}, jakość "
-                f"{colorizer.quality}, limit {format_usd(costs.limit_usd if costs else 0)})…"
+                f"{colorizer.quality}, {limit})…"
             )
         build = build_cover(
             geometry,
@@ -3229,27 +3271,14 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             if isinstance(e, ProviderError)
             else ExitCode.PARTIAL
         )
-        cost = costs.spent - run.cost_start if costs is not None else 0.0
-        writer.manifest.cover = CoverInfo(
-            status="failed",
-            error=str(e),
-            geometry=geometry.summary(),
-            front_page=pick.front.name,
-            thumbnails=[p.name for p in pick.thumbs],
-            selection=pick.selection,
-            selection_info=selection_info,
-            title=title,
-            subtitle=subtitle,
-            spine_text=False,
-            front=_front_info(target, colorizer, None),
-            back=_back_info(target, painter, None),
-            cost_usd=round(cost, 6),
-        )
-        writer.manifest.cost_usd = round(writer.manifest.cost_usd + cost, 6)
-        writer.save()
+        _record_failed_cover(run, e, selection_info)
         _fail_lines([f"okładka: {e}", f"spróbuj ponownie: kdp-studio cover {target}"])
         return code
     except (CoverError, FontError) as e:
+        # Błąd układu może przyjść już po kolorowaniu i wyborze stron: wydane pieniądze
+        # muszą trafić do kosztu książki (FR-10), inaczej następne uruchomienie liczy za mało.
+        if costs is not None and costs.spent > run.cost_start:
+            _record_failed_cover(run, e, selection_info)
         raise _fail([f"okładka: {e}"]) from e
     out = target / COVER_DIR
     out.mkdir(exist_ok=True)
@@ -3398,7 +3427,7 @@ def _make_cover(run: _CoverRun) -> ExitCode:
             f"{seam_text})."
         )
     if costs is not None:
-        typer.echo(f"Koszt okładki: {format_usd(info.cost_usd)}.")
+        typer.echo(_cover_cost_text(run, info.cost_usd))
     typer.echo(
         f"Tytuł w miniaturze {settings.thumbnail_check_px} px: litery {build.title_thumb_px:g} px, "
         f"kontrast {build.title_contrast:g}:1."

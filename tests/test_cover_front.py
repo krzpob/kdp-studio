@@ -16,8 +16,11 @@ from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
 from kdp_studio.config import AppConfig, KdpCover
 from kdp_studio.models import BookSpec
+from kdp_studio.pipeline import cover as cover_module
 from kdp_studio.pipeline.cmyk import NaiveConverter
+from kdp_studio.pipeline.cost import format_usd
 from kdp_studio.pipeline.cover import (
+    CoverError,
     CoverLayers,
     apply_front_color,
     build_cover,
@@ -402,7 +405,10 @@ def test_cover_colorizes_front(
     capsys.readouterr()
     assert main(["cover", ARG, "--image-quality", "low", "--no-select-pages"]) == ExitCode.OK
     out = capsys.readouterr().out
-    assert "Koloruję przód (fake, fake-image, jakość low, limit $5.00)" in out
+    assert (
+        f"Koloruję przód (fake, fake-image, jakość low, limit książki $5.00, wydano dotąd "
+        f"{format_usd(before)})"
+    ) in out
     assert "Przód pokolorowany (1 próba, zgodność konturów 100%, nałożone kontury 300 DPI)" in out
     assert "Tytuł w miniaturze 160 px: litery " in out
     req, back = coloring.requests
@@ -428,6 +434,44 @@ def test_cover_colorizes_front(
     assert cover["cost_usd"] == pytest.approx(expected)
     assert data["cost_usd"] == pytest.approx(before + expected)
     assert (BOOK / "cover" / "raw" / "front_sketch.png").is_file()
+    # Osobne `cover` pokazuje też koszt całej książki, nie tylko swój (FR-10).
+    assert (
+        f"Koszt okładki: {format_usd(expected)}; książka: {format_usd(before + expected)} "
+        "z limitu $5.00."
+    ) in out
+
+
+def test_layout_error_after_coloring_keeps_the_cost(
+    coloring: ColoringProvider, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Błąd układu po kolorowaniu (np. „title poza swoją strefą”): wydatek trafia do książki."""
+
+    def misplaced(build: Any, geometry: Any) -> None:
+        raise CoverError("title poza swoją strefą")
+
+    monkeypatch.setattr(cover_module, "check_placements", misplaced)
+    before = _manifest()["cost_usd"]
+    capsys.readouterr()
+    assert main(["cover", ARG, "--no-select-pages"]) == ExitCode.VALIDATION_ERROR
+    captured = capsys.readouterr()
+    assert "okładka: title poza swoją strefą" in captured.err
+    data = _manifest()
+    spent = data["cover"]["cost_usd"]
+    assert spent > 0 and data["cover"]["status"] == "failed"
+    assert data["cost_usd"] == pytest.approx(before + spent)
+    assert f"książka: {format_usd(before + spent)} z limitu" in captured.out
+
+
+def test_layout_error_without_spending_leaves_the_manifest(
+    coloring: ColoringProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def misplaced(build: Any, geometry: Any) -> None:
+        raise CoverError("title poza swoją strefą")
+
+    monkeypatch.setattr(cover_module, "check_placements", misplaced)
+    before = _manifest()["cost_usd"]
+    assert main(["cover", ARG, "--no-color", "--no-select-pages"]) == ExitCode.VALIDATION_ERROR
+    assert _manifest().get("cover") is None and _manifest()["cost_usd"] == before
 
 
 def test_no_color_makes_a_sketch_without_api(
