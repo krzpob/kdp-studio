@@ -44,6 +44,7 @@ from kdp_studio.pipeline.cover import (
     check_placements,
     front_crop,
     line_width_px,
+    place_titles,
     preview,
     thumbnail_grid,
 )
@@ -339,6 +340,23 @@ def test_long_title_that_cannot_fit_is_an_error(tmp_path: Path, repo_config: App
             "Supercalifragilisticexpialidocious" * 4,
             "",
         )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Christmas Trucks Coloring Book",  # 104 strony, kwadrat: tytuł wystawał o 1 px
+        "Dinosaur Friends",
+        "Magical Christmas: Santa and His Little Helpers Coloring Book",
+    ],
+)
+def test_scaled_title_stays_inside_the_front_zone(repo_config: AppConfig, title: str) -> None:
+    geometry = _geometry((8.5, 8.5), 104)
+    layers = CoverLayers.blank(geometry.size_px)
+    info = place_titles(layers, geometry, repo_config.settings.cover, title, "for Kids Ages 6–8")
+    left, top, right, bottom = geometry.px(geometry.key_front)
+    for x0, y0, x1, y1 in info.placements.values():
+        assert left <= x0 and top <= y0 and x1 <= right and y1 <= bottom
 
 
 def test_placement_check_catches_barcode_overlap() -> None:

@@ -14,6 +14,7 @@ opcjonalny opis na tyle (`back_text`) nad miniaturami.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -154,14 +155,20 @@ def _paste_mask(layers: CoverLayers, mask: Image.Image, origin: tuple[int, int])
 def _fit_font(
     settings: CoverSettings, text: str, size: int, max_width: int
 ) -> ImageFont.FreeTypeFont:
+    """Czcionka `size`, zmniejszona tak, żeby napis miał najwyżej `max_width` px. Szerokość nie
+    rośnie liniowo z rozmiarem (hinting), więc po przeskalowaniu zmniejsza jeszcze po punkcie."""
+
+    def width(font: ImageFont.FreeTypeFont) -> float:
+        x0, _, x1, _ = font.getbbox(text)
+        return x1 - x0
+
     font = load_font(settings.title_font_path, size, settings.title_font_variation)
-    width = font.getbbox(text)[2] - font.getbbox(text)[0]
-    if width > max_width:
-        font = load_font(
-            settings.title_font_path,
-            max(1, int(size * max_width / width)),
-            settings.title_font_variation,
-        )
+    if width(font) > max_width:
+        size = max(1, int(size * max_width / width(font)))
+        font = load_font(settings.title_font_path, size, settings.title_font_variation)
+        while size > 1 and width(font) > max_width:
+            size -= 1
+            font = load_font(settings.title_font_path, size, settings.title_font_variation)
     return font
 
 
@@ -219,9 +226,12 @@ def _outlined(text: str, font: ImageFont.FreeTypeFont, radius: int) -> _Text:
 
 
 def _resized(text: _Text, scale: float) -> _Text:
+    """Maski zmniejszone `scale` razy. Wymiary w dół (floor): zaokrąglenie w górę sumuje się
+    po liniach i tytuł wystawał o piksel ponad pas, czyli poza strefę bezpieczną."""
+
     def shrink(mask: np.ndarray) -> np.ndarray:
         h, w = mask.shape
-        size = (max(1, round(w * scale)), max(1, round(h * scale)))
+        size = (max(1, math.floor(w * scale)), max(1, math.floor(h * scale)))
         return np.asarray(
             cv2.resize(mask.astype(np.uint8), size, interpolation=cv2.INTER_NEAREST) > 0
         )
@@ -289,10 +299,10 @@ def place_titles(
     if scale < 1.0:  # pas za niski: zmniejsz wszystko proporcjonalnie
         texts = [_resized(t, scale) for t in texts]
         sub_text = _resized(sub_text, scale) if sub_text is not None else None
-        line_gap = round(line_gap * scale)
+        line_gap = math.floor(line_gap * scale)
 
     placements: dict[str, RectPx] = {}
-    y = top + (band - top - total()) // 2
+    y = top + max(0, band - top - total()) // 2
     rects = []
     fill = settings.title_fill_rgb
     for text in texts:
