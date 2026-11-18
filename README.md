@@ -92,6 +92,14 @@ uv run kdp-studio front-matter output/<książka> [--first-page title|belongs-to
 uv run kdp-studio finalize output/<książka>
 ```
 
+### Wnętrze książki i tryb druku (FR-22)
+
+`finalize` składa `interior.pdf`, gotowe wnętrze do wgrania w KDP: strony wstępne, potem kolorowanki. Domyślnie druk jest jednostronny: każda grafika stoi na prawej stronie z pustym tyłem, bo flamastry przebijają. `--double-sided` daje grafiki jedna po drugiej (mniej stron, cieńszy grzbiet i niższy koszt druku). Tryb wybierasz w `ideas`/`generate` albo zmieniasz później w `finalize`; zmiana liczby stron może zmienić margines od grzbietu, więc `finalize` obrabia wtedy strony ponownie i ostrzega, że okładkę trzeba zrobić od nowa. PDF powstaje tylko wtedy, gdy wszystkie strony są gotowe, i tylko dla książek ze stronami wstępnymi FR-23. `canva.md` zostaje jako ręczna droga.
+
+```bash
+uv run kdp-studio finalize output/<książka> [--single-sided|--double-sided]
+```
+
 ### Rynek Amazona (FR-19)
 
 Książka powstaje dla jednego rynku Amazona: `--market US|UK|CA|AU|DE|FR|ES|IT|NL|PL|SE|JP` w `ideas` albo `generate` (domyślnie `default_market: US` z `config/settings.yaml`). Od rynku zależą odmiana języka tytułu, opisu i słów kluczowych („Coloring Book” na US, „Colouring Book” na UK), napis strony „This book belongs to…” i dane cenowe (FR-16). Prompty obrazów i opisy scen zostają po angielsku. Słowa z innej odmiany angielskiego (np. „color” w książce na UK) program poprawia w metadanych sam i wypisuje ostrzeżenie. Lista rynków: `uv run kdp-studio profiles market`; dane rynków są w `config/markets.yaml`. Ta sama kolorowanka na inny rynek to osobna książka (katalog z przyrostkiem, np. `…_square_uk`).

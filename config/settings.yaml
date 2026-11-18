@@ -18,6 +18,15 @@ front_matter:
   copyright_pt: 12              # blok praw autorskich nad dolnym marginesem; za długi tekst program
   copyright_min_pt: 9           # zmniejsza najwyżej do copyright_min_pt, potem błąd (kod 1)
 
+# Wnętrze książki (FR-22). Druk jednostronny (D8): każda grafika na stronie nieparzystej
+# (prawej) z pustym tyłem, bo kredki i flamastry przebijają; dwustronny: grafiki jedna po
+# drugiej. Wartość należy do książki (manifest input.single_sided), finalize może ją zmienić.
+# finalize składa interior.pdf (strony wstępne FR-23, grafiki, puste strony), gdy wszystkie
+# strony są gotowe; pdf: false go wyłącza.
+interior:
+  single_sided: true            # --single-sided/--double-sided w ideas, generate i finalize
+  pdf: true
+
 # Właściciel praw autorskich ({owner} na stronie praw, FR-23): pseudonim, imię i nazwisko albo
 # firma; --copyright-owner w ideas i generate nadpisuje. Bez niego nowa książka nie powstanie.
 publisher:

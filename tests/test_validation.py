@@ -124,9 +124,28 @@ def test_exactly_kdp_minimum_has_no_warning(repo_config: AppConfig) -> None:
 def test_below_kdp_minimum_warns_with_minimal_page_count(repo_config: AppConfig) -> None:
     result = _validate(repo_config, pages=10)  # 10 × 2 + 2 = 22
     assert result.warnings == [
-        "książka będzie miała 22 strony (10 grafik × 2 + 2 strony wstępne), "
-        "a minimum KDP to 24. Ustaw --pages na co najmniej 11"
+        "książka będzie miała 22 strony (10 grafik × 2 przy druku jednostronnym + "
+        "2 strony wstępne), a minimum KDP to 24. Ustaw --pages na co najmniej 11"
     ]
+
+
+def test_double_sided_counts_one_page_per_image(repo_config: AppConfig) -> None:
+    result = _validate(repo_config, pages=21, single_sided=False)  # 2 + 21 = 23 → 24
+    assert result.warnings == []
+    assert result.spec.pages_in_book == 24
+    assert not result.spec.single_sided
+
+
+def test_double_sided_below_kdp_minimum(repo_config: AppConfig) -> None:
+    result = _validate(repo_config, pages=12, single_sided=False)  # 2 + 12 = 14
+    assert result.warnings == [
+        "książka będzie miała 14 stron (12 grafik × 1 przy druku dwustronnym + "
+        "2 strony wstępne), a minimum KDP to 24. Ustaw --pages na co najmniej 22"
+    ]
+
+
+def test_print_mode_defaults_to_settings(repo_config: AppConfig) -> None:
+    assert _validate(repo_config, pages=12).spec.single_sided is True
 
 
 def test_below_kdp_minimum_with_strict_is_an_error(repo_config: AppConfig) -> None:

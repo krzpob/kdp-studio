@@ -64,7 +64,7 @@ def test_valid_input_exits_ok(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([*BASE, "--format", "square", "--pages", "30"]) == ExitCode.OK
     out, err = capsys.readouterr()
     assert "Parametry poprawne" in out
-    assert "30 grafik (62 strony książki)" in out
+    assert "30 grafik (62 strony książki, druk jednostronny)" in out
     assert err == ""
 
 
@@ -476,6 +476,7 @@ def test_root_has_only_page_pngs(capsys: pytest.CaptureFixture[str]) -> None:
     names = sorted(p.name for p in BOOK_DIR.iterdir() if p.is_file())
     assert names == sorted(
         ["canva.md", "ideas.json", "kdp-studio.log", "manifest.json", "prompts.json"]
+        + ["interior.pdf"]  # FR-22
         + ["front_copyright.png", "front_title.png"]  # FR-08: tylko strony front_* i page_*
         + [f"page_{i:02d}.png" for i in range(1, 13)]
     )

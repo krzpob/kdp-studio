@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from kdp_studio.config import AppConfig
-from kdp_studio.models import PAGES_MAX, PAGES_MIN, BookSpec, pages_in_book
+from kdp_studio.models import PAGES_MAX, PAGES_MIN, BookSpec, pages_in_book, pages_per_image
 
 KDP_MIN_BOOK_PAGES = 24  # minimum KDP dla paperbacka
 
@@ -26,9 +26,37 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def min_pages_for_kdp(front_matter_pages: int) -> int:
+def min_pages_for_kdp(front_matter_pages: int, single_sided: bool = True) -> int:
     """Najmniejsza liczba grafik, przy której książka ma co najmniej 24 strony."""
-    return max(PAGES_MIN, math.ceil((KDP_MIN_BOOK_PAGES - front_matter_pages) / 2))
+    per_image = pages_per_image(single_sided)
+    return max(PAGES_MIN, math.ceil((KDP_MIN_BOOK_PAGES - front_matter_pages) / per_image))
+
+
+def check_page_count(
+    pages: int, front: int, single_sided: bool, config: AppConfig
+) -> tuple[list[str], list[str]]:
+    """FR-02: błędy i ostrzeżenia o liczbie stron książki (minimum KDP, tabela marginesów).
+    Komunikat o minimum zwraca jako ostrzeżenie; `--strict` robi z niego błąd."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    total = pages_in_book(pages, front, single_sided)
+    if total < KDP_MIN_BOOK_PAGES:
+        per_image = pages_per_image(single_sided)
+        mode = "druku jednostronnym" if single_sided else "druku dwustronnym"
+        warnings.append(
+            f"książka będzie miała {plural(total, 'stronę', 'strony', 'stron')} "
+            f"({plural(pages, 'grafika', 'grafiki', 'grafik')} × {per_image} przy {mode} + "
+            f"{plural(front, 'strona wstępna', 'strony wstępne', 'stron wstępnych')}), "
+            f"a minimum KDP to {KDP_MIN_BOOK_PAGES}. "
+            f"Ustaw --pages na co najmniej {min_pages_for_kdp(front, single_sided)}"
+        )
+    max_pages = config.settings.kdp_margins.max_pages
+    if total > max_pages:
+        errors.append(
+            f"--pages: książka miałaby {plural(total, 'stronę', 'strony', 'stron')}, a tabela "
+            f"marginesów KDP (kdp_margins w settings.yaml) kończy się na {max_pages}"
+        )
+    return errors, warnings
 
 
 def plural(n: int, one: str, few: str, many: str) -> str:
@@ -65,6 +93,7 @@ def validate_book_spec(
     config: AppConfig,
     market: str | None = None,
     instructions: bool | None = None,
+    single_sided: bool | None = None,
 ) -> ValidationResult:
     """Sprawdza wszystkie parametry i zwraca BookSpec z ostrzeżeniami.
 
@@ -99,26 +128,16 @@ def validate_book_spec(
     # FR-23: strona 1 i prawa autorskie, z instrukcją także instrukcja i pusta strona za nią.
     front_matter = config.settings.front_matter
     front = front_matter.pages if instructions is None else (4 if instructions else 2)
+    if single_sided is None:
+        single_sided = config.settings.interior.single_sided
     if pages_ok:
-        total = pages_in_book(pages, front)
-        if total < KDP_MIN_BOOK_PAGES:
-            message = (
-                f"książka będzie miała {plural(total, 'stronę', 'strony', 'stron')} "
-                f"({plural(pages, 'grafika', 'grafiki', 'grafik')} × 2 + "
-                f"{plural(front, 'strona wstępna', 'strony wstępne', 'stron wstępnych')}), "
-                f"a minimum KDP to {KDP_MIN_BOOK_PAGES}. "
-                f"Ustaw --pages na co najmniej {min_pages_for_kdp(front)}"
-            )
+        count_errors, count_warnings = check_page_count(pages, front, single_sided, config)
+        errors += count_errors
+        for message in count_warnings:
             if strict:
                 errors.append(f"--pages: {message} (--strict)")
             else:
                 warnings.append(message)
-        max_pages = config.settings.kdp_margins.max_pages
-        if total > max_pages:
-            errors.append(
-                f"--pages: książka miałaby {plural(total, 'stronę', 'strony', 'stron')}, a tabela "
-                f"marginesów KDP (kdp_margins w settings.yaml) kończy się na {max_pages}"
-            )
 
     if errors:
         raise InputValidationError(errors)
@@ -132,5 +151,6 @@ def validate_book_spec(
         pages=pages,
         front_matter_pages=front,
         market=market,
+        single_sided=single_sided,
     )
     return ValidationResult(spec=spec, warnings=warnings)

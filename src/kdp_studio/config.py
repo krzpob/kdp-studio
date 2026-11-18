@@ -267,6 +267,13 @@ class FrontMatterSettings(_Strict):
         return 4 if self.instructions else 2
 
 
+class InteriorSettings(_Strict):
+    """Wnętrze książki (FR-22): tryb druku i `interior.pdf`."""
+
+    single_sided: bool = True  # --single-sided/--double-sided; D8: grafika z pustym tyłem
+    pdf: bool = True  # finalize składa interior.pdf, gdy wszystkie strony są gotowe
+
+
 class PublisherSettings(_Strict):
     # Właściciel praw autorskich (`{owner}` na stronie praw, FR-23); --copyright-owner nadpisuje.
     copyright_owner: Annotated[str, Field(min_length=1)] | None = None
@@ -494,6 +501,7 @@ class CoverSettings(_Strict):
 
 class Settings(_Strict):
     front_matter: FrontMatterSettings = FrontMatterSettings()  # FR-23
+    interior: InteriorSettings = InteriorSettings()  # FR-22
     publisher: PublisherSettings = PublisherSettings()
     title_page: TitlePageSettings = TitlePageSettings()
     instructions: InstructionsSettings = InstructionsSettings()

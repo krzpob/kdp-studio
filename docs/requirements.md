@@ -35,7 +35,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
 | FR-20 | ⬜ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
-| FR-22 | ⬜ | | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
+| FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
@@ -1135,7 +1135,7 @@ names:
 - Moduł `pipeline/protected.py`: `ProtectedNames` z konfiguracji, `find(text) -> list[Hit]` i wspólna funkcja składania znaków z `slugify`.
 - Pola `protected_terms` i `generic_theme` w `_LLMIdeas` (opcjonalne przy wczytywaniu, żeby stare `ideas.json` działały). Werdykt kodu dla pomysłu przechodzi przez `IdeaReviewer._apply()`.
 - Testy: odmiany polskie, „legowisko” bez trafienia, samo „Kubuś” bez trafienia, ponowienie z informacją zwrotną, nazwa w ręcznie poprawionym `ideas.json` (kod 1), `--strict` (kod 1 bez wywołań API), kryterium QA w `FakeVisionProvider`, wyjątek `public_domain` (dozwolony styl i rynek: imiona tylko w tytułach stron; styl spoza listy albo inny rynek: temat ogólny z powodem w konsoli; nowy styl domyślnie zablokowany).
-### ⬜ FR-22: Wnętrze książki jako PDF i druk jednostronny (poza MVP)
+### ✅ FR-22: Wnętrze książki jako PDF i druk jednostronny (poza MVP)
 
 Cel: program składa gotowy plik wnętrza `interior.pdf` do wgrania w KDP, zamiast ręcznego składania w Canvie (D9). Strony wstępne opisuje FR-23.
 
@@ -1165,6 +1165,16 @@ Cel: program składa gotowy plik wnętrza `interior.pdf` do wgrania w KDP, zamia
 **Uwagi do implementacji**
 - `pipeline/interior.py`: `interior_layout(manifest) -> list[str | None]` (czysta funkcja, łatwa do testów obu trybów) i zapis przez `pipeline/pdf.py`.
 - Testy: kolejność stron w obu trybach, z instrukcją i bez; wyrównanie do parzystej; zmiana trybu w `finalize` (przeliczenie stron przy zmianie marginesu, ostrzeżenie o okładce); brak PDF przy niegotowych stronach; kontrola po zapisie.
+
+**Implementacja (18.11.2026)**
+- **Tryb druku:** `--single-sided/--double-sided` w `ideas`, `generate` i `finalize`, domyślnie `interior.single_sided` z `settings.yaml`; `input.single_sided` w manifeście (stare książki: `true`). `ideas <katalog> --redo` go nie przyjmuje. `finalize` ze zmianą trybu sprawdza liczbę stron jak FR-02 (ponad tabelę marginesów: kod 1, poniżej 24: ostrzeżenie), zapisuje nowy tryb i przelicza geometrię; strony, którym zmienił się margines, obrabia ponownie przez hash obróbki (FR-17), razem ze stronami wstępnymi. Gdy `manifest.cover` jest dla innej liczby stron, `finalize` ostrzeża i podaje `kdp-studio cover`.
+- **Liczenie stron:** `models.pages_in_book(pages, front_matter_pages, single_sided)` zaokrągla w górę do parzystej; ostrzeżenie FR-02 podaje mnożnik i tryb druku, a `min_pages_for_kdp()` liczy minimum dla obu trybów.
+- **`pipeline/interior.py`:** `interior_layout()` (czysta funkcja manifestu; `front_matter_files()` przeniesione z `canva.py`), `blank_run_problems()` (najwyżej 4 puste z rzędu, 10 na końcu), `layout_problems()` (parzysta, ≥ 24, równa `layout.pages_in_book`, pierwsza kolorowanka na stronie nieparzystej), `write_interior()` i `verify_interior()` (czyta zapisany plik: liczba stron, wymiary, puste strony tam, gdzie w układzie).
+- **`pipeline/pdf.py`:** `bilevel_pdf()` przyjmuje generator stron, więc w pamięci jest naraz jedna strona; strona z obrazem ma `MediaBox` = `TrimBox` formatu i obraz 1-bit DeviceGray Flate, pusta nie ma `/Contents`. Bez `/Info`, adnotacji i zakładek. Wspólny zapis xref z `cover.pdf`. 102 strony kwadratowe 300 DPI: 2,5 MB, około 7 s.
+- **Kiedy powstaje:** tylko w książce ze stronami wstępnymi FR-23 (z właścicielem praw); starsza dostaje komunikat, jak je dodać (`front-matter --copyright-owner`). Brakujące strony, zły układ albo nieudana kontrola to ostrzeżenie (kod wyjścia bez zmian) i usunięcie nieaktualnego `interior.pdf` oraz wpisu w manifeście, żeby nie wgrać do KDP starego wnętrza. Te same strony (hash kolejności i plików `inputs_sha256`) nie zapisują pliku od nowa.
+- **Manifest → `interior`:** `file`, `pages`, `single_sided`, `sha256`, `inputs_sha256`, `order`, `created_at`. `cover` liczy grzbiet z `interior.pages`, jeśli PDF powstał.
+- **`canva.md`:** najpierw wskazuje `interior.pdf` (albo mówi, że jeszcze nie powstał), tryb druku w opisie i w kroku 5, tabela kolejności z `interior_layout()`.
+- **Bez zmian:** FR-20 (`--config-file`) nie istnieje, więc klucz `single_sided` w pliku książki dojdzie z nim.
 
 ### ✅ FR-23: Strony wstępne: pierwsza strona, prawa autorskie, instrukcja (poza MVP)
 
@@ -1259,7 +1269,7 @@ texts:
 - Testy: wybór tłumaczenia (`en-GB` → `en`) i wariantu (`minimal`, `short`, `full`), brak tłumaczenia lub właściciela praw (kod 1 bez API), blok praw autorskich nad dolnym marginesem i zmniejszanie czcionki, strona 1 bez `front-matter` (sam tytuł), układ zapasowy instrukcji, zmiana `--no-instructions` (2 strony wstępne zamiast 4).
 
 **Implementacja (18.11.2026)**
-- **Kolejność:** FR-23 przed FR-22. Strony wstępne powstają jako pliki PNG (dla Canvy i dla przyszłego `interior.pdf`); do FR-22 zostają `interior.pdf`, `--single-sided/--double-sided` i kolejność z pustymi tyłami.
+- **Kolejność:** FR-23 przed FR-22. Strony wstępne powstają jako pliki PNG (dla Canvy i dla `interior.pdf` z FR-22).
 - **Polecenie `front-matter`:** opcje ze specyfikacji oraz `--copyright` i `--copyright-owner`, żeby dało się dodać strony wstępne do książki zrobionej przed FR-23. `generate` ma krok „strony wstępne” między `images` a `finalize`, włączany `--front-matter/--no-front-matter` (`front_matter.in_generate`, domyślnie tak); `--first-page`, `--instructions/--no-instructions`, `--copyright`, `--copyright-owner` jak w spec. `--belongs-to-page` to skrót dla `--first-page belongs-to`, a `--no-belongs-to-page` dla `--first-page title`. `belongs-to` w książce FR-23 ustawia stronę 1 i usuwa tytułową.
 - **Ustawienia:** `front_matter` (`first_page`, `instructions`, `copyright`, `in_generate`, `text_font`, `copyright_pt`, `copyright_min_pt`), `publisher.copyright_owner`, `title_page`, `instructions`. `front_matter_pages` przestaje być ustawieniem (2 albo 4 z `instructions`), a `belongs_to_page.enabled` znika. Manifest: `input.copyright`, `input.copyright_owner`, `input.first_page`, `input.instructions`; `front_matter.title`, `front_matter.instructions` (wpisy jak FR-14, układy `frame`, `fallback`, a dla strony 1 bez modelu `text_only`) i `front_matter.copyright` (język, wariant, właściciel, rok, hash tekstu).
 - **Czcionki:** zwykły tekst Noto Sans (SIL OFL, `assets/fonts/NotoSans-Variable.ttf`, pobrana 18.11.2026; polskie i niemieckie znaki), nagłówek instrukcji i tytuł strony 1 czcionką napisów rynku (Fredoka albo Baloo 2, FR-19) w wariancie `Bold`. Kontrola znaków jak w FR-19, także dla właściciela praw i tytułu.
@@ -1473,7 +1483,7 @@ kdp-studio price --format letter --pages 30 [--market US]
 
 ### 9.2 Konfiguracja i sekrety
 - Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
-- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, `front_matter_pages`, `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują plik parametrów książki (`--config-file`, FR-20), a ten nadpisuje `settings.yaml`. Plik książki nie przyjmuje sekretów.
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, strony wstępne `front_matter` (FR-23), wnętrze `interior` (FR-22), `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują plik parametrów książki (`--config-file`, FR-20), a ten nadpisuje `settings.yaml`. Plik książki nie przyjmuje sekretów.
 
 ### 9.3 Kody wyjścia
 
