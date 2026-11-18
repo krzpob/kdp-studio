@@ -149,6 +149,11 @@ Parametry techniczne opisuje sekcja 9. Wszystkie parametry można też podać w 
   - pasować do formatu: `square` to centralny obiekt lub kompozycja koncentryczna, `letter` to postać lub scena w pionie;
   - pasować do wieku: liczba obiektów i złożoność sceny zgodne z profilem wieku.
 - Treści nie mogą zawierać postaci chronionych prawem autorskim ani znaków towarowych. LLM dostaje to jako twarde ograniczenie, a temat z chronioną nazwą i kontrolę tekstów w kodzie opisuje FR-21.
+- **Tytuł, podtytuł i słowa kluczowe** (zmiana z 18.11.2026). Wyszukiwarka Amazona waży najbardziej tytuł i podtytuł, potem słowa kluczowe. Tytuł i podtytuł są też na okładce (FR-15), więc muszą się tam dobrze czytać. Prompt mówi to modelowi wprost i opisuje rolę każdego pola:
+  - **tytuł:** temat słowami, których szukają kupujący, z „Coloring Book” rynku (FR-19), gdy pasuje; krótki, cel do 60 znaków (KDP: dłuższe tytuły kupujący przeskakują);
+  - **podtytuł:** jedna grupa odbiorców dokładnie frazą rynku (np. „for Kids Ages 6–8”), opcjonalnie krótko, co jest w środku; jako zwykłe zdanie, bez listy grup rozdzielonych `|` albo przecinkami; cel do 80 znaków, czyli jeden lub dwa wiersze na okładce;
+  - **słowa kluczowe:** dokładnie 7 fraz, które wpisują kupujący, rozplanowanych: 2–3 na inne grupy odbiorców (zakresy wieku nachodzące na docelowy, np. „kids ages 5-8” albo „ages 4-8” dla 6–8, dziewczynki i chłopcy, przedszkole; dla dorosłych np. nastolatki i dorośli, seniorzy), 1–2 na okazje i zastosowania (prezent, święto, podróż, relaks), reszta na inne słowa tematu. Każda fraza dodaje co najmniej jedno słowo spoza tytułu i podtytułu; bez wariantów różniących się pisownią, interpunkcją, wielkością liter, kolejnością słów lub liczbą mnogą; bez znaków towarowych, ocen („best”), słów czasowych („new”) i nazw programów Amazona.
+- Kontrola w kodzie, bez dodatkowego wywołania: tytuł z podtytułem dłuższe niż 200 znaków (limit KDP) to ponowienie wywołania jak przy błędnych metadanych, a po wyczerpaniu prób kod 4. Ostrzeżenia (metadane zostają bez zmian, poprawia je użytkownik w `ideas.json` albo w KDP): podtytuł bez frazy odbiorców rynku, tytuł albo podtytuł dłuższy niż cel dla okładki, słowo kluczowe złożone tylko ze słów tytułu i podtytułu, wariant innego słowa kluczowego.
 
 ### ✅ FR-03a: Weryfikacja pomysłów przed generowaniem grafik
 - Domyślnie włączona (`review_ideas: true` w `settings.yaml`); `--no-review-ideas` wyłącza.
@@ -1645,6 +1650,11 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Ograniczenie: opis tekstowy zapewnia ten sam strój i znaki szczególne, ale twarz i proporcje różnią się między stronami. Pełną spójność dałaby karta postaci generowana raz i podawana jako `reference_image` do każdej strony.
 - Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
 - W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
+
+**Słowa kluczowe z danych o wyszukiwaniach**
+- Dziś słowa kluczowe wybiera model z samej wiedzy o rynku (FR-03). Narzędzia typu KDSpy czy Publisher Rocket pokazują, jak często kupujący wpisują daną frazę i ile książek z nią konkuruje.
+- Jeśli któreś z nich udostępnia API na warunkach, które pozwalają go używać w programie, generator mógłby dostawać listę kandydatów z liczbami i wybierać frazy z dużym ruchem i małą konkurencją, także do tytułu i podtytułu.
+- Do sprawdzenia przed wymaganiem: dostęp do API, licencja na użycie danych, koszt i rynki, które obejmuje.
 
 **`--scenes`: własne sceny zamiast wymyślonych**
 - Plik z listą scen podanych przez użytkownika zastępuje generowanie pomysłów (FR-03). Weryfikacja, prompty i dalsze kroki działają bez zmian.

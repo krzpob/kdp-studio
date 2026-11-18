@@ -5,8 +5,13 @@ from typing import Any
 import pytest
 
 from kdp_studio.config import AppConfig
-from kdp_studio.models import BookSpec
-from kdp_studio.pipeline.ideas import IdeaGenerator, build_prompts, reserve_count
+from kdp_studio.models import BookMetadata, BookSpec
+from kdp_studio.pipeline.ideas import (
+    IdeaGenerator,
+    build_prompts,
+    keyword_issues,
+    reserve_count,
+)
 from kdp_studio.providers.base import ProviderError, Usage
 from kdp_studio.providers.fake import FakeTextProvider
 from tests.conftest import llm_ideas_response
@@ -71,7 +76,7 @@ def test_prompt_uses_the_market_language(
     assert f"sold on {domain}" in system
     assert f"keywords in {language}," in system
     assert f'Call the book a "{word}"' in system
-    assert f'write it as "{audience}"' in system
+    assert f'written exactly as "{audience}"' in system
     adults, _ = build_prompts(_spec(market=market, age="dorosli", style="mandala"), repo_config)
     assert repo_config.markets.markets[market].terms.adults in adults
 
@@ -168,3 +173,68 @@ def test_elements_are_cleaned(repo_config: AppConfig) -> None:
     response["pages"][0]["elements"] = ["Tree", "tree", " ", "rock"]
     result, _ = _generate(repo_config, response)
     assert result.ideas.pages[0].elements == ["Tree", "rock"]
+
+
+# --- Tytuł, podtytuł i słowa kluczowe -------------------------------------------------
+
+
+def test_prompt_plans_title_subtitle_and_keywords(repo_config: AppConfig) -> None:
+    system, _ = build_prompts(_spec(), repo_config)
+    assert "Amazon search weighs the title and subtitle most" in system
+    assert "printed on the front cover" in system
+    assert 'no lists of audiences or words separated by "|"' in system
+    assert "never more than 200 characters" in system
+    assert "exactly 7 short phrases" in system
+    assert '"kids ages 5-8"' in system
+
+
+def test_too_long_title_and_subtitle_retries(repo_config: AppConfig) -> None:
+    long = llm_ideas_response(12, subtitle="x" * 190)
+    result, provider = _generate(repo_config, long, llm_ideas_response(12))
+    assert result.attempts == 2 and len(provider.calls) == 2
+
+
+def test_too_long_title_and_subtitle_after_all_attempts(repo_config: AppConfig) -> None:
+    long = llm_ideas_response(12, subtitle="x" * 190)
+    with pytest.raises(ProviderError, match="najwyżej 200"):
+        _generate(repo_config, long, long)
+
+
+def test_keyword_issues() -> None:
+    book = BookMetadata(
+        title="Dino Friends",
+        subtitle="A Coloring Book for Kids Ages 3–5",
+        description="Opis.",
+        keywords=[
+            "kids ages 2-5",  # dodaje 2
+            "coloring books for kids",  # tylko słowa z tytułu i podtytułu
+            "dinosaur gift",
+            "Dinosaur Gifts",  # wariant: wielkość liter i liczba mnoga
+            "gift dinosaur",  # wariant: kolejność słów
+        ],
+    )
+    assert keyword_issues(book) == [
+        "„coloring books for kids” (same słowa z tytułu i podtytułu)",
+        "„Dinosaur Gifts” (wariant innego słowa kluczowego)",
+        "„gift dinosaur” (wariant innego słowa kluczowego)",
+    ]
+
+
+def test_metadata_warnings_keep_the_keywords(repo_config: AppConfig) -> None:
+    response = llm_ideas_response(
+        12,
+        subtitle="Cute Dinosaurs " + "and Friends " * 7,
+        keywords=["dino friends", "preschool dinosaurs"],
+    )
+    result, _ = _generate(repo_config, response)
+    assert result.ideas.book.keywords == ["dino friends", "preschool dinosaurs"]
+    warnings = " | ".join(result.warnings)
+    assert "„dino friends” (same słowa z tytułu i podtytułu)" in warnings
+    assert "podtytuł nie podaje odbiorców („for Kids Ages 3–5”)" in warnings
+    assert "na okładce może być nieczytelny" in warnings
+
+
+def test_subtitle_with_the_audience_has_no_warnings(repo_config: AppConfig) -> None:
+    response = llm_ideas_response(12, subtitle="Big Dinosaurs for Kids Ages 3-5")
+    result, _ = _generate(repo_config, response)
+    assert result.warnings == []

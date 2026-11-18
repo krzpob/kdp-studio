@@ -81,7 +81,7 @@ def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
     return {
         "book": {
             "title": "Dino Friends",
-            "subtitle": "A Coloring Book for Toddlers",
+            "subtitle": "A Coloring Book for Kids Ages 3–5",
             "description": "Big, simple dinosaurs to color.",
             "keywords": ["dinosaur coloring book", "toddler coloring"],
             **book,
