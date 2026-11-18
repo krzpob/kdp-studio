@@ -14,12 +14,25 @@ from dataclasses import dataclass
 from enum import IntEnum
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 import typer
 from dotenv import load_dotenv
 from PIL import Image
 
+from kdp_studio.book_input import (
+    DEFAULT_FORMAT,
+    BookInput,
+    BookInputError,
+    CoverInput,
+    LoadedFile,
+    Resolved,
+    SectionInput,
+    book_mismatch,
+    load_book_file,
+    resolve_input,
+    source_errors,
+)
 from kdp_studio.config import (
     CMYK_PROFILE_ENV,
     MAX_CONCURRENCY,
@@ -205,7 +218,6 @@ class ExitCode(IntEnum):
     PROVIDER_ERROR = 4
 
 
-DEFAULT_FORMAT = "letter"
 IMAGE_QUALITIES: tuple[str, ...] = get_args(ImageQuality)
 STEP_LABELS = {
     "ideas": "pomysły",
@@ -285,7 +297,20 @@ def _timed(timer: StepTimer, step: str, costs: CostTracker | None = None) -> Ite
 ThemeOpt = Annotated[str | None, typer.Option(help="Tematyka lub roboczy tytuł kolorowanki.")]
 AgeOpt = Annotated[str | None, typer.Option(help="Profil wieku z config/ages.yaml.")]
 StyleOpt = Annotated[str | None, typer.Option(help="Profil stylu z config/styles.yaml.")]
-FormatOpt = Annotated[str, typer.Option("--format", help="Profil formatu z config/formats.yaml.")]
+FormatOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--format", help=f"Profil formatu z config/formats.yaml. Domyślnie {DEFAULT_FORMAT}."
+    ),
+]
+ConfigFileOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--config-file",
+        help="Plik parametrów książki (YAML albo manifest.json innej książki, FR-20); "
+        "flagi nadpisują jego wartości.",
+    ),
+]
 MarketOpt = Annotated[
     str | None,
     typer.Option(
@@ -293,11 +318,17 @@ MarketOpt = Annotated[
         "programu i ceny. Domyślnie default_market z settings.yaml."
     ),
 ]
-PagesOpt = Annotated[int, typer.Option(help="Liczba grafik (stron kolorowanki), 1–200.")]
-StrictOpt = Annotated[
-    bool, typer.Option("--strict", help="Za mało stron dla KDP to błąd, nie ostrzeżenie.")
+PagesOpt = Annotated[
+    int | None, typer.Option(help="Liczba grafik (stron kolorowanki), 1–200. Domyślnie 30.")
 ]
-OutputDirOpt = Annotated[Path, typer.Option(help="Katalog, w którym powstaje katalog książki.")]
+StrictOpt = Annotated[
+    bool | None,
+    typer.Option("--strict/--no-strict", help="Za mało stron dla KDP to błąd, nie ostrzeżenie."),
+]
+OutputDirOpt = Annotated[
+    Path | None,
+    typer.Option(help="Katalog, w którym powstaje katalog książki. Domyślnie output."),
+]
 ReviewOpt = Annotated[
     bool | None,
     typer.Option(
@@ -420,33 +451,67 @@ def _config() -> AppConfig:
         raise _fail([str(e)]) from e
 
 
-def _book_spec(
+def _cli_input(**values: Any) -> BookInput:
+    """Wartości flag (None: nie podano), bez walidacji: sprawdzają je polecenia."""
+    return BookInput.model_construct(**values)
+
+
+def _cli_section(**values: Any) -> SectionInput:
+    return SectionInput.model_construct(**values)
+
+
+def _cli_cover(**values: Any) -> CoverInput:
+    return CoverInput.model_construct(**values)
+
+
+def _load_file(path: Path | None) -> LoadedFile | None:
+    if path is None:
+        return None
+    try:
+        return load_book_file(path)
+    except BookInputError as e:
+        raise _fail(e.errors) from e
+
+
+def _resolve(
     config: AppConfig,
-    theme: str | None,
-    age: str | None,
-    style: str | None,
-    format_: str,
-    pages: int,
-    strict: bool,
-    market: str | None = None,
-    instructions: bool | None = None,
-    single_sided: bool | None = None,
-) -> BookSpec:
+    config_file: Path | None,
+    cli: BookInput,
+    names: dict[str, str] | None = None,
+) -> Resolved:
+    """Flagi, plik parametrów i settings.yaml w jedną skuteczną wartość każdego klucza (FR-20)."""
+    resolved = resolve_input(cli, _load_file(config_file), config, names)
+    if resolved.file is not None:
+        typer.echo(f"Plik parametrów książki: {resolved.file.path}")
+    return resolved
+
+
+def _check_book_file(resolved: Resolved, manifest: Manifest) -> None:
+    """W krokach z katalogiem plik musi opisywać tę samą książkę co manifest (FR-20)."""
+    if resolved.file is not None:
+        problems = book_mismatch(resolved.file, manifest.input)
+        if problems:
+            raise _fail(problems)
+
+
+def _book_spec(config: AppConfig, resolved: Resolved) -> BookSpec:
+    inp = resolved.input
+    assert inp.format is not None and inp.pages is not None
     try:
         result = validate_book_spec(
-            theme=theme,
-            age=age,
-            style=style,
-            format=format_,
-            pages=pages,
-            strict=strict,
+            theme=inp.theme,
+            age=inp.age,
+            style=inp.style,
+            format=inp.format,
+            pages=inp.pages,
+            strict=bool(inp.strict),
             config=config,
-            market=market,
-            instructions=instructions,
-            single_sided=single_sided,
+            market=inp.market,
+            instructions=inp.instructions,
+            single_sided=inp.single_sided,
         )
     except InputValidationError as e:
-        raise _fail(e.errors) from e
+        raise _fail(source_errors(e.errors, resolved)) from e
     _warn(result.warnings)
     spec = result.spec
     typer.echo(
@@ -499,19 +564,20 @@ def _log_level(config: AppConfig, level: str | None) -> LogLevel:
 class _FrontChoice:
     """Ustawienia stron wstępnych nowej książki (FR-23), sprawdzone przed wywołaniem API."""
 
-    copyright: str
+    copyright: CopyrightVariant
     owner: str
     instructions: bool
-    first_page: str
+    first_page: FirstPage
 
 
-def _first_page(config: AppConfig, flag: str | None, belongs: bool | None = None) -> str:
+def _first_page(config: AppConfig, flag: str | None, belongs: bool | None = None) -> FirstPage:
     if belongs is not None:
         return "belongs-to" if belongs else "title"
     page = config.settings.front_matter.first_page if flag is None else flag
-    if page not in get_args(FirstPage):
-        raise _fail([f"--first-page: dozwolone {', '.join(get_args(FirstPage))} (podano '{page}')"])
-    return page
+    known: dict[str, FirstPage] = {"title": "title", "belongs-to": "belongs-to"}
+    if page in known:
+        return known[page]
+    raise _fail([f"--first-page: dozwolone {', '.join(get_args(FirstPage))} (podano '{page}')"])
 
 
 def _front_choice(
@@ -520,17 +586,19 @@ def _front_choice(
     copyright_: str | None,
     owner: str | None,
     instructions: bool | None,
-    first_page: str,
+    first_page: FirstPage,
 ) -> _FrontChoice:
     """Wariant praw autorskich, właściciel praw, tłumaczenie dla rynku i znaki czcionek:
     brak czegokolwiek to kod 1 przed pierwszym wywołaniem API (FR-23)."""
     settings = config.settings
     front = settings.front_matter
-    variant = front.copyright if copyright_ is None else copyright_
+    given = front.copyright if copyright_ is None else copyright_
     errors: list[str] = []
     variants = get_args(CopyrightVariant)
-    if variant not in variants:
-        errors.append(f"--copyright: dozwolone {', '.join(variants)} (podano '{variant}')")
+    known: dict[str, CopyrightVariant] = {"minimal": "minimal", "short": "short", "full": "full"}
+    variant: CopyrightVariant = known.get(given, "short")
+    if given not in known:
+        errors.append(f"--copyright: dozwolone {', '.join(variants)} (podano '{given}')")
     who = (settings.publisher.copyright_owner if owner is None else owner) or ""
     if not who.strip():
         errors.append(
@@ -740,7 +808,8 @@ def _step_ideas(
     provider: TextProvider,
     do_review: bool,
     costs: CostTracker,
-    front: _FrontChoice | None = None,
+    front: _FrontChoice,
+    resolved: Resolved,
 ) -> BookIdeas:
     """Pomysły, weryfikacja, prompty i manifest ze stronami `pending` (FR-17 krok 1)."""
     settings = config.settings
@@ -820,23 +889,7 @@ def _step_ideas(
     manifest = ManifestWriter.start(
         target,
         jobs=page_jobs(prompts, spec.pages),
-        input=ManifestInput(
-            theme=spec.theme,
-            age=spec.age,
-            style=spec.style,
-            format=spec.format,
-            pages=spec.pages,
-            front_matter_pages=spec.front_matter_pages,
-            market=spec.market,
-            single_sided=spec.single_sided,
-            concurrency=settings.concurrency,
-            review_ideas=do_review,
-            qa=settings.qa,
-            copyright=front.copyright if front else "short",
-            copyright_owner=front.owner if front else None,
-            first_page=front.first_page if front else None,
-            instructions=front.instructions if front else None,
-        ),
+        input=_manifest_input(spec, front, resolved, do_review),
         providers=ManifestProviders(
             text=ProviderInfo(provider=provider.name, model=provider.model),
             image=ImageProviderInfo(
@@ -866,6 +919,38 @@ def _step_ideas(
         diversity_issues=[] if ideas.diversity is None else ideas.diversity.issues,
     )
     return ideas
+
+
+def _manifest_input(
+    spec: BookSpec, front: _FrontChoice, resolved: Resolved, do_review: bool
+) -> ManifestInput:
+    """Skuteczne parametry nowej książki do manifestu (FR-20): wszystkie klucze schematu,
+    ścieżki bezwzględne (manifest służy też za plik parametrów), użyty plik i nadpisania."""
+    data = resolved.input.model_dump()
+    if data.get("output_dir"):
+        data["output_dir"] = str(Path(data["output_dir"]).resolve())
+    cover = data.get("cover") or {}
+    if cover.get("template"):
+        cover["template"] = str(Path(cover["template"]).resolve())
+    file = resolved.file
+    data.update(
+        theme=spec.theme,
+        age=spec.age,
+        style=spec.style,
+        format=spec.format,
+        pages=spec.pages,
+        front_matter_pages=spec.front_matter_pages,
+        market=spec.market,
+        single_sided=spec.single_sided,
+        review_ideas=do_review,
+        copyright=front.copyright,
+        copyright_owner=front.owner,
+        first_page=front.first_page,
+        instructions=front.instructions,
+        config_file=None if file is None else file.info().model_dump(),
+        overrides=resolved.overrides,
+    )
+    return ManifestInput.model_validate(data)
 
 
 def _step_redo(
@@ -943,14 +1028,15 @@ def ideas(
         Path | None,
         typer.Argument(help="Katalog istniejącej książki; tylko z --redo."),
     ] = None,
+    config_file: ConfigFileOpt = None,
     theme: ThemeOpt = None,
     age: AgeOpt = None,
     style: StyleOpt = None,
-    format_: FormatOpt = DEFAULT_FORMAT,
+    format_: FormatOpt = None,
     market: MarketOpt = None,
-    pages: PagesOpt = 30,
-    strict: StrictOpt = False,
-    output_dir: OutputDirOpt = Path("output"),
+    pages: PagesOpt = None,
+    strict: StrictOpt = None,
+    output_dir: OutputDirOpt = None,
     review_ideas: ReviewOpt = None,
     redo: Annotated[
         str | None,
@@ -968,9 +1054,11 @@ def ideas(
 ) -> None:
     """Krok 1: pomysły, prompty i manifest, bez grafik (FR-17). Tani podgląd książki."""
     config = _config()
-    level = _log_level(config, log_level)
     timer = StepTimer()
     if book is not None:
+        level = _log_level(config, log_level)
+        if config_file is not None:
+            raise _fail(["--redo działa na istniejącej książce: nie podawaj --config-file"])
         if redo is None:
             raise _fail(["z katalogiem książki podaj --redo idea_XX,…"])
         if theme is not None or age is not None or style is not None:
@@ -994,22 +1082,45 @@ def ideas(
     if redo is not None:
         raise _fail(["--redo wymaga katalogu książki: kdp-studio ideas <katalog> --redo …"])
 
-    instructions = (
-        config.settings.front_matter.instructions if instructions is None else instructions
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            theme=theme,
+            age=age,
+            style=style,
+            format=format_,
+            pages=pages,
+            market=market,
+            strict=strict,
+            output_dir=None if output_dir is None else str(output_dir),
+            review_ideas=review_ideas,
+            copyright=copyright_,
+            copyright_owner=copyright_owner,
+            instructions=instructions,
+            single_sided=single_sided,
+            max_cost=max_cost,
+            log_level=log_level,
+        ),
     )
-    spec = _book_spec(
-        config, theme, age, style, format_, pages, strict, market, instructions, single_sided
-    )
+    inp = resolved.input
+    level = _log_level(config, inp.log_level)
+    spec = _book_spec(config, resolved)
     front = _front_choice(
-        config, spec.market, copyright_, copyright_owner, instructions, _first_page(config, None)
+        config,
+        spec.market,
+        inp.copyright,
+        inp.copyright_owner,
+        inp.instructions,
+        _first_page(config, inp.first_page),
     )
-    target = _new_book_dir(output_dir, spec)
+    target = _new_book_dir(Path(inp.output_dir or "output"), spec)
     _warn_glyphs(config, spec.market)
     provider = _text_provider(config)
-    costs = _cost_tracker(config, max_cost, [provider.model])
-    do_review = config.settings.review_ideas if review_ideas is None else review_ideas
+    costs = _cost_tracker(config, inp.max_cost, [provider.model])
+    do_review = bool(inp.review_ideas)
     with _locked(target, level), _timed(timer, "ideas", costs):
-        _step_ideas(config, spec, target, provider, do_review, costs, front)
+        _step_ideas(config, spec, target, provider, do_review, costs, front, resolved)
     typer.echo(f"Przejrzyj {target / IDEAS_FILE}, a potem: kdp-studio images {target}")
 
 
@@ -1449,6 +1560,7 @@ def _report_front(outcome: BelongsToOutcome, cost: float, name: str = FRONT_NAME
 @app.command()
 def images(
     book: BookArg,
+    config_file: ConfigFileOpt = None,
     concurrency: ConcurrencyOpt = None,
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
@@ -1458,16 +1570,30 @@ def images(
 ) -> None:
     """Krok 2: surowe grafiki stron, których brakuje albo trzeba je odnowić (FR-17)."""
     config = _config()
-    level = _log_level(config, log_level)
-    workers = _workers(config, concurrency)
-    quality = _quality(config, image_quality)
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            concurrency=concurrency,
+            image_provider=image_provider,
+            image_quality=image_quality,
+            qa=qa,
+            max_cost=max_cost,
+            log_level=log_level,
+        ),
+    )
+    inp = resolved.input
+    level = _log_level(config, inp.log_level)
+    workers = _workers(config, inp.concurrency)
+    quality = _quality(config, inp.image_quality)
     writer = _open_book(book)
-    do_qa = config.settings.qa if qa is None else qa
+    _check_book_file(resolved, writer.manifest)
+    do_qa = bool(inp.qa)
     images_provider, vision = _image_providers(
-        config, writer.manifest.input.format, image_provider, do_qa
+        config, writer.manifest.input.format, inp.image_provider, do_qa
     )
     costs = _cost_tracker(
-        config, max_cost, _models(images_provider, vision), writer.manifest.cost_usd
+        config, inp.max_cost, _models(images_provider, vision), writer.manifest.cost_usd
     )
     with _locked(book, level), _timed(StepTimer(), "images", costs):
         code = _step_images(config, book, images_provider, vision, workers, quality, costs)
@@ -2013,7 +2139,7 @@ def _drop_front(writer: ManifestWriter, target: Path, kind: FrontKind) -> bool:
     return True
 
 
-def _set_first_page(writer: ManifestWriter, target: Path, first_page: str) -> None:
+def _set_first_page(writer: ManifestWriter, target: Path, first_page: FirstPage) -> None:
     """Strona 1 to tytułowa albo FR-14 (FR-23): druga z nich znika z książki."""
     writer.manifest.input.first_page = first_page
     other: FrontKind = "title" if first_page == "belongs-to" else "belongs_to"
@@ -2046,7 +2172,7 @@ def _step_front_matter(
     quality: str,
     costs: CostTracker,
     *,
-    first_page: str,
+    first_page: FirstPage,
     instructions: bool,
     refresh_canva: bool,
 ) -> ExitCode:
@@ -2088,6 +2214,7 @@ def _remove_front(target: Path) -> None:
 @app.command("belongs-to")
 def belongs_to(
     book: Annotated[Path, typer.Argument(help="Katalog książki po kroku kdp-studio images.")],
+    config_file: ConfigFileOpt = None,
     image_quality: QualityOpt = None,
     qa: QaOpt = None,
     remove: Annotated[
@@ -2104,7 +2231,16 @@ def belongs_to(
     """Strona „This book belongs to…” w motywie książki (FR-14): ramka z modelu obrazu, napis
     i miejsce na imię wpisuje program. Po kroku images; po finalize odświeża też canva.md."""
     config = _config()
-    level = _log_level(config, log_level)
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            log_level=log_level,
+            belongs_to=_cli_section(qa=qa, image_quality=image_quality, max_cost=max_cost),
+        ),
+    )
+    section = resolved.input.belongs_to or SectionInput()
+    level = _log_level(config, resolved.input.log_level)
     if remove:
         if image_quality is not None or qa is not None or max_cost is not None:
             raise _fail(["--remove nie łączy się z --image-quality, --qa ani --max-cost"])
@@ -2112,19 +2248,22 @@ def belongs_to(
             _remove_front(book)
         return
     writer = _open_book(book)
+    _check_book_file(resolved, writer.manifest)
     config = config.for_market(writer.manifest.input.market)  # napis i czcionka rynku (FR-19)
     _check_font(config)
     _check_glyphs(config, writer.manifest.input.market, "belongs_to")
     blocker = _belongs_to_blocker(book, writer.manifest)
     if blocker is not None:
         raise _fail([blocker])
-    quality = _quality(config, image_quality)
-    do_qa = config.settings.qa if qa is None else qa
+    quality = _quality(config, section.image_quality)
+    do_qa = bool(section.qa)
     manifest = writer.manifest
     images_provider, vision = _image_providers(
         config, manifest.input.format, manifest.providers.image.provider, do_qa
     )
-    costs = _cost_tracker(config, max_cost, _models(images_provider, vision), manifest.cost_usd)
+    costs = _cost_tracker(
+        config, section.max_cost, _models(images_provider, vision), manifest.cost_usd
+    )
     with _locked(book, level), _timed(StepTimer(), "belongs-to", costs):
         code = _step_belongs_to(
             config, book, images_provider, vision, quality, costs, refresh_canva=True
@@ -2135,6 +2274,7 @@ def belongs_to(
 @app.command("front-matter")
 def front_matter_cmd(
     book: Annotated[Path, typer.Argument(help="Katalog książki po kroku kdp-studio images.")],
+    config_file: ConfigFileOpt = None,
     first_page: FirstPageOpt = None,
     instructions: InstructionsOpt = None,
     copyright_: CopyrightOpt = None,
@@ -2147,22 +2287,43 @@ def front_matter_cmd(
     """Strony wstępne z modelem obrazu (FR-23): strona 1 (tytułowa do kolorowania albo
     „This book belongs to…”) i ilustracja instrukcji. Prawa autorskie wpisuje finalize."""
     config = _config()
-    level = _log_level(config, log_level)
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            first_page=first_page,
+            instructions=instructions,
+            copyright=copyright_,
+            copyright_owner=copyright_owner,
+            log_level=log_level,
+            front_matter=_cli_section(qa=qa, image_quality=image_quality, max_cost=max_cost),
+        ),
+    )
+    inp = resolved.input
+    section = inp.front_matter or SectionInput()
+    level = _log_level(config, inp.log_level)
     writer = _open_book(book)
     manifest = writer.manifest
+    _check_book_file(resolved, manifest)
     market = manifest.input.market
     config = config.for_market(market)
-    page_one = _first_page(config, first_page or manifest.input.first_page)
-    if instructions is None:
+
+    def given(key: str, value: Any) -> Any:
+        """Flaga albo plik, potem wartość książki z manifestu, potem settings.yaml."""
+        return value if resolved.given(key) else None
+
+    page_one = _first_page(config, given("first_page", inp.first_page) or manifest.input.first_page)
+    chosen = given("instructions", inp.instructions)
+    if chosen is None:
         saved = manifest.input.instructions
-        instructions = config.settings.front_matter.instructions if saved is None else saved
-    variant = copyright_ or manifest.input.copyright
+        chosen = config.settings.front_matter.instructions if saved is None else saved
+    variant = given("copyright", inp.copyright) or manifest.input.copyright
     front = _front_choice(
         config,
         market,
         variant,
-        copyright_owner or manifest.input.copyright_owner,
-        instructions,
+        given("copyright_owner", inp.copyright_owner) or manifest.input.copyright_owner,
+        chosen,
         page_one,
     )
     if page_one == "belongs-to":
@@ -2173,12 +2334,14 @@ def front_matter_cmd(
     blocker = _belongs_to_blocker(book, manifest)
     if blocker is not None:
         raise _fail([blocker])
-    quality = _quality(config, image_quality)
-    do_qa = config.settings.qa if qa is None else qa
+    quality = _quality(config, section.image_quality)
+    do_qa = bool(section.qa)
     images_provider, vision = _image_providers(
         config, manifest.input.format, manifest.providers.image.provider, do_qa
     )
-    costs = _cost_tracker(config, max_cost, _models(images_provider, vision), manifest.cost_usd)
+    costs = _cost_tracker(
+        config, section.max_cost, _models(images_provider, vision), manifest.cost_usd
+    )
     with _locked(book, level), _timed(StepTimer(), "front-matter", costs):
         writer = _open_book(book)
         writer.manifest.input.copyright = front.copyright
@@ -2205,14 +2368,15 @@ def front_matter_cmd(
 
 @app.command()
 def generate(
+    config_file: ConfigFileOpt = None,
     theme: ThemeOpt = None,
     age: AgeOpt = None,
     style: StyleOpt = None,
-    format_: FormatOpt = DEFAULT_FORMAT,
+    format_: FormatOpt = None,
     market: MarketOpt = None,
-    pages: PagesOpt = 30,
-    strict: StrictOpt = False,
-    output_dir: OutputDirOpt = Path("output"),
+    pages: PagesOpt = None,
+    strict: StrictOpt = None,
+    output_dir: OutputDirOpt = None,
     concurrency: ConcurrencyOpt = None,
     image_provider: ImageProviderOpt = None,
     image_quality: QualityOpt = None,
@@ -2233,26 +2397,56 @@ def generate(
     stronę „This book belongs to…” przed finalize (FR-14) i okładkę na końcu (FR-15)."""
     timer = StepTimer()
     config = _config()
-    level = _log_level(config, log_level)
-    instructions = (
-        config.settings.front_matter.instructions if instructions is None else instructions
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            theme=theme,
+            age=age,
+            style=style,
+            format=format_,
+            pages=pages,
+            market=market,
+            strict=strict,
+            output_dir=None if output_dir is None else str(output_dir),
+            concurrency=concurrency,
+            image_provider=image_provider,
+            image_quality=image_quality,
+            review_ideas=review_ideas,
+            qa=qa,
+            first_page=first_page,
+            instructions=instructions,
+            copyright=copyright_,
+            copyright_owner=copyright_owner,
+            single_sided=single_sided,
+            max_cost=max_cost,
+            log_level=log_level,
+            front_matter=_cli_section(enabled=front_matter),
+            belongs_to=_cli_section(enabled=belongs_to_page),
+            cover=_cli_cover(enabled=cover_),
+        ),
+        GENERATE_FLAGS,
     )
-    spec = _book_spec(
-        config, theme, age, style, format_, pages, strict, market, instructions, single_sided
-    )
+    inp = resolved.input
+    level = _log_level(config, inp.log_level)
+    spec = _book_spec(config, resolved)
     config = config.for_market(spec.market)  # napis FR-14 i czcionki napisów rynku (FR-19)
-    page_one = _first_page(config, first_page, belongs_to_page)
-    front = _front_choice(config, spec.market, copyright_, copyright_owner, instructions, page_one)
-    explicit = first_page is not None or belongs_to_page is not None
-    do_front = config.settings.front_matter.in_generate if front_matter is None else front_matter
-    do_front = do_front or explicit
-    workers = _workers(config, concurrency)
-    quality = _quality(config, image_quality)
-    target = _new_book_dir(output_dir, spec)
-    do_qa = config.settings.qa if qa is None else qa
-    do_review = config.settings.review_ideas if review_ideas is None else review_ideas
-    do_cover = config.settings.cover.in_generate if cover_ is None else cover_
-    cover_setup = _generate_cover_setup(config, spec) if do_cover else None
+    front_in = inp.front_matter or SectionInput()
+    belongs_in = inp.belongs_to or SectionInput()
+    cover_in = inp.cover or CoverInput()
+    page_one = _first_page(config, inp.first_page, belongs_in.enabled)
+    front = _front_choice(
+        config, spec.market, inp.copyright, inp.copyright_owner, inp.instructions, page_one
+    )
+    explicit = resolved.given("first_page") or resolved.given("belongs_to.enabled")
+    do_front = bool(front_in.enabled) or explicit
+    workers = _workers(config, inp.concurrency)
+    quality = _quality(config, inp.image_quality)
+    target = _new_book_dir(Path(inp.output_dir or "output"), spec)
+    do_qa = bool(inp.qa)
+    do_review = bool(inp.review_ideas)
+    do_cover = bool(cover_in.enabled)
+    cover_setup = _generate_cover_setup(config, spec, cover_in) if do_cover else None
     if do_front and page_one == "belongs-to":
         _check_font(config)
         _check_glyphs(config, spec.market, "belongs_to")
@@ -2261,13 +2455,13 @@ def generate(
     # Wszyscy dostawcy przed pierwszym wywołaniem API: zły klucz albo proporcja wychodzą od razu.
     provider = _text_provider(config)
     need_vision = do_qa or (cover_setup is not None and cover_setup.needs_vision)
-    images_provider, vision = _image_providers(config, spec.format, image_provider, need_vision)
-    costs = _cost_tracker(config, max_cost, [provider.model, *_models(images_provider, vision)])
+    images_provider, vision = _image_providers(config, spec.format, inp.image_provider, need_vision)
+    costs = _cost_tracker(config, inp.max_cost, [provider.model, *_models(images_provider, vision)])
 
     with _locked(target, level):
         log_event(_log, logging.INFO, "run_start", command="generate", book=str(target))
         with _timed(timer, "ideas", costs):
-            _step_ideas(config, spec, target, provider, do_review, costs, front)
+            _step_ideas(config, spec, target, provider, do_review, costs, front, resolved)
         if costs.over_budget():
             code = _stop_after_ideas(target, costs)
         else:
@@ -2337,7 +2531,14 @@ def _generate_front_matter(
         )
 
 
-def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:
+GENERATE_FLAGS = {
+    "front_matter.enabled": "--front-matter",
+    "belongs_to.enabled": "--belongs-to-page",
+    "cover.enabled": "--cover",
+}
+
+
+def _generate_cover_setup(config: AppConfig, spec: BookSpec, cover: CoverInput) -> _CoverSetup:
     """`generate --cover`: kontrole okładki przed pierwszym wywołaniem API. Strony wybiera
     model z wizją (cover.select_pages), więc nie ma tu --cover-page ani --thumbnails."""
     count = config.settings.cover.thumbnails
@@ -2346,7 +2547,14 @@ def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:
         raise _fail(
             [f"--cover: okładka potrzebuje co najmniej {count + 1} stron (przód i miniatury)"]
         )
-    return _cover_setup(config, None, None, None, None, _quality(config, None))
+    return _cover_setup(
+        config,
+        cover.color,
+        cover.select_pages,
+        cover.qa,
+        cover.back_text,
+        _quality(config, cover.image_quality),
+    )
 
 
 def _step_cover(
@@ -2770,6 +2978,7 @@ BackTextOpt = Annotated[
 @app.command()
 def cover(
     book: BookArg,
+    config_file: ConfigFileOpt = None,
     cover_page: Annotated[
         str | None,
         typer.Option(help="Strona na przód, np. 07. Domyślnie propozycja modelu z wizją."),
@@ -2802,9 +3011,35 @@ def cover(
 ) -> None:
     """Okładka paperback do KDP: cover.pdf w CMYK, podglądy i strefy (FR-15)."""
     config = _config()
-    level = _log_level(config, log_level)
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            image_provider=image_provider,
+            log_level=log_level,
+            cover=_cli_cover(
+                page=cover_page,
+                thumbnails=None if thumbnails is None else [thumbnails],
+                template=None if template is None else str(template),
+                color=color,
+                select_pages=select_pages,
+                back_text=back_text,
+                qa=qa,
+                image_quality=image_quality,
+                max_cost=max_cost,
+            ),
+        ),
+        {"cover.page": "--cover-page"},
+    )
+    inp = resolved.input
+    section = inp.cover or CoverInput()
+    level = _log_level(config, inp.log_level)
+    cover_page = None if section.page is None else str(section.page)
+    thumbnails = None if section.thumbnails is None else ",".join(map(str, section.thumbnails))
+    template = None if section.template is None else Path(section.template)
     writer = _open_book(book)
     manifest = writer.manifest
+    _check_book_file(resolved, manifest)
     config = config.for_market(manifest.input.market)  # czcionka tytułu rynku (FR-19)
     settings = config.settings
     geometry = _cover_geometry(config, manifest)
@@ -2821,11 +3056,11 @@ def cover(
     template_info = _cover_template(template, geometry, config) if template else None
     setup = _cover_setup(
         config,
-        color,
-        select_pages,
-        qa,
-        back_text,
-        _quality(config, image_quality),
+        section.color,
+        section.select_pages,
+        section.qa,
+        section.back_text,
+        _quality(config, section.image_quality),
         manual=bool(cover_page and thumbnails),
     )
     _check_glyphs(config, manifest.input.market, "cover", _cover_texts(book, setup.back_text))
@@ -2837,14 +3072,14 @@ def cover(
     try:
         if setup.color:
             images = create_image_provider(
-                image_provider or settings.providers.image, settings.models.image
+                inp.image_provider or settings.providers.image, settings.models.image
             )
         if setup.needs_vision:
             vision = create_vision_provider(settings.providers.vision, settings.models.vision)
     except ConfigError as e:
         raise _fail([str(e)]) from e
     models = [p.model for p in (images, vision) if p is not None]
-    costs = _cost_tracker(config, max_cost, models, manifest.cost_usd) if models else None
+    costs = _cost_tracker(config, section.max_cost, models, manifest.cost_usd) if models else None
     prices = settings.api_pricing.models
     run = _cover_run(
         book,
