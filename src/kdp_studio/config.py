@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -206,7 +206,6 @@ class TextBox(_Strict):
 class BelongsToSettings(_Strict):
     """Strona „This book belongs to…” (FR-14)."""
 
-    enabled: bool = False
     # None: napis z `terms.belongs_to` rynku książki (FR-19); tekst tu ma pierwszeństwo.
     text: Annotated[str, Field(min_length=1)] | None = None
     composition: Annotated[str, Field(min_length=1)] = (
@@ -224,6 +223,99 @@ class BelongsToSettings(_Strict):
     def font_path(self) -> Path:
         path = Path(self.font)
         return path if path.is_absolute() else REPO_ROOT / path
+
+
+# --- Strony wstępne (FR-23) ----------------------------------------------------------------
+
+FirstPage = Literal["title", "belongs-to"]
+CopyrightVariant = Literal["minimal", "short", "full"]
+COPYRIGHT_FIELDS = {"year": 0, "owner": ""}  # wstawki w tekście praw autorskich
+INSTRUCTION_KEYS = ("heading", "intro", "section", "body")
+
+
+def _repo_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+class FrontMatterSettings(_Strict):
+    """Strony przed kolorowankami: strona 1, prawa autorskie i instrukcja (FR-23)."""
+
+    first_page: FirstPage = "belongs-to"  # --first-page w generate i front-matter
+    instructions: bool = True  # instrukcja i pusta strona za nią: 4 strony wstępne zamiast 2
+    copyright: CopyrightVariant = "short"  # --copyright
+    in_generate: bool = True  # generate robi strony z modelem (front-matter) przed finalize
+    text_font: str = "assets/fonts/NotoSans-Variable.ttf"  # zwykły tekst (prawa, instrukcja)
+    text_font_variation: str | None = "Regular"
+    text_bold_variation: str | None = "Bold"  # śródtytuł instrukcji
+    copyright_pt: Annotated[float, Field(gt=0)] = 12
+    copyright_min_pt: Annotated[float, Field(gt=0)] = 9
+
+    @property
+    def text_font_path(self) -> Path:
+        return _repo_path(self.text_font)
+
+    @model_validator(mode="after")
+    def _sizes(self) -> Self:
+        if self.copyright_min_pt > self.copyright_pt:
+            raise ValueError("front_matter.copyright_min_pt nie może być większy niż copyright_pt")
+        return self
+
+    @property
+    def pages(self) -> int:
+        """Liczba stron wstępnych: strona 1 i prawa autorskie, z instrukcją także pusta."""
+        return 4 if self.instructions else 2
+
+
+class PublisherSettings(_Strict):
+    # Właściciel praw autorskich (`{owner}` na stronie praw, FR-23); --copyright-owner nadpisuje.
+    copyright_owner: Annotated[str, Field(min_length=1)] | None = None
+
+
+class TitlePageSettings(_Strict):
+    """Strona 1 do kolorowania z tytułem książki (FR-23, `--first-page title`)."""
+
+    composition: Annotated[str, Field(min_length=1)] = (
+        "a cheerful scene with the main characters and objects of the book in the lower two "
+        "thirds of the page; the top third of the page is completely empty white space with "
+        "nothing drawn in it"
+    )
+    text_box: TextBox = TextBox(x=0.04, y=0.0, width=0.92, height=0.3)  # pole na tytuł
+    max_ink_ratio: Annotated[float, Field(ge=0, le=1)] = 0.005
+    max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    font_variation: str | None = "Bold"  # czcionka napisów rynku (FR-19), litery konturowe
+    font_pt: Annotated[float, Field(gt=0)] = 54  # największy rozmiar tytułu
+
+
+class InstructionsSettings(_Strict):
+    """Strona 3 z instrukcją i ilustracją z główną postacią książki (FR-23)."""
+
+    # {subject}: główna postać książki (najczęstszy `subject` stron, jak w FR-14).
+    composition: Annotated[str, Field(min_length=1)] = (
+        "{subject} slips a blank sheet of thick paper behind a page of an open coloring book "
+        "lying on a table, two big curved arrows show how the sheet slides under the page"
+    )
+    art_box: TextBox = TextBox(x=0.0, y=0.45, width=1.0, height=0.55)  # ilustracja pod tekstem
+    max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2
+    heading_pt: Annotated[float, Field(gt=0)] = 30
+    section_pt: Annotated[float, Field(gt=0)] = 16
+    body_pt: Annotated[float, Field(gt=0)] = 13
+    heading_variation: str | None = "Bold"  # czcionka napisów rynku (FR-19)
+    fallback_art: str = "assets/front_matter/instructions.svg"  # bez postaci, po max_retries
+
+    @property
+    def fallback_art_path(self) -> Path:
+        return _repo_path(self.fallback_art)
+
+    @model_validator(mode="after")
+    def _subject_field(self) -> Self:
+        try:
+            self.composition.format(subject="x")
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(
+                f"instructions.composition: nieznane pole {e}; dozwolone: {{subject}}"
+            ) from e
+        return self
 
 
 class BarcodeBox(_Strict):
@@ -401,7 +493,10 @@ class CoverSettings(_Strict):
 
 
 class Settings(_Strict):
-    front_matter_pages: Annotated[int, Field(ge=0)] = 2
+    front_matter: FrontMatterSettings = FrontMatterSettings()  # FR-23
+    publisher: PublisherSettings = PublisherSettings()
+    title_page: TitlePageSettings = TitlePageSettings()
+    instructions: InstructionsSettings = InstructionsSettings()
     reserve_ratio: Annotated[float, Field(ge=0, le=1)] = 0.2
     default_market: Annotated[str, Field(min_length=1)] = "US"  # FR-19, klucz z markets.yaml
     providers: ProviderSettings = ProviderSettings()
@@ -527,12 +622,79 @@ class LargeTrim(_Strict):
     height_over_in: Annotated[float, Field(gt=0)]
 
 
+class FrontTexts(_Strict):
+    """Teksty stron wstępnych w jednym języku (FR-23), po scaleniu odmiany z językiem."""
+
+    language: str  # klucz z `texts`, z którego pochodzą (np. en-GB albo en)
+    copyright: dict[str, str]  # minimal, short, full
+    instructions: dict[str, str]  # heading, intro, section, body
+
+
+def _merge_texts(
+    base: dict[str, dict[str, str]], over: dict[str, dict[str, str]]
+) -> dict[str, dict[str, str]]:
+    merged = {section: dict(values) for section, values in base.items()}
+    for section, values in over.items():
+        merged.setdefault(section, {}).update(values)
+    return merged
+
+
 class MarketsConfig(_Strict):
     sources: dict[str, str]
     checked: date
     large_trim: LargeTrim
     pricing_groups: dict[str, MarketPricing] = {}
     markets: dict[str, MarketProfile]
+    # FR-23: teksty stron wstępnych według języka (`en`) albo odmiany (`en-GB`, tylko różnice).
+    texts: dict[str, dict[str, dict[str, str]]] = {}
+
+    def texts_for(self, locale: str) -> FrontTexts | None:
+        """Teksty dla `locale` rynku: odmiana scalona z językiem, sam język albo None."""
+        language = locale.split("-")[0]
+        if locale in self.texts:
+            data = _merge_texts(self.texts.get(language, {}), self.texts[locale])
+            key = locale
+        elif language in self.texts:
+            data, key = self.texts[language], language
+        else:
+            return None
+        return FrontTexts(
+            language=key,
+            copyright=data.get("copyright", {}),
+            instructions=data.get("instructions", {}),
+        )
+
+    @model_validator(mode="after")
+    def _texts_complete(self) -> Self:
+        variants = set(get_args(CopyrightVariant))
+        for key in self.texts:
+            texts = self.texts_for(key)
+            assert texts is not None
+            where = f"texts.{key}"
+            if set(texts.copyright) != variants:
+                raise ValueError(
+                    f"{where}.copyright: wymagane warianty {', '.join(sorted(variants))} "
+                    f"(są: {', '.join(sorted(texts.copyright)) or '-'})"
+                )
+            for variant, text in texts.copyright.items():
+                try:
+                    text.format(**COPYRIGHT_FIELDS)
+                except (KeyError, IndexError, ValueError) as e:
+                    raise ValueError(
+                        f"{where}.copyright.{variant}: nieznane pole {e}; dozwolone: "
+                        "{year}, {owner}"
+                    ) from e
+            missing = [k for k in INSTRUCTION_KEYS if not texts.instructions.get(k, "").strip()]
+            if missing:
+                raise ValueError(f"{where}.instructions: brak {', '.join(missing)}")
+            extra = set(texts.instructions) - set(INSTRUCTION_KEYS)
+            if extra:
+                unknown = ", ".join(sorted(extra))
+                raise ValueError(f"{where}.instructions: nieznane klucze {unknown}")
+            for name, text in texts.instructions.items():
+                if "{" in text or "}" in text:
+                    raise ValueError(f"{where}.instructions.{name}: tekst nie ma wstawek {{…}}")
+        return self
 
     @model_validator(mode="after")
     def _groups_exist(self) -> Self:

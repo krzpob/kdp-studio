@@ -273,3 +273,57 @@ markets:
       ages: "{min}〜{max}歳向け"
       adults: 大人向け
     alphabet: ぬりえこの本持ち主歳向け大人
+
+# Teksty stron wstępnych (FR-23) według języka; rynek wybiera tłumaczenie przez swój locale
+# (np. en-GB), a gdy go nie ma, przez sam język (en). Odmiana (en-GB) podaje tylko różnice.
+# Prawa autorskie w trzech wariantach (--copyright minimal|short|full), wstawki {year} (rok
+# utworzenia książki) i {owner} (publisher.copyright_owner albo --copyright-owner). Każdy wiersz
+# to osobny akapit. Instrukcja: nagłówek, podziękowanie, śródtytuł i akapit, bez wstawek.
+# Rynek bez tłumaczenia (dziś FR, ES, IT, NL, SE, JP) kończy się kodem 1 przed wywołaniem API.
+texts:
+  en:
+    copyright:
+      minimal: "© {year} {owner}. All rights reserved."
+      short: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced or distributed without prior written permission from the copyright owner, except as permitted by law.
+      full: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced, stored in a retrieval system, or transmitted in any form or by any means, including electronic, mechanical, photocopying, or recording, without prior written permission from the copyright owner, except as permitted by applicable law.
+    instructions:
+      heading: BEFORE YOU START
+      intro: "Thank you so much for buying my book! I appreciate your support. Before starting your coloring journey, please read:"
+      section: Paper Quality
+      body: "For the best results, test your coloring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are coloring."
+  en-GB:                                  # tylko różnice względem en
+    instructions:
+      intro: "Thank you so much for buying my book! I appreciate your support. Before starting your colouring journey, please read:"
+      body: "For the best results, test your colouring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are colouring."
+  pl:
+    copyright:
+      minimal: "© {year} {owner}. Wszelkie prawa zastrzeżone."
+      short: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Żadna część tej publikacji nie może być kopiowana ani rozpowszechniana bez uprzedniej pisemnej zgody właściciela praw, z wyjątkiem przypadków dozwolonych przez prawo.
+      full: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Bez uprzedniej pisemnej zgody właściciela praw żadna część tej publikacji nie może być powielana, przechowywana w systemach wyszukiwania informacji ani przekazywana w jakiejkolwiek formie lub za pomocą jakichkolwiek środków, w tym elektronicznych, mechanicznych, poprzez fotokopiowanie lub nagrywanie. Wyjątek stanowią przypadki dozwolone przez obowiązujące prawo.
+    instructions:
+      heading: ZANIM ZACZNIESZ
+      intro: "Dziękuję za zakup tej książki! Bardzo doceniam Twoje wsparcie. Zanim zaczniesz kolorować, przeczytaj:"
+      section: Jakość papieru
+      body: "Najpierw wypróbuj swoje kredki i flamastry. Żeby kolor nie przebił na następną stronę, podłóż pod kolorowaną stronę czystą kartkę grubszego papieru."
+  de:
+    copyright:
+      minimal: "© {year} {owner}. Alle Rechte vorbehalten."
+      short: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers vervielfältigt oder verbreitet werden, soweit dies nicht gesetzlich erlaubt ist.
+      full: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers in irgendeiner Form oder mit irgendwelchen Mitteln vervielfältigt, in einem Informationsabrufsystem gespeichert oder übertragen werden. Dies umfasst insbesondere elektronische und mechanische Verfahren sowie Fotokopien und Aufzeichnungen. Gesetzlich erlaubte Nutzungen bleiben unberührt.
+    instructions:
+      heading: BEVOR DU LOSLEGST
+      intro: "Vielen Dank, dass du mein Buch gekauft hast! Ich freue mich sehr über deine Unterstützung. Bevor du mit dem Ausmalen beginnst, lies bitte:"
+      section: Papierqualität
+      body: "Teste deine Stifte am besten zuerst. Damit die Farbe nicht auf die nächste Seite durchdrückt, lege ein leeres Blatt dickeres Papier hinter die Seite, die du gerade ausmalst."

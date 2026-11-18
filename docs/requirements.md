@@ -36,7 +36,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-20 | ⬜ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ⬜ | | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
-| FR-23 | ⬜ | | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. |
+| FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1166,7 +1166,7 @@ Cel: program składa gotowy plik wnętrza `interior.pdf` do wgrania w KDP, zamia
 - `pipeline/interior.py`: `interior_layout(manifest) -> list[str | None]` (czysta funkcja, łatwa do testów obu trybów) i zapis przez `pipeline/pdf.py`.
 - Testy: kolejność stron w obu trybach, z instrukcją i bez; wyrównanie do parzystej; zmiana trybu w `finalize` (przeliczenie stron przy zmianie marginesu, ostrzeżenie o okładce); brak PDF przy niegotowych stronach; kontrola po zapisie.
 
-### ⬜ FR-23: Strony wstępne: pierwsza strona, prawa autorskie, instrukcja (poza MVP)
+### ✅ FR-23: Strony wstępne: pierwsza strona, prawa autorskie, instrukcja (poza MVP)
 
 Cel: komplet stron przed kolorowankami w `interior.pdf` (FR-22). Strona 1 to tytułowa do kolorowania albo „This book belongs to…” (FR-14), strona 2 to informacja o prawach autorskich w języku rynku, a opcjonalna strona 3 to instrukcja z przykładową kolorowanką z postacią z książki.
 
@@ -1257,6 +1257,18 @@ texts:
 **Uwagi do implementacji**
 - Wspólna logika ramki z pustym polem i układu zapasowego z FR-14 (`BelongsToMaker`, `BelongsToRenderer`) obsługuje rodzaje `belongs_to`, `title` i `instructions`.
 - Testy: wybór tłumaczenia (`en-GB` → `en`) i wariantu (`minimal`, `short`, `full`), brak tłumaczenia lub właściciela praw (kod 1 bez API), blok praw autorskich nad dolnym marginesem i zmniejszanie czcionki, strona 1 bez `front-matter` (sam tytuł), układ zapasowy instrukcji, zmiana `--no-instructions` (2 strony wstępne zamiast 4).
+
+**Implementacja (18.11.2026)**
+- **Kolejność:** FR-23 przed FR-22. Strony wstępne powstają jako pliki PNG (dla Canvy i dla przyszłego `interior.pdf`); do FR-22 zostają `interior.pdf`, `--single-sided/--double-sided` i kolejność z pustymi tyłami.
+- **Polecenie `front-matter`:** opcje ze specyfikacji oraz `--copyright` i `--copyright-owner`, żeby dało się dodać strony wstępne do książki zrobionej przed FR-23. `generate` ma krok „strony wstępne” między `images` a `finalize`, włączany `--front-matter/--no-front-matter` (`front_matter.in_generate`, domyślnie tak); `--first-page`, `--instructions/--no-instructions`, `--copyright`, `--copyright-owner` jak w spec. `--belongs-to-page` to skrót dla `--first-page belongs-to`, a `--no-belongs-to-page` dla `--first-page title`. `belongs-to` w książce FR-23 ustawia stronę 1 i usuwa tytułową.
+- **Ustawienia:** `front_matter` (`first_page`, `instructions`, `copyright`, `in_generate`, `text_font`, `copyright_pt`, `copyright_min_pt`), `publisher.copyright_owner`, `title_page`, `instructions`. `front_matter_pages` przestaje być ustawieniem (2 albo 4 z `instructions`), a `belongs_to_page.enabled` znika. Manifest: `input.copyright`, `input.copyright_owner`, `input.first_page`, `input.instructions`; `front_matter.title`, `front_matter.instructions` (wpisy jak FR-14, układy `frame`, `fallback`, a dla strony 1 bez modelu `text_only`) i `front_matter.copyright` (język, wariant, właściciel, rok, hash tekstu).
+- **Czcionki:** zwykły tekst Noto Sans (SIL OFL, `assets/fonts/NotoSans-Variable.ttf`, pobrana 18.11.2026; polskie i niemieckie znaki), nagłówek instrukcji i tytuł strony 1 czcionką napisów rynku (Fredoka albo Baloo 2, FR-19) w wariancie `Bold`. Kontrola znaków jak w FR-19, także dla właściciela praw i tytułu.
+- **Teksty:** `texts` w `markets.yaml` z wersjami `en`, `en-GB`, `pl` i `de` ze specyfikacji. Na teksty rynku program nakłada też mapę pisowni (FR-19), więc CA i AU dostają „colouring” bez osobnej wersji `en-CA`. Rynki bez tłumaczenia (FR, ES, IT, NL, SE, JP) kończą `ideas` i `generate` kodem 1, jak w spec.
+- **Właściciel praw** jest wymagany od nowej książki: bez `--copyright-owner` i `publisher.copyright_owner` (domyślnie `null`) `ideas` i `generate` kończą się kodem 1. Książki sprzed FR-23 (bez właściciela w manifeście) `finalize` zostawia bez stron FR-23.
+- **Strona 1 bez `front-matter`:** `finalize` robi `front_title.png` z samym tytułem i wypisuje, jak dostać stronę z modelu. Instrukcja bez `front-matter` (gdy jest włączona) dostaje w `finalize` grafikę zapasową SVG, bez API. Obie informacje to zwykłe komunikaty, nie ostrzeżenia: strona jest poprawna.
+- **Prawa autorskie:** akapity zawijane do szerokości obszaru treści, wysokość wiersza z metryk czcionki (Noto Sans ma duży zapas na wydłużenia liter), litery z ujemnym odstępem przesunięte do marginesu. Za długi tekst zmniejsza się co 0,5 pt do `copyright_min_pt`, dalej kod 1.
+- **Instrukcja:** ilustrację rysuje model wg `instructions.composition` z `{subject}` (najczęstszy `subject` stron), z blokiem stylu stron. Bez kontroli pustego pola (tekst stoi nad ilustracją, w osobnej części strony); QA sprawdza `text` (tylko teksty programu) i `scene_mismatch`. Grafika zapasowa: `assets/front_matter/instructions.svg` (otwarta kolorowanka, kartka wsuwana pod stronę, strzałki).
+- **`canva.md`:** strony wstępne w kolejności druku. Nazwy plików (`front_belongs_to`, `front_copyright`, `front_instructions`, `front_title`) nie układają się alfabetycznie w tej kolejności, więc instrukcja każe wstawiać je według tabeli.
 
 ## 7. Profile (konfiguracja YAML)
 

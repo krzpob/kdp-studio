@@ -1,17 +1,64 @@
 # Ustawienia domyślne (spec §9.2). Flagi CLI nadpisują te wartości.
 # Kolejne klucze (np. cenniki) dochodzą razem z wymaganiami, które ich używają.
 
-# Strony przed grafikami: strona tytułowa i „This book belongs to…” (FR-02).
-front_matter_pages: 2
+# Strony wstępne (FR-23), przed kolorowankami: [1] strona 1, [2] prawa autorskie, a z instrukcją
+# także [3] instrukcja i [4] pusta strona, więc 4 strony wstępne zamiast 2 (FR-02 liczy z nich
+# pages_in_book). Strona 1 to tytułowa do kolorowania (title) albo „This book belongs to…”
+# (belongs-to, FR-14). Strony z modelem obrazu (strona 1, ilustracja instrukcji) robi polecenie
+# front-matter albo krok generate (in_generate); bez niego finalize robi stronę 1 z samym
+# tytułem. Prawa autorskie i teksty instrukcji: texts w config/markets.yaml według języka rynku.
+front_matter:
+  first_page: belongs-to        # --first-page title|belongs-to
+  instructions: true            # --instructions/--no-instructions
+  copyright: short              # --copyright minimal|short|full
+  in_generate: true             # generate --front-matter/--no-front-matter
+  text_font: assets/fonts/NotoSans-Variable.ttf   # zwykły tekst stron wstępnych (OFL)
+  text_font_variation: Regular
+  text_bold_variation: Bold
+  copyright_pt: 12              # blok praw autorskich nad dolnym marginesem; za długi tekst program
+  copyright_min_pt: 9           # zmniejsza najwyżej do copyright_min_pt, potem błąd (kod 1)
 
-# Strona „This book belongs to…” (FR-14), jedna ze stron wstępnych: --belongs-to-page włącza.
+# Właściciel praw autorskich ({owner} na stronie praw, FR-23): pseudonim, imię i nazwisko albo
+# firma; --copyright-owner w ideas i generate nadpisuje. Bez niego nowa książka nie powstanie.
+publisher:
+  copyright_owner: null
+
+# Strona 1 do kolorowania z tytułem książki (FR-23, --first-page title). Model rysuje scenę z pustym
+# górnym pasem (text_box, ułamki obszaru treści), program wpisuje tytuł konturowymi literami
+# czcionką napisów rynku. Pas z tuszem powyżej max_ink_ratio to ponowienie; po max_retries układ
+# zapasowy: tytuł u góry i grafika pierwszej gotowej strony pod nim.
+title_page:
+  composition: >-
+    a cheerful scene with the main characters and objects of the book in the lower two thirds of
+    the page; the top third of the page is completely empty white space with nothing drawn in it
+  text_box: {x: 0.04, y: 0.0, width: 0.92, height: 0.3}
+  max_ink_ratio: 0.005
+  max_retries: 2
+  font_variation: Bold
+  font_pt: 54
+
+# Strona 3 z instrukcją (FR-23). Teksty wpisuje program (nagłówek czcionką napisów rynku, reszta
+# front_matter.text_font), a pod nimi (art_box) jest ilustracja z modelu z główną postacią książki
+# ({subject}). Po max_retries nieudanych próbach: grafika zapasowa bez postaci (fallback_art, SVG).
+instructions:
+  composition: >-
+    {subject} slips a blank sheet of thick paper behind a page of an open coloring book lying on
+    a table, two big curved arrows show how the sheet slides under the page
+  art_box: {x: 0.0, y: 0.45, width: 1.0, height: 0.55}
+  max_retries: 2
+  heading_pt: 30
+  section_pt: 16
+  body_pt: 13
+  heading_variation: Bold
+  fallback_art: assets/front_matter/instructions.svg
+
+# Strona „This book belongs to…” (FR-14), strona 1 przy front_matter.first_page: belongs-to.
 # Model obrazu rysuje tylko ramkę z motywem książki wokół pustej tabliczki, a napis i linię na
 # imię wpisuje program czcionką z assets/fonts (SIL OFL). Gdy pole na tekst (text_box, ułamki
 # obszaru treści) ma więcej tuszu niż max_ink_ratio, strona jest generowana ponownie, najwyżej
 # max_retries razy; potem układ zapasowy: grafika pierwszej strony książki w górnej części
 # (fallback_art_height) i napis pod nią.
 belongs_to_page:
-  enabled: false
   text: null                  # null: napis z markets.yaml (terms.belongs_to rynku książki, FR-19)
   composition: >-
     a decorative frame made of theme elements around a large empty blank plaque in the center

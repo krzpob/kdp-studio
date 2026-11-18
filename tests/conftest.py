@@ -38,6 +38,10 @@ def fake_settings(**overrides: Any) -> dict[str, Any]:
     settings["api_pricing"]["models"].update(FAKE_PRICES)
     # Testy CLI okładki podają konwerter albo sprawdzają komunikat o braku profilu.
     settings["cover"]["cmyk"]["profile"] = None
+    # FR-23: właściciel praw dla strony praw autorskich. Testy sprzed FR-23 liczą strony bez
+    # instrukcji (2 strony wstępne) i bez kroku front-matter w generate; testy FR-23 to włączają.
+    settings["publisher"]["copyright_owner"] = "Test Owner"
+    settings["front_matter"].update(instructions=False, in_generate=False)
     settings.update(overrides)
     return settings
 
@@ -46,7 +50,7 @@ def fake_settings(**overrides: Any) -> dict[str, Any]:
 def config_dir(tmp_path: Path) -> ConfigDirFactory:
     """Kopia config/ w tmp_path; argumenty nazwane nadpisują zawartość plików.
 
-    Przykład: config_dir(settings={"front_matter_pages": 0}).
+    Przykład: config_dir(settings={"front_matter": {"instructions": False}}).
     """
 
     def factory(**overrides: Any) -> Path:

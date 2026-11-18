@@ -221,26 +221,19 @@ def test_polish_book_gets_the_belongs_to_page(monkeypatch: pytest.MonkeyPatch) -
     assert _manifest(book)["front_matter"]["belongs_to"]["status"] == "ok"
 
 
-def test_japanese_needs_a_font_with_its_characters(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    provider = FrontAwareProvider()
-    monkeypatch.setattr(cli, "create_image_provider", lambda name, model: provider)
-    args = [*GENERATE, "--pages", "3", "--market", "JP", "--belongs-to-page"]
-    assert main(args) == ExitCode.VALIDATION_ERROR
-    err = capsys.readouterr().err
-    assert "Baloo2-Variable.ttf" in err and "albo font rynku JP w markets.yaml" in err
-    assert "rynku JP (Amazon.co.jp (Japonia))" in err
-    assert not Path("output").exists()  # przed pierwszym wywołaniem API
+def test_japanese_needs_a_font_with_its_characters(repo_config: AppConfig) -> None:
+    problems = cli._glyph_problems(repo_config, "JP", "belongs_to")
+    assert problems and "Baloo2-Variable.ttf" in problems[0]
+    assert "albo font rynku JP w markets.yaml" in problems[0]
+    assert "rynku JP (Amazon.co.jp (Japonia))" in problems[0]
 
 
 def test_new_book_warns_only_when_fonts_lack_letters(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([*IDEAS, "--pages", "12", "--market", "PL"]) == ExitCode.OK
     assert "nie ma znaków" not in capsys.readouterr().err
-    assert main([*IDEAS, "--pages", "12", "--market", "JP"]) == ExitCode.OK
-    err = capsys.readouterr().err
-    assert "Ostrzeżenie: czcionka Baloo2-Variable.ttf" in err
-    assert "strona „This book belongs to…” i okładka nie powstaną" in err
+    # JP: brak tłumaczenia stron wstępnych (FR-23) to kod 1 jeszcze przed czcionkami.
+    assert main([*IDEAS, "--pages", "12", "--market", "JP"]) == ExitCode.VALIDATION_ERROR
+    assert "brak tekstów stron wstępnych" in capsys.readouterr().err
 
 
 def test_cover_checks_the_title_letters(

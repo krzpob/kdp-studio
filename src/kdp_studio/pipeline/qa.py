@@ -120,6 +120,23 @@ BELONGS_TO_SCENE_RULE = (
     "there is no clear empty space around the printed line and the name line."
 )
 BELONGS_TO_THEME_RULE = "not used for this page (scene_mismatch covers the theme); never report it."
+# FR-23: strona tytułowa (tytuł wpisuje program) i instrukcja (teksty wpisuje program).
+TITLE_TEXT_RULE = (
+    "any letters, words, numbers, signatures, logos or watermarks other than the book title "
+    '"{title}" at the top of the page, which the program adds on purpose.'
+)
+TITLE_SCENE_RULE = (
+    "the picture does not match the theme of the book (key elements below), or the top part "
+    "of the page is not left free for the title."
+)
+INSTRUCTIONS_TEXT_RULE = (
+    "any letters, words, numbers, signatures, logos or watermarks other than the printed "
+    "instructions at the top of the page, which the program adds on purpose."
+)
+INSTRUCTIONS_SCENE_RULE = (
+    "the illustration does not show the character below putting a sheet of paper behind a "
+    "page of an open book."
+)
 
 
 def _format(
@@ -179,6 +196,38 @@ def belongs_to_instructions(spec: BookSpec, config: AppConfig, elements: list[st
     )
 
 
+def title_page_instructions(
+    spec: BookSpec, config: AppConfig, elements: list[str], title: str
+) -> str:
+    """Kryteria FR-07 dla strony tytułowej do kolorowania (FR-23)."""
+    composition = " ".join(config.settings.title_page.composition.split())
+    return _format(
+        spec,
+        config,
+        title=f'Title page "{title}" to color',
+        scene=composition,
+        elements=elements,
+        text_rule=TITLE_TEXT_RULE.format(title=title),
+        scene_rule=TITLE_SCENE_RULE,
+        theme_rule=BELONGS_TO_THEME_RULE,
+    )
+
+
+def instructions_page_instructions(spec: BookSpec, config: AppConfig, subject: str) -> str:
+    """Kryteria FR-07 dla strony z instrukcją i ilustracją (FR-23)."""
+    composition = " ".join(config.settings.instructions.composition.split())
+    return _format(
+        spec,
+        config,
+        title="Instructions page with an illustration",
+        scene=composition.format(subject=subject),
+        elements=[subject],
+        text_rule=INSTRUCTIONS_TEXT_RULE,
+        scene_rule=INSTRUCTIONS_SCENE_RULE,
+        theme_rule=BELONGS_TO_THEME_RULE,
+    )
+
+
 @dataclass
 class QAChecker:
     """Ocena jednej strony; ProviderError z modelu przechodzi do workera."""
@@ -200,6 +249,20 @@ class QAChecker:
     def check_belongs_to(self, image_png: bytes, elements: list[str]) -> tuple[QAResult, Usage]:
         """Strona „This book belongs to…” z napisem programu (FR-14)."""
         return self._assess(image_png, belongs_to_instructions(self.spec, self.config, elements))
+
+    def check_title_page(
+        self, image_png: bytes, elements: list[str], title: str
+    ) -> tuple[QAResult, Usage]:
+        """Strona tytułowa do kolorowania z tytułem programu (FR-23)."""
+        return self._assess(
+            image_png, title_page_instructions(self.spec, self.config, elements, title)
+        )
+
+    def check_instructions(self, image_png: bytes, subject: str) -> tuple[QAResult, Usage]:
+        """Strona z instrukcją i ilustracją z główną postacią (FR-23)."""
+        return self._assess(
+            image_png, instructions_page_instructions(self.spec, self.config, subject)
+        )
 
     def _assess(self, image_png: bytes, instructions: str) -> tuple[QAResult, Usage]:
         verdict, usage = self.vision.assess(image_png, instructions, _LLMVerdict)
