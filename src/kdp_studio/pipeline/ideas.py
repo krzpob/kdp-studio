@@ -22,6 +22,10 @@ from kdp_studio.providers.base import ProviderError, TextProvider, Usage
 
 DEFAULT_MAX_ATTEMPTS = 2
 KDP_KEYWORD_MAX_CHARS = 50
+KDP_TITLE_MAX_CHARS = 200  # tytuł i podtytuł razem (wytyczne metadanych KDP)
+# Cel długości dla czytelności na okładce (FR-15); KDP: dłuższe tytuły kupujący przeskakują.
+TITLE_AIM_CHARS = 60
+SUBTITLE_AIM_CHARS = 80
 
 
 # Opisy cech sceny (FR-03b), wspólne dla generowania i weryfikacji.
@@ -101,14 +105,31 @@ action or place, and do not show one character sitting beside an object again an
 - Match the composition to the page format.
 
 Metadata rules:
+Amazon search weighs the title and subtitle most, then the keywords; the description barely \
+counts. The title and subtitle are also printed on the front cover, so they must read well there.
 - The book is sold on {domain} ({locale}). Write title, subtitle, description and keywords in \
 {language}, with its spelling and the words that buyers there type when they search.
-- Call the book a "{coloring_book}" (exactly this word, not another spelling or synonym) and, \
-when the subtitle names the audience, write it as "{audience}".
+- Call the book a "{coloring_book}" (exactly this word, not another spelling or synonym).
+- Title: the theme in the words buyers search for, plus "{coloring_book}" when it fits \
+naturally. Short and catchy, readable on the cover: at most {title_aim} characters.
+- Subtitle: the target audience, written exactly as "{audience}", optionally with a short phrase \
+about what is inside (e.g. the main motifs). One audience only, as a natural phrase: no lists of \
+audiences or words separated by "|" or commas. At most {subtitle_aim} characters, so it fits on \
+the cover in one or two lines. Title and subtitle together: never more than {title_chars} \
+characters.
 - Description: plain text, no HTML, at most 4000 characters, no claims like "bestseller" or \
 "free", no mention of AI.
-- Keywords: at most {max_keywords}, each at most {keyword_chars} characters, no trademarks, \
-no words already in the title.
+- Keywords: exactly {max_keywords} short phrases that buyers would type, each at most \
+{keyword_chars} characters. They carry what the title and subtitle leave out, so plan them:
+  - 2-3 for other audiences: for children, age ranges that overlap the target ages (e.g. \
+"kids ages 5-8" or "ages 4-8" for ages 6-8), girls and boys, a school stage such as preschool or \
+kindergarten; for adults, e.g. teens and adults or seniors;
+  - 1-2 for buying occasions and uses (a gift, a holiday, travel, quiet time, relaxation);
+  - the rest for other words buyers use for the theme and its motifs (synonyms, sub-themes).
+  Every keyword adds at least one word that is not in the title or subtitle. No keyword may \
+differ from another only in spacing, punctuation, capitalization, word order or plural. No \
+trademarks, brand or character names, quality claims ("best"), time-limited words ("new", "on \
+sale") or Amazon program names.
 """
 
 THEME_RULE = (
@@ -163,6 +184,9 @@ def build_prompts(spec: BookSpec, config: AppConfig) -> tuple[str, str]:
         audience=market.terms.age_phrase(config.ages[spec.age].age_range),
         max_keywords=KDP_MAX_KEYWORDS,
         keyword_chars=KDP_KEYWORD_MAX_CHARS,
+        title_chars=KDP_TITLE_MAX_CHARS,
+        title_aim=TITLE_AIM_CHARS,
+        subtitle_aim=SUBTITLE_AIM_CHARS,
         theme_rule=THEME_RULE,
     )
     user = USER_PROMPT.format(
@@ -325,6 +349,44 @@ def apply_spelling(
     return result, changes
 
 
+def _words(text: str) -> list[str]:
+    """Słowa do porównań metadanych: małe litery, bez interpunkcji, liczba pojedyncza.
+
+    Liczba pojedyncza to tylko obcięte końcowe „s” (kids → kid), co wystarcza dla
+    wariantów, przed którymi ostrzega KDP; w innych językach reguła po prostu rzadziej trafia.
+    """
+    words = re.findall(r"\w+", text.casefold())
+    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words]
+
+
+def keyword_issues(book: BookMetadata) -> list[str]:
+    """Słowa kluczowe, które nic nie dodają do wyszukiwania (FR-03); tylko do ostrzeżenia.
+
+    Amazon wyszukuje po słowach z tytułu, podtytułu i słów kluczowych, a KDP odradza
+    powtarzanie metadanych i warianty różniące się tylko pisownią, interpunkcją, wielkością
+    liter czy liczbą mnogą. Program ich nie usuwa (użytkownik poprawia je w `ideas.json`
+    albo w KDP), tylko wskazuje słowo kluczowe złożone wyłącznie ze słów tytułu i podtytułu
+    oraz wariant wcześniejszego słowa kluczowego, także w innej kolejności słów.
+    „kids ages 5-8” przy podtytule „for Kids Ages 6–8” jest w porządku, bo dodaje 5.
+    """
+    covered = set(_words(book.title)) | set(_words(book.subtitle))
+    seen: set[tuple[str, ...]] = set()
+    issues: list[str] = []
+    for keyword in book.keywords:
+        words = tuple(sorted(_words(keyword)))
+        if words in seen:
+            issues.append(f"„{keyword}” (wariant innego słowa kluczowego)")
+        elif set(words) <= covered:
+            issues.append(f"„{keyword}” (same słowa z tytułu i podtytułu)")
+        seen.add(words)
+    return issues
+
+
+def missing_audience(book: BookMetadata, audience: str) -> bool:
+    """Czy podtytuł nie podaje odbiorców z frazy rynku (np. „for Kids Ages 6–8”)."""
+    return not set(_words(audience)) <= set(_words(book.subtitle))
+
+
 def _page_id(index: int) -> str:
     return f"idea_{index:02d}"
 
@@ -384,6 +446,13 @@ class IdeaGenerator:
                 fields = ", ".join(str(err["loc"][0]) for err in e.errors())
                 problem = f"niepoprawne metadane książki ({fields})"
                 continue
+            length = len(book.title) + len(book.subtitle)
+            if length > KDP_TITLE_MAX_CHARS:
+                problem = (
+                    f"tytuł i podtytuł mają razem {length} znaków "
+                    f"(KDP: najwyżej {KDP_TITLE_MAX_CHARS})"
+                )
+                continue
 
             warnings: list[str] = []
             book, changes = apply_spelling(book, self.config.markets.markets[spec.market].spelling)
@@ -391,6 +460,19 @@ class IdeaGenerator:
                 counts = Counter(changes)
                 listed = ", ".join(f"{c} ({n}×)" if n > 1 else c for c, n in counts.items())
                 warnings.append(f"pisownia rynku {spec.market} w metadanych: {listed}")
+            if issues := keyword_issues(book):
+                warnings.append("słowa kluczowe nic nie dodają: " + ", ".join(issues))
+            audience = self.config.markets.markets[spec.market].terms.age_phrase(
+                self.config.ages[spec.age].age_range
+            )
+            if missing_audience(book, audience):
+                warnings.append(f"podtytuł nie podaje odbiorców („{audience}”): {book.subtitle!r}")
+            if len(book.subtitle) > SUBTITLE_AIM_CHARS or len(book.title) > TITLE_AIM_CHARS:
+                warnings.append(
+                    f"długi tytuł ({len(book.title)} zn.) lub podtytuł ({len(book.subtitle)} zn.): "
+                    f"na okładce może być nieczytelny (cel: {TITLE_AIM_CHARS} i "
+                    f"{SUBTITLE_AIM_CHARS} znaków)"
+                )
             if len(pages) < expected:
                 warnings.append(
                     f"model zwrócił {len(pages)} unikalnych pomysłów zamiast {expected}; "

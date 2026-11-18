@@ -131,7 +131,7 @@ def test_market_goes_to_manifest_and_book_dir(capsys: pytest.CaptureFixture[str]
     assert data["input"]["market"] == "UK"
     ideas = json.loads((book / "ideas.json").read_text(encoding="utf-8"))
     # Odpowiedź fałszywego modelu ma „Coloring”: program poprawia pisownię brytyjską.
-    assert ideas["book"]["subtitle"] == "A Colouring Book for Toddlers"
+    assert ideas["book"]["subtitle"] == "A Colouring Book for Kids Ages 3–5"
     assert "pisownia rynku UK w metadanych: Coloring → Colouring" in capsys.readouterr().err
     # Domyślny rynek (US): katalog bez przyrostka, jak dotąd.
     assert main([*IDEAS, "--pages", "12"]) == ExitCode.OK
