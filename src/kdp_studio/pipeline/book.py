@@ -104,6 +104,7 @@ def spec_from_manifest(manifest: Manifest) -> BookSpec:
         pages=data.pages,
         front_matter_pages=data.front_matter_pages,
         market=data.market,
+        single_sided=data.single_sided,
     )
 
 

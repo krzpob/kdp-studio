@@ -77,6 +77,7 @@ class ManifestInput(_Model):
     pages: int
     front_matter_pages: int
     market: str = "US"  # FR-19; stara książka bez tego pola to US
+    single_sided: bool = True  # FR-22; stara książka: druk jednostronny jak w D8
     # FR-23; stara książka bez tych pól nie ma stron praw autorskich ani instrukcji.
     copyright: str = "short"  # wariant tekstu praw autorskich: minimal, short, full
     copyright_owner: str | None = None
@@ -354,6 +355,18 @@ class CoverInfo(_Model):
     error: str | None = None
 
 
+class InteriorInfo(_Model):
+    """Gotowe wnętrze `interior.pdf` (FR-22, krok 3)."""
+
+    file: str = "interior.pdf"
+    pages: int  # liczba stron PDF; od niej `cover` liczy grzbiet
+    single_sided: bool
+    sha256: str
+    inputs_sha256: str  # kolejność i hashe plików stron: zmiana wymusza nowy PDF
+    order: list[str | None]  # strona PDF → plik strony bez .png; None to pusta strona
+    created_at: str = Field(default_factory=_now)
+
+
 class Manifest(_Model):
     tool: str = "kdp-studio"
     version: str = __version__
@@ -369,6 +382,7 @@ class Manifest(_Model):
     pages: list[ManifestPage]
     front_matter: FrontMatter = Field(default_factory=FrontMatter)
     cover: CoverInfo | None = None  # FR-15
+    interior: InteriorInfo | None = None  # FR-22
     ai_disclosure: str = AI_DISCLOSURE
 
     @property

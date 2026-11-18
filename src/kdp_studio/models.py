@@ -26,10 +26,11 @@ class BookSpec(BaseModel):
     pages: Annotated[int, Field(ge=PAGES_MIN, le=PAGES_MAX)]
     front_matter_pages: Annotated[int, Field(ge=0)]
     market: str = "US"  # FR-19, klucz z markets.yaml; stara książka bez rynku to US
+    single_sided: bool = True  # FR-22, D8: grafika na prawej stronie, pusty tył
 
     @property
     def pages_in_book(self) -> int:
-        return pages_in_book(self.pages, self.front_matter_pages)
+        return pages_in_book(self.pages, self.front_matter_pages, self.single_sided)
 
 
 KDP_MAX_KEYWORDS = 7
@@ -144,6 +145,14 @@ class BookPrompts(BaseModel):
     pages: list[PagePrompt]
 
 
-def pages_in_book(pages: int, front_matter_pages: int) -> int:
-    """Strony fizyczne przy druku jednostronnym: grafika + pusta strona (D8, FR-02)."""
-    return pages * 2 + front_matter_pages
+def pages_per_image(single_sided: bool) -> int:
+    """Strony fizyczne na jedną grafikę: z pustym tyłem (druk jednostronny, D8) albo bez."""
+    return 2 if single_sided else 1
+
+
+def pages_in_book(pages: int, front_matter_pages: int, single_sided: bool = True) -> int:
+    """Strony fizyczne książki (FR-02, FR-22): strony wstępne + grafiki, przy druku
+    jednostronnym każda z pustym tyłem, zaokrąglone w górę do parzystej (KDP i tak zaokrągla,
+    a liczba stron wyznacza grzbiet okładki)."""
+    total = front_matter_pages + pages * pages_per_image(single_sided)
+    return total + total % 2

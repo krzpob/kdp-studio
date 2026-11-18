@@ -119,6 +119,7 @@ from kdp_studio.pipeline.front_matter import (
 )
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
+from kdp_studio.pipeline.interior import INTERIOR_FILE, InteriorError, write_interior
 from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
     CopyrightPage,
@@ -186,7 +187,12 @@ from kdp_studio.providers.registry import (
     create_text_provider,
     create_vision_provider,
 )
-from kdp_studio.validation import InputValidationError, plural, validate_book_spec
+from kdp_studio.validation import (
+    InputValidationError,
+    check_page_count,
+    plural,
+    validate_book_spec,
+)
 
 
 class ExitCode(IntEnum):
@@ -333,6 +339,14 @@ GenerateCoverOpt = Annotated[
     ),
 ]
 BookArg = Annotated[Path, typer.Argument(help="Katalog książki (z kroku kdp-studio ideas).")]
+SidedOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--single-sided/--double-sided",
+        help="Druk jednostronny (każda grafika z pustym tyłem, D8) albo dwustronny (FR-22). "
+        "Domyślnie interior.single_sided z settings.yaml; w finalize: wartość książki.",
+    ),
+]
 BelongsToOpt = Annotated[
     bool | None,
     typer.Option(
@@ -416,6 +430,7 @@ def _book_spec(
     strict: bool,
     market: str | None = None,
     instructions: bool | None = None,
+    single_sided: bool | None = None,
 ) -> BookSpec:
     try:
         result = validate_book_spec(
@@ -428,6 +443,7 @@ def _book_spec(
             config=config,
             market=market,
             instructions=instructions,
+            single_sided=single_sided,
         )
     except InputValidationError as e:
         raise _fail(e.errors) from e
@@ -436,7 +452,8 @@ def _book_spec(
     typer.echo(
         f"Parametry poprawne: '{spec.theme}', wiek {spec.age}, styl {spec.style}, "
         f"format {spec.format}, {plural(spec.pages, 'grafika', 'grafiki', 'grafik')} "
-        f"({plural(spec.pages_in_book, 'strona', 'strony', 'stron')} książki)."
+        f"({plural(spec.pages_in_book, 'strona', 'strony', 'stron')} książki, "
+        f"druk {'jednostronny' if spec.single_sided else 'dwustronny'})."
     )
     return spec
 
@@ -811,6 +828,7 @@ def _step_ideas(
             pages=spec.pages,
             front_matter_pages=spec.front_matter_pages,
             market=spec.market,
+            single_sided=spec.single_sided,
             concurrency=settings.concurrency,
             review_ideas=do_review,
             qa=settings.qa,
@@ -944,6 +962,7 @@ def ideas(
     copyright_: CopyrightOpt = None,
     copyright_owner: CopyrightOwnerOpt = None,
     instructions: InstructionsOpt = None,
+    single_sided: SidedOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
 ) -> None:
@@ -958,6 +977,8 @@ def ideas(
             raise _fail(["--redo działa na istniejącej książce: nie podawaj --theme/--age/--style"])
         if market is not None:
             raise _fail(["--redo: rynek książki jest w manifeście, nie podawaj --market"])
+        if single_sided is not None:
+            raise _fail(["--redo: tryb druku zmienia kdp-studio finalize --single-sided/…"])
         if copyright_ is not None or copyright_owner is not None or instructions is not None:
             raise _fail(
                 ["--redo: strony wstępne zmienia kdp-studio front-matter, nie --copyright itp."]
@@ -976,7 +997,9 @@ def ideas(
     instructions = (
         config.settings.front_matter.instructions if instructions is None else instructions
     )
-    spec = _book_spec(config, theme, age, style, format_, pages, strict, market, instructions)
+    spec = _book_spec(
+        config, theme, age, style, format_, pages, strict, market, instructions, single_sided
+    )
     front = _front_choice(
         config, spec.market, copyright_, copyright_owner, instructions, _first_page(config, None)
     )
@@ -1456,12 +1479,66 @@ def images(
 # --- Krok 3: gotowe strony -------------------------------------------------------------------
 
 
-def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
-    """Gotowe strony do Canvy z aktualnych surowych grafik, canva.md (FR-17 krok 3)."""
+def _set_sided(writer: ManifestWriter, config: AppConfig, single_sided: bool | None) -> None:
+    """`finalize --single-sided/--double-sided` (FR-22): nowy tryb druku książki. Liczba stron
+    musi się zmieścić w tabeli marginesów KDP (kod 1); za mała to ostrzeżenie jak w FR-02."""
+    data = writer.manifest.input
+    if single_sided is None or single_sided == data.single_sided:
+        return
+    errors, warnings = check_page_count(data.pages, data.front_matter_pages, single_sided, config)
+    if errors:
+        raise _fail(errors)
+    _warn(warnings)
+    data.single_sided = single_sided
+    writer.save()
+    typer.echo(
+        f"Tryb druku: {'jednostronny' if single_sided else 'dwustronny'}; strony, którym "
+        "zmienił się margines od grzbietu, zostaną obrobione ponownie."
+    )
+
+
+def _finalize_interior(config: AppConfig, writer: ManifestWriter, target: Path) -> None:
+    """`interior.pdf` (FR-22) z gotowych stron; brak stron albo zły układ to ostrzeżenie,
+    bez pliku (nieaktualny jest usuwany)."""
+    manifest = writer.manifest
+    if not config.settings.interior.pdf:
+        return
+    if manifest.input.copyright_owner is None:
+        typer.echo(
+            f"{INTERIOR_FILE}: książka nie ma stron wstępnych FR-23; zrobi je "
+            f"kdp-studio front-matter {target} --copyright-owner …"
+        )
+        return
+    try:
+        result = write_interior(target, manifest)
+    except InteriorError as e:
+        if manifest.interior is not None:
+            manifest.interior = None
+            writer.save()
+        _warn([f"{INTERIOR_FILE} nie powstał: {error}" for error in e.errors])
+        log_event(_log, logging.WARNING, "interior_failed", errors=e.errors)
+        return
+    manifest.interior = result.info
+    writer.save()
+    info = result.info
+    mode = "jednostronny" if info.single_sided else "dwustronny"
+    state = "zapisano" if result.written else "aktualny"
+    typer.echo(
+        f"Wnętrze do KDP: {target / INTERIOR_FILE} ({state}; "
+        f"{plural(info.pages, 'strona', 'strony', 'stron')}, druk {mode})"
+    )
+    log_event(
+        _log, logging.INFO, "interior_done", pages=info.pages, written=result.written, mode=mode
+    )
+
+
+def _step_finalize(config: AppConfig, target: Path, single_sided: bool | None = None) -> ExitCode:
+    """Gotowe strony z aktualnych surowych grafik, interior.pdf i canva.md (FR-17 krok 3)."""
     writer = _open_book(target)
     manifest = writer.manifest
     if manifest.status == "ideas_ready" or never_generated(manifest):
         raise _fail([f"brak surowych grafik: najpierw kdp-studio images {target}"])
+    _set_sided(writer, config, single_sided)
     try:
         ideas = load_ideas(target)
     except BookError as e:
@@ -1494,6 +1571,7 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
     _finalize_front_matter(config, spec, writer, target, geometry, ideas)
 
     status = writer.update_status()
+    _finalize_interior(config, writer, target)
     ok = len(manifest.ok_pages)
     log_event(_log, logging.INFO, "finalize_done", ok=ok, pages=len(manifest.pages), status=status)
     typer.echo(
@@ -1524,6 +1602,15 @@ def _step_finalize(config: AppConfig, target: Path) -> ExitCode:
             [
                 f"{FRONT_NAME} nie odpowiada obecnym ustawieniom (obróbka, napis albo czcionka); "
                 f"odśwież ją bez nowej grafiki: kdp-studio belongs-to {target}"
+            ]
+        )
+    cover = manifest.cover
+    if cover is not None and cover.geometry.get("pages_in_book") != layout.pages_in_book:
+        _warn(
+            [
+                f"okładka jest dla {cover.geometry.get('pages_in_book')} stron, a książka ma "
+                f"{layout.pages_in_book}: grzbiet się zmienił, zrób ją ponownie: "
+                f"kdp-studio cover {target}"
             ]
         )
     if missing or failed_front:
@@ -1768,12 +1855,12 @@ def _finalize_page(
 
 
 @app.command()
-def finalize(book: BookArg, log_level: LogLevelOpt = None) -> None:
-    """Krok 3: gotowe strony do Canvy, wektory i canva.md, bez wywołań API (FR-17)."""
+def finalize(book: BookArg, single_sided: SidedOpt = None, log_level: LogLevelOpt = None) -> None:
+    """Krok 3: gotowe strony, wektory, interior.pdf i canva.md, bez wywołań API (FR-17, FR-22)."""
     config = _config()
     level = _log_level(config, log_level)
     with _locked(book, level), _timed(StepTimer(), "finalize"):
-        code = _step_finalize(config, book)
+        code = _step_finalize(config, book, single_sided)
     raise typer.Exit(code)
 
 
@@ -2137,6 +2224,7 @@ def generate(
     instructions: InstructionsOpt = None,
     copyright_: CopyrightOpt = None,
     copyright_owner: CopyrightOwnerOpt = None,
+    single_sided: SidedOpt = None,
     cover_: GenerateCoverOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
@@ -2149,7 +2237,9 @@ def generate(
     instructions = (
         config.settings.front_matter.instructions if instructions is None else instructions
     )
-    spec = _book_spec(config, theme, age, style, format_, pages, strict, market, instructions)
+    spec = _book_spec(
+        config, theme, age, style, format_, pages, strict, market, instructions, single_sided
+    )
     config = config.for_market(spec.market)  # napis FR-14 i czcionki napisów rynku (FR-19)
     page_one = _first_page(config, first_page, belongs_to_page)
     front = _front_choice(config, spec.market, copyright_, copyright_owner, instructions, page_one)
@@ -2564,10 +2654,12 @@ def _cmyk_settings(settings: CmykSettings) -> CmykSettings:
 
 
 def _cover_geometry(config: AppConfig, manifest: Manifest) -> CoverGeometry:
+    """Geometria okładki; liczba stron do grzbietu z `interior.pdf` (FR-22), jeśli powstał."""
     layout = manifest.layout
+    interior = manifest.interior
     return CoverGeometry(
         trim_in=layout.trim_in,
-        pages_in_book=layout.pages_in_book,
+        pages_in_book=layout.pages_in_book if interior is None else interior.pages,
         kdp=config.settings.kdp_cover,
         key_margin_in=config.settings.cover.key_margin_in,
         dpi=layout.dpi,
@@ -2717,7 +2809,7 @@ def cover(
     settings = config.settings
     geometry = _cover_geometry(config, manifest)
     previous = manifest.cover
-    pages_in_book = manifest.layout.pages_in_book
+    pages_in_book = geometry.pages_in_book
     if previous is not None and previous.geometry.get("pages_in_book") != pages_in_book:
         _warn(
             [
