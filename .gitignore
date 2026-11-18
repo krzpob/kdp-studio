@@ -13,6 +13,11 @@ build/
 # Secrets
 .env
 
+# Profile ICC: w repozytorium tylko ten, który wolno rozpowszechniać (licencja IDEAlliance,
+# assets/icc/README.md). Własny profil, np. Adobe SWOP v2, wskazujesz w .env (KDP_STUDIO_CMYK_PROFILE).
+*.icc
+!/assets/icc/SWOP2013C3_CRPC5.icc
+
 # Generated books
 output/
 

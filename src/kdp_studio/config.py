@@ -183,6 +183,7 @@ class ApiPricing(_Strict):
 
 
 DEFAULT_MAX_COST_USD = 5.0
+CMYK_PROFILE_ENV = "KDP_STUDIO_CMYK_PROFILE"  # własny profil ICC okładki z .env (FR-15)
 REPO_ROOT = DEFAULT_CONFIG_DIR.parent  # ścieżki zasobów (np. czcionek) są względne wobec repo
 Fraction = Annotated[float, Field(ge=0, le=1)]
 
@@ -267,7 +268,7 @@ RenderingIntent = Literal["perceptual", "relative_colorimetric"]
 
 
 class CmykSettings(_Strict):
-    """Konwersja okładki do CMYK (FR-15). Profil ICC pobiera użytkownik (licencja profilu)."""
+    """Konwersja okładki do CMYK (FR-15). Domyślny profil ICC jest w assets/icc/."""
 
     profile: str | None = None
     rendering_intent: RenderingIntent = "perceptual"

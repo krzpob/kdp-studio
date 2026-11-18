@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -15,7 +16,15 @@ from PIL import Image, ImageCms, ImageDraw
 
 from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
-from kdp_studio.config import AppConfig, CmykSettings, KdpCover
+from kdp_studio.config import (
+    CMYK_PROFILE_ENV,
+    DEFAULT_CONFIG_DIR,
+    REPO_ROOT,
+    AppConfig,
+    CmykSettings,
+    KdpCover,
+    load_config,
+)
 from kdp_studio.pipeline.cmyk import (
     BLACK_K100,
     CmykError,
@@ -54,6 +63,9 @@ TEMPLATES = Path(__file__).parent / "fixtures" / "kdp_templates"
 SQUARE = TEMPLATES / "PAPERBACK_8.500x8.500_104_BW_WHITE_en_US.jpg"
 LETTER = TEMPLATES / "PAPERBACK_8.500x11.000_104_BW_WHITE_en_US.jpg"
 MAC_CMYK = Path("/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc")
+BUNDLED_ICC = REPO_ROOT / "assets" / "icc" / "SWOP2013C3_CRPC5.icc"
+# Profile ID z rejestru ICC: https://registry.color.org/profile-registry/SWOP2013C3_CRPC5
+BUNDLED_ICC_ID = "1e1bd1ca60b69673b356f3cd478494b2"
 GENERATE = ["generate", "--theme", "Dinozaury", "--age", "przedszkole", "--style", "kawaii"]
 BOOK = Path("output/dinozaury_przedszkole_kawaii_letter")
 ARG = str(BOOK)
@@ -187,6 +199,33 @@ def test_rgb_profile_is_rejected(tmp_path: Path) -> None:
     path.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
     with pytest.raises(CmykError, match="nie jest profilem CMYK"):
         IccConverter(CmykSettings(profile=str(path)))
+
+
+def icc_profile_id(data: bytes) -> tuple[str, str]:
+    """(Profile ID zapisany w nagłówku, MD5 policzone jak w specyfikacji ICC v4)."""
+    header = bytearray(data)
+    stored = bytes(header[84:100]).hex()
+    header[44:48] = bytes(4)  # flagi profilu
+    header[64:68] = bytes(4)  # sposób konwersji
+    header[84:100] = bytes(16)  # sam Profile ID
+    return stored, hashlib.md5(header).hexdigest()
+
+
+def test_bundled_profile_is_the_unaltered_registry_file() -> None:
+    """Licencja IDEAlliance pozwala udostępniać profil tylko bez zmian."""
+    data = BUNDLED_ICC.read_bytes()
+    assert int.from_bytes(data[:4], "big") == len(data)
+    assert icc_profile_id(data) == (BUNDLED_ICC_ID, BUNDLED_ICC_ID)
+    assert (BUNDLED_ICC.parent / "README.md").is_file()
+
+
+def test_default_settings_use_the_bundled_profile() -> None:
+    settings = load_config(DEFAULT_CONFIG_DIR).settings.cover.cmyk
+    assert settings.profile_path == BUNDLED_ICC
+    converter = IccConverter(settings)
+    assert "SWOP" in converter.name
+    rgb = Image.new("RGB", (2, 1), (150, 120, 100))  # kolor w gamucie druku
+    assert float(delta_e(rgb, converter.to_rgb(converter.to_cmyk(rgb))).max()) < 10
 
 
 @pytest.mark.skipif(not MAC_CMYK.is_file(), reason="profil CMYK z macOS")
@@ -407,7 +446,36 @@ def test_cover_without_profile_explains_where_to_get_it(
     _book()
     assert main(["cover", ARG]) == ExitCode.VALIDATION_ERROR
     err = capsys.readouterr().err
-    assert "brak profilu CMYK" in err and "SWOP" in err
+    assert "brak profilu CMYK" in err and "SWOP" in err and CMYK_PROFILE_ENV in err
+
+
+def test_profile_from_env_overrides_settings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[str | None] = []
+
+    def converter(settings: CmykSettings) -> NaiveConverter:
+        seen.append(settings.profile)
+        return NaiveConverter()
+
+    monkeypatch.setattr(cli, "cmyk_converter", converter)
+    _book()
+    monkeypatch.setenv(CMYK_PROFILE_ENV, "  ")  # pusta wartość: zostaje settings.yaml
+    main(["cover", ARG, "--no-color", "--no-select-pages"])
+    monkeypatch.setenv(CMYK_PROFILE_ENV, "~/icc/USWebCoatedSWOP.icc")
+    main(["cover", ARG, "--no-color", "--no-select-pages"])
+    capsys.readouterr()
+    assert seen == [None, "~/icc/USWebCoatedSWOP.icc"]
+
+
+def test_missing_profile_from_env_names_the_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _book()
+    missing = tmp_path / "brak.icc"
+    monkeypatch.setenv(CMYK_PROFILE_ENV, str(missing))
+    assert main(["cover", ARG]) == ExitCode.VALIDATION_ERROR
+    assert str(missing) in capsys.readouterr().err
 
 
 @pytest.mark.usefixtures("naive_cmyk")

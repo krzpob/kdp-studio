@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -18,8 +19,10 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from kdp_studio.config import (
+    CMYK_PROFILE_ENV,
     MAX_CONCURRENCY,
     AppConfig,
+    CmykSettings,
     ConfigError,
     ImageQuality,
     LogLevel,
@@ -1926,7 +1929,7 @@ def _cover_setup(
     if not settings.title_font_path.is_file():
         raise _fail([f"brak czcionki tytułu {settings.title_font_path} (cover.title_font)"])
     try:
-        converter = cmyk_converter(settings.cmyk)
+        converter = cmyk_converter(_cmyk_settings(settings.cmyk))
     except cmyk.CmykError as e:
         raise _fail([str(e)]) from e
     return _CoverSetup(
@@ -1937,6 +1940,18 @@ def _cover_setup(
         back_text=settings.back_text if back_text is None else back_text,
         quality=quality,
     )
+
+
+def _cmyk_settings(settings: CmykSettings) -> CmykSettings:
+    """Profil ICC z KDP_STUDIO_CMYK_PROFILE (.env) ma pierwszeństwo przed settings.yaml.
+
+    Własny profil (np. Adobe SWOP v2, którego nie wolno dołączyć do repozytorium) ma inną
+    ścieżkę na każdym komputerze, więc trzyma się go poza konfiguracją w repozytorium.
+    """
+    path = os.environ.get(CMYK_PROFILE_ENV, "").strip()
+    if not path:
+        return settings
+    return settings.model_copy(update={"profile": path})
 
 
 def _cover_geometry(config: AppConfig, manifest: Manifest) -> CoverGeometry:
