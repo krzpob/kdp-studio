@@ -92,6 +92,31 @@ uv run kdp-studio front-matter output/<książka> [--first-page title|belongs-to
 uv run kdp-studio finalize output/<książka>
 ```
 
+### Plik parametrów książki (FR-20)
+
+Zamiast wielu flag możesz podać jeden plik YAML z parametrami książki; flagi w wierszu poleceń nadpisują jego wartości (flaga > plik > `config/settings.yaml`). Klucze to nazwy flag `generate` z podkreśleniem zamiast myślnika; strony wstępne, strona FR-14 i okładka mają sekcje `front_matter`, `belongs_to` i `cover` (`cover: true` włącza okładkę w `generate`). Literówka w kluczu kończy się błędem ze ścieżką klucza, a ścieżki względne w pliku liczą się od jego katalogu. Jako plik nadaje się też `manifest.json` innej książki: manifest zapisuje skuteczne wartości wszystkich kluczy, użyty plik i klucze nadpisane flagami.
+
+```yaml
+# ksiazki/kotki.yaml
+theme: Świąteczne kotki
+age: wczesnoszkolne
+style: cozy
+format: square
+pages: 30
+qa: true
+cover:
+  enabled: true
+  back_text: true
+```
+
+```bash
+uv run kdp-studio generate --config-file ksiazki/kotki.yaml --pages 40
+uv run kdp-studio images output/<książka> --config-file ksiazki/kotki.yaml
+uv run kdp-studio ideas --config-file output/<książka>/manifest.json --theme "Kotki w ogrodzie"
+```
+
+`images`, `belongs-to`, `front-matter` i `cover` biorą z pliku ustawienia swojego kroku, a temat, wiek, styl, format, liczba stron i rynek muszą się zgadzać z książką.
+
 ### Wnętrze książki i tryb druku (FR-22)
 
 `finalize` składa `interior.pdf`, gotowe wnętrze do wgrania w KDP: strony wstępne, potem kolorowanki. Domyślnie druk jest jednostronny: każda grafika stoi na prawej stronie z pustym tyłem, bo flamastry przebijają. `--double-sided` daje grafiki jedna po drugiej (mniej stron, cieńszy grzbiet i niższy koszt druku). Tryb wybierasz w `ideas`/`generate` albo zmieniasz później w `finalize`; zmiana liczby stron może zmienić margines od grzbietu, więc `finalize` obrabia wtedy strony ponownie i ostrzega, że okładkę trzeba zrobić od nowa. PDF powstaje tylko wtedy, gdy wszystkie strony są gotowe, i tylko dla książek ze stronami wstępnymi FR-23. `canva.md` zostaje jako ręczna droga.

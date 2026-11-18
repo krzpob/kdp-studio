@@ -17,6 +17,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kdp_studio import __version__
+from kdp_studio.book_input import BookInput, ConfigFileInfo
+from kdp_studio.config import CopyrightVariant
 from kdp_studio.pipeline.belongs_to import FRONT_NAME, BelongsToOutcome, Layout
 from kdp_studio.pipeline.cost import COST_DIGITS
 from kdp_studio.pipeline.cover_vision import CoverQAResult
@@ -69,7 +71,10 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ManifestInput(_Model):
+class ManifestInput(BookInput):
+    """Skuteczne parametry książki (FR-20): ten sam schemat co plik `--config-file`, z polami
+    wymaganymi i domyślnymi dla starych manifestów, plus pola, których plik nie ma."""
+
     theme: str
     age: str
     style: str
@@ -79,13 +84,12 @@ class ManifestInput(_Model):
     market: str = "US"  # FR-19; stara książka bez tego pola to US
     single_sided: bool = True  # FR-22; stara książka: druk jednostronny jak w D8
     # FR-23; stara książka bez tych pól nie ma stron praw autorskich ani instrukcji.
-    copyright: str = "short"  # wariant tekstu praw autorskich: minimal, short, full
-    copyright_owner: str | None = None
-    first_page: str | None = None  # title albo belongs-to
-    instructions: bool | None = None
+    copyright: CopyrightVariant = "short"
     concurrency: int
     review_ideas: bool
     qa: bool = False
+    config_file: ConfigFileInfo | None = None  # FR-20: użyty plik parametrów
+    overrides: list[str] = Field(default_factory=list)  # FR-20: klucze nadpisane flagami
 
 
 class ProviderInfo(_Model):

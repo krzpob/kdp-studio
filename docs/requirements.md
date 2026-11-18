@@ -33,7 +33,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
-| FR-20 | ⬜ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
+| FR-20 | ✅ | #61 | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
@@ -975,7 +975,7 @@ checked: 2026-11-16
 default_market: US
 ```
 
-### ⬜ FR-20: Plik parametrów książki `--config-file` (poza MVP)
+### ✅ FR-20: Plik parametrów książki `--config-file` (poza MVP)
 
 Cel: krótsze wywołanie i powtarzalne ustawienia. Zamiast kilkunastu flag użytkownik podaje jeden plik YAML z parametrami książki, a flagi w wierszu poleceń nadpisują pojedyncze wartości. Plik przydaje się też tam, gdzie flaga jest za ciasna: przy liście bohaterów i scen (sekcja 14a).
 
@@ -1048,6 +1048,14 @@ cover:
 - Opcje typer w `ideas`, `generate`, `images`, `belongs-to` i `cover` mają domyślnie `None`, żeby dało się odróżnić flagę niepodaną od podanej. Dziś `--format`, `--pages`, `--strict` i `--output-dir` mają domyślne wartości w sygnaturze `generate` i `ideas`; przenoszą się do kroku scalania.
 - Scalanie w jednej funkcji (np. `resolve_input(cli, file, config)`), która zwraca `BookInput` i mapę źródeł każdej wartości, użytą w komunikatach błędów i w `input.overrides`.
 - Testy: tabela pierwszeństwa (flaga, plik, settings), nieznany klucz, ścieżki względne od katalogu pliku, `manifest.json` jako plik wejściowy, niezgodność pliku z manifestem w `images`, brak sekretów w manifeście.
+
+**Implementacja (18.11.2026)**
+- **Schemat:** `BookInput` w `src/kdp_studio/book_input.py`; `ManifestInput` w manifeście dziedziczy po nim (pola wymagane i domyślne dla starych manifestów) i dodaje `front_matter_pages`, `config_file` i `overrides`. Klucze najwyższego poziomu: `theme`, `age`, `style`, `format`, `pages`, `market`, `strict`, `output_dir`, `single_sided` (FR-22), `review_ideas`, `qa`, `image_provider`, `image_quality`, `concurrency`, `max_cost`, `log_level` oraz klucze stron wstępnych FR-23 `first_page`, `instructions`, `copyright`, `copyright_owner`.
+- **Sekcje:** `front_matter` (`enabled` = `generate --front-matter`; `qa`, `image_quality`, `max_cost` polecenia `front-matter`), `belongs_to` (`enabled` = `generate --belongs-to-page`; `qa`, `image_quality`, `max_cost` polecenia `belongs-to`) i `cover` (jak w specyfikacji, `cover: true` to skrót). Strony wstępne FR-23 powstały po tej specyfikacji, stąd sekcja `front_matter`. W `generate --cover` sekcja `cover` daje też `color`, `select_pages`, `qa`, `back_text` i `image_quality` kroku okładki; `page`, `thumbnails`, `template` i `max_cost` czyta tylko polecenie `cover`. Sekcje nie dziedziczą wartości z najwyższego poziomu pliku.
+- **Scalanie:** `resolve_input()` układa warstwy `settings.yaml` (z wartościami domyślnymi z kodu: `letter`, 30 stron, `output`), plik i flagi, i zwraca skuteczne `BookInput` z mapą źródeł. Flagi nie są walidowane przy scalaniu, bo sprawdzają je polecenia z dotychczasowymi komunikatami; plik jest walidowany przy wczytaniu. Błędy FR-01/FR-02 z wartością z pliku mają prefiks pliku (`kotki.yaml: pages: …`), z flagi zostają przy nazwie flagi. Profil w kolejności pierwszeństwa nie ma jeszcze żadnego klucza (dojdzie z `humanize`).
+- **Opcje typer:** `--format`, `--pages`, `--strict` (teraz `--strict/--no-strict`) i `--output-dir` mają domyślnie `None`; wartości domyślne są w kroku scalania.
+- **Polecenia:** `--config-file` w `ideas`, `generate`, `images`, `belongs-to`, `front-matter` i `cover`; `ideas --redo` go nie przyjmuje. `front-matter` zachowuje swoje pierwszeństwo z FR-23: flaga albo plik, potem wartość z manifestu, potem `settings.yaml`. Niezgodność kluczy `theme`, `age`, `style`, `format`, `pages` i `market` z manifestem to kod 1 z listą różnic; `front_matter_pages` nie jest kluczem pliku (wynika z `instructions`).
+- **Manifest:** `input` zapisuje skuteczne wartości wszystkich kluczy; `output_dir` i `cover.template` jako ścieżki bezwzględne, żeby `manifest.json` użyty jako plik parametrów wskazywał te same miejsca. Plik z sekcją `input` jest czytany bez `front_matter_pages`, `config_file` i `overrides`. `overrides` to klucze podane flagami, gdy był plik.
 
 ### ⬜ FR-21: Chronione postacie, marki i produkty
 
