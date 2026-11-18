@@ -56,8 +56,9 @@ class IccConverter:
             raise CmykError(
                 "brak profilu CMYK (cover.cmyk.profile w config/settings.yaml"
                 + (f": {path}" if path is not None else "")
-                + "). KDP żadnego nie wskazuje; zwykle używa się U.S. Web Coated (SWOP) v2 "
-                "z pakietu profili ICC Adobe (pobierz go sam, licencja nie pozwala go dołączyć). "
+                + "). Domyślny profil SWOP 2013 (assets/icc/SWOP2013C3_CRPC5.icc) jest w "
+                "repozytorium; własny, np. U.S. Web Coated (SWOP) v2 z pakietu profili Adobe "
+                "(licencja nie pozwala go dołączyć), wskaż zmienną KDP_STUDIO_CMYK_PROFILE w .env. "
                 "Do prób na macOS: /System/Library/ColorSync/Profiles/Generic CMYK Profile.icc"
             )
         try:

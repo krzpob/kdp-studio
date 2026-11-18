@@ -202,11 +202,12 @@ cover:
   back_text_min_pt: 10
   back_text_max_height: 0.3     # opis zajmuje najwyżej tyle wysokości strefy tyłu
   cmyk:
-    # Profil ICC do konwersji RGB → CMYK (nie trafia do PDF). KDP żadnego nie wskazuje; poradniki
-    # podają U.S. Web Coated (SWOP) v2, alternatywnie GRACoL 2006 Coated. Plik pobierasz sam
-    # (licencja profilu), np. pakiet „ICC profiles” ze strony pomocy Adobe, i podajesz ścieżkę.
-    # Na macOS jest też /System/Library/ColorSync/Profiles/Generic CMYK Profile.icc (do prób).
-    profile: null
+    # Profil ICC do konwersji RGB → CMYK (nie trafia do PDF). KDP żadnego nie wskazuje. Domyślnie
+    # SWOP 2013 (CRPC5, TAC 300%) z rejestru ICC, dołączony do repozytorium (licencja IDEAlliance
+    # pozwala go udostępniać bez zmian, assets/icc/README.md). Inny profil, np. U.S. Web Coated
+    # (SWOP) v2 z pakietu Adobe, którego nie wolno dołączać, wskazujesz zmienną
+    # KDP_STUDIO_CMYK_PROFILE w .env; ma ona pierwszeństwo przed tym ustawieniem.
+    profile: assets/icc/SWOP2013C3_CRPC5.icc
     rendering_intent: perceptual          # albo relative_colorimetric
     black_point_compensation: true
     max_total_ink_pct: 300                # 240 dla drukarni z takim wymaganiem (np. IngramSpark)

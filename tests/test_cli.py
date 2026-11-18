@@ -9,7 +9,7 @@ import yaml
 
 from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
-from kdp_studio.config import DEFAULT_CONFIG_DIR
+from kdp_studio.config import CMYK_PROFILE_ENV, DEFAULT_CONFIG_DIR
 from kdp_studio.providers.base import ImageRequest, ProviderError, TextProvider
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider, FakeVisionProvider
 from tests.conftest import (
@@ -43,6 +43,7 @@ def fake_text_provider(
         fmt["page_px"] = [round(side * TEST_DPI) for side in fmt["trim_in"]]
     directory = config_dir(formats=formats, settings=fake_settings())
     monkeypatch.setenv("KDP_STUDIO_CONFIG_DIR", str(directory))
+    monkeypatch.delenv(CMYK_PROFILE_ENV, raising=False)  # własny profil z .env użytkownika
     provider = FakeTextProvider([llm_ideas_response(300)], routes={"_Review": approve_all})
 
     def create(name: str, model: str) -> TextProvider:

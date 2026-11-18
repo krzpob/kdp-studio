@@ -510,7 +510,7 @@ Co mówi KDP (strona pomocy o okładce paperback, G201953020):
 KDP nie podaje ani konkretnego profilu CMYK, ani limitu sumy farb. Plik RGB KDP konwertuje sam, według własnych ustawień, a jaskrawe kolory potrafią wtedy zmatowieć bez ostrzeżenia. Program konwertuje więc okładkę do CMYK sam: pod kontrolą, z podglądem skutków przed wysłaniem.
 
 - **Praca w RGB, CMYK na końcu.** Model obrazu, skalowanie, wygładzanie styku i kontrola czytelności działają w RGB. Do CMYK trafia dopiero gotowa warstwa kolorowa, jednym przekształceniem przez profil ICC (Pillow `ImageCms`, czyli LittleCMS dołączony do kół Pillow, bez bibliotek natywnych, NFR-11).
-- **Profil docelowy** z konfiguracji (`cover.cmyk.profile`). KDP żadnego nie wskazuje, więc to nasz wybór; poradniki zewnętrzne najczęściej podają U.S. Web Coated (SWOP) v2, a jako alternatywę GRACoL 2006 Coated. Profil służy tylko do konwersji i podglądu, nie trafia do PDF. Plik profilu nie trafia do repozytorium, jeśli jego licencja nie pozwala na redystrybucję: użytkownik pobiera go sam i podaje ścieżkę. Brak pliku przy włączonym CMYK to błąd walidacji z instrukcją, skąd go wziąć (kod 1).
+- **Profil docelowy** z konfiguracji (`cover.cmyk.profile`). KDP żadnego nie wskazuje, więc to nasz wybór; poradniki zewnętrzne najczęściej podają U.S. Web Coated (SWOP) v2, a jako alternatywę GRACoL 2006 Coated. Profil służy tylko do konwersji i podglądu, nie trafia do PDF. Domyślny jest SWOP 2013 (`assets/icc/SWOP2013C3_CRPC5.icc`, CRPC5, TAC 300%) z rejestru ICC, dołączony do repozytorium, bo jego licencja (IDEAlliance) pozwala go udostępniać bez zmian; test pilnuje, że plik jest niezmieniony (Profile ID z rejestru). Profilu, którego licencja nie pozwala na redystrybucję (np. Adobe U.S. Web Coated (SWOP) v2), nie ma w repozytorium: `.gitignore` pomija wszystkie `*.icc` poza domyślnym, a ścieżkę do własnego profilu podaje zmienna `KDP_STUDIO_CMYK_PROFILE` w `.env`, która ma pierwszeństwo przed `cover.cmyk.profile` (zmiana z 18.11.2026). Brak pliku przy włączonym CMYK to błąd walidacji z instrukcją, skąd go wziąć (kod 1).
 - **Sposób konwersji** (`cover.cmyk.rendering_intent`): domyślnie `perceptual`, bo ilustracje dla dzieci mają dużo nasyconych kolorów spoza gamutu druku, a ta metoda zachowuje relacje między nimi. Alternatywa: `relative_colorimetric` z kompensacją punktu czerni. Wybór po porównaniu na prawdziwych okładkach.
 - **Czarny tylko z K.** Elementy czarne program rysuje bezpośrednio w CMYK jako C0 M0 Y0 K100, z pominięciem profilu:
   - kontury przodu (warstwa 300 DPI z FR-06);
@@ -600,7 +600,7 @@ FR-15 powstaje w trzech PR-ach.
   - miniatury: strony rozłożone równo po książce;
   - `selection: default` w manifeście;
   - na okładkę trafiają tylko strony `ok` z plikiem PNG.
-- **Profil CMYK** domyślnie nie jest ustawiony (`cover.cmyk.profile: null`). `cover` kończy się wtedy kodem 1 z instrukcją, skąd wziąć SWOP v2 (na macOS do prób jest `Generic CMYK Profile.icc`).
+- **Profil CMYK** domyślnie to dołączony SWOP 2013 (`assets/icc/SWOP2013C3_CRPC5.icc`); `KDP_STUDIO_CMYK_PROFILE` w `.env` wskazuje inny. Gdy pliku nie ma, `cover` kończy się kodem 1 z instrukcją, skąd wziąć profil (na macOS do prób jest `Generic CMYK Profile.icc`).
 - **Ostrzeżenie o tytule:** gdy kolor zmienia się (ΔE > `gamut_warn_delta_e`) na ponad 1% jego powierzchni.
 - **`front.png`:** przód po przycięciu (bez spadu).
 
@@ -639,7 +639,7 @@ cover:                          # nasze ustawienia
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
   cmyk:
-    profile: ~/icc/USWebCoatedSWOP.icc   # plik pobiera użytkownik (licencja profilu)
+    profile: assets/icc/SWOP2013C3_CRPC5.icc   # dołączony; własny: KDP_STUDIO_CMYK_PROFILE w .env
     rendering_intent: perceptual          # albo relative_colorimetric
     black_point_compensation: true
     max_total_ink_pct: 300                # 240 dla drukarni z takim wymaganiem
@@ -1604,7 +1604,7 @@ Stan na 17.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wy
 4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
 5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
 6. ~~FR-14: wybór czcionki z licencją OFL i wariant polski napisu.~~ Rozstrzygnięte 16.11.2026: Fredoka, napis po angielsku, inny język przez `belongs_to_page.text`.
-7. FR-15: ~~wybór czcionki tytułowej (OFL)~~ Fredoka Bold (16.11.2026). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (SWOP v2 czy GRACoL 2006) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
+7. FR-15: ~~wybór czcionki tytułowej (OFL)~~ Fredoka Bold (16.11.2026). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (domyślnie SWOP 2013 CRPC5 z repozytorium; porównać z SWOP v2 i GRACoL przez `KDP_STUDIO_CMYK_PROFILE`) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
 8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
 
 ## 14a. Pomysły na rozwój
