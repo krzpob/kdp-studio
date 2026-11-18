@@ -153,7 +153,7 @@ def test_prompt_uses_book_style_block_without_no_frame(repo_config: AppConfig) -
 # --- Pole na tekst i napis ----------------------------------------------------------------
 
 
-SETTINGS = BelongsToSettings()
+SETTINGS = BelongsToSettings(text="This book belongs to:")
 AGE = BelongsToAge(font_pt=40, name_line_height_in=0.8, outline_text=False)
 
 
@@ -211,7 +211,7 @@ def _renderer(repo_config: AppConfig, tmp_path: Path) -> BelongsToRenderer:
         book_dir=tmp_path,
         geometry=PageGeometry(page_px=(850, 1100), dpi=100, margin_in=0.5),  # letter, 100 DPI
         params=age.postprocess,
-        settings=repo_config.settings.belongs_to_page,
+        settings=repo_config.belongs_to_settings("US"),
         age=age.belongs_to,
     )
 
@@ -581,7 +581,7 @@ def test_text_change_rerenders_without_new_frame(
 ) -> None:
     assert main([*GENERATE, "--pages", "3", "--belongs-to-page"]) == ExitCode.OK
     before = FRONT_PNG.read_bytes()
-    _use_settings(monkeypatch, config_dir, text="Ta książka należy do:")
+    _use_settings(monkeypatch, config_dir, text="Mine! This book belongs to:")
     capsys.readouterr()
     assert main(["finalize", ARG]) == ExitCode.OK  # finalize tylko przypomina
     assert "nie odpowiada obecnym ustawieniom" in capsys.readouterr().err

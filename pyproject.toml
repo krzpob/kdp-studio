@@ -5,6 +5,7 @@ description = "Generator kolorowanek pod Amazon KDP"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fonttools>=4.50",
     "openai>=3.51.0",
     "opencv-python-headless>=5.0.0.93",
     "pillow>=13.0.0",
@@ -54,6 +55,11 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 # potracer nie ma znacznika py.typed ani stubów.
 module = ["potrace", "potrace.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# fontTools nie ma znacznika py.typed ani stubów (kontrola znaków czcionek, FR-19).
+module = ["fontTools", "fontTools.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

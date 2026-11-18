@@ -91,7 +91,7 @@ from kdp_studio.pipeline.cover_vision import (
 )
 from kdp_studio.pipeline.cover_vision import qa_instructions as cover_qa_instructions
 from kdp_studio.pipeline.diversity import DiversityLimits, diversity_report
-from kdp_studio.pipeline.fonts import FontError
+from kdp_studio.pipeline.fonts import FontError, missing_chars
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.manifest import (
@@ -250,6 +250,13 @@ ThemeOpt = Annotated[str | None, typer.Option(help="Tematyka lub roboczy tytuł 
 AgeOpt = Annotated[str | None, typer.Option(help="Profil wieku z config/ages.yaml.")]
 StyleOpt = Annotated[str | None, typer.Option(help="Profil stylu z config/styles.yaml.")]
 FormatOpt = Annotated[str, typer.Option("--format", help="Profil formatu z config/formats.yaml.")]
+MarketOpt = Annotated[
+    str | None,
+    typer.Option(
+        help="Rynek Amazona z config/markets.yaml (FR-19): odmiana języka metadanych, napisy "
+        "programu i ceny. Domyślnie default_market z settings.yaml."
+    ),
+]
 PagesOpt = Annotated[int, typer.Option(help="Liczba grafik (stron kolorowanki), 1–200.")]
 StrictOpt = Annotated[
     bool, typer.Option("--strict", help="Za mało stron dla KDP to błąd, nie ostrzeżenie.")
@@ -337,6 +344,7 @@ def _book_spec(
     format_: str,
     pages: int,
     strict: bool,
+    market: str | None = None,
 ) -> BookSpec:
     try:
         result = validate_book_spec(
@@ -347,6 +355,7 @@ def _book_spec(
             pages=pages,
             strict=strict,
             config=config,
+            market=market,
         )
     except InputValidationError as e:
         raise _fail(e.errors) from e
@@ -403,6 +412,53 @@ def _belongs(config: AppConfig, flag: bool | None) -> bool:
     if belongs:
         _check_font(config)
     return belongs
+
+
+def _glyph_problems(config: AppConfig, market: str, which: str, extra: str = "") -> list[str]:
+    """Znaki tekstów rynku (FR-19) i `extra`, których brakuje w czcionce napisów: `which` to
+    `belongs_to` (strona FR-14) albo `cover` (tytuł okładki). Brak pliku sprawdza kto inny."""
+    profile = config.markets.markets[market]
+    config = config.for_market(market)
+    key_suffix = f" albo font rynku {market} w markets.yaml" if profile.font else ""
+    if which == "belongs_to":
+        path, key = config.settings.belongs_to_page.font_path, "belongs_to_page.font"
+        text = profile.required_chars() + config.belongs_to_text(market) + extra
+    else:
+        path, key = config.settings.cover.title_font_path, "cover.title_font"
+        text = profile.required_chars() + extra
+    if not path.is_file():
+        return []
+    try:
+        missing = missing_chars(path, text)
+    except FontError as e:
+        return [str(e)]
+    if not missing:
+        return []
+    return [
+        f"czcionka {path.name} ({key} w settings.yaml{key_suffix}) nie ma znaków „{missing}” "
+        "potrzebnych "
+        f"dla rynku {market} ({profile.name}); w druku byłyby puste prostokąty. Dodaj do "
+        "assets/fonts/ czcionkę z tymi znakami (licencja OFL) i wskaż ją w settings.yaml"
+    ]
+
+
+def _check_glyphs(config: AppConfig, market: str, which: str, extra: str = "") -> None:
+    """Kontrola znaków czcionki przed pierwszym wywołaniem API (FR-19); brak to kod 1."""
+    problems = _glyph_problems(config, market, which, extra)
+    if problems:
+        raise _fail(problems)
+
+
+def _warn_glyphs(config: AppConfig, market: str) -> None:
+    """Nowa książka: ostrzeżenie, gdy czcionki napisów nie mają znaków rynku. Strona FR-14
+    i okładka sprawdzą je ponownie i nie wystartują; strony do Canvy powstają normalnie."""
+    _warn(
+        [
+            f"{problem} (strona „This book belongs to…” i okładka nie powstaną bez tego)"
+            for which in ("belongs_to", "cover")
+            for problem in _glyph_problems(config, market, which)
+        ]
+    )
 
 
 def _check_font(config: AppConfig) -> None:
@@ -619,6 +675,7 @@ def _step_ideas(
             format=spec.format,
             pages=spec.pages,
             front_matter_pages=spec.front_matter_pages,
+            market=spec.market,
             concurrency=settings.concurrency,
             review_ideas=do_review,
             qa=settings.qa,
@@ -733,6 +790,7 @@ def ideas(
     age: AgeOpt = None,
     style: StyleOpt = None,
     format_: FormatOpt = DEFAULT_FORMAT,
+    market: MarketOpt = None,
     pages: PagesOpt = 30,
     strict: StrictOpt = False,
     output_dir: OutputDirOpt = Path("output"),
@@ -756,6 +814,8 @@ def ideas(
             raise _fail(["z katalogiem książki podaj --redo idea_XX,…"])
         if theme is not None or age is not None or style is not None:
             raise _fail(["--redo działa na istniejącej książce: nie podawaj --theme/--age/--style"])
+        if market is not None:
+            raise _fail(["--redo: rynek książki jest w manifeście, nie podawaj --market"])
         ids = [i.strip() for i in redo.split(",") if i.strip()]
         if not ids:
             raise _fail(["--redo: podaj id pomysłów, np. idea_07,idea_19"])
@@ -767,8 +827,9 @@ def ideas(
     if redo is not None:
         raise _fail(["--redo wymaga katalogu książki: kdp-studio ideas <katalog> --redo …"])
 
-    spec = _book_spec(config, theme, age, style, format_, pages, strict)
+    spec = _book_spec(config, theme, age, style, format_, pages, strict, market)
     target = _new_book_dir(output_dir, spec)
+    _warn_glyphs(config, spec.market)
     provider = _text_provider(config)
     costs = _cost_tracker(config, max_cost, [provider.model])
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
@@ -1105,7 +1166,7 @@ def _front_renderer(config: AppConfig, spec: BookSpec, target: Path) -> BelongsT
         book_dir=target,
         geometry=geometry,
         params=age.postprocess,
-        settings=config.settings.belongs_to_page,
+        settings=config.belongs_to_settings(spec.market),
         age=age.belongs_to,
     )
 
@@ -1216,7 +1277,7 @@ def _front_params_sha256(
 ) -> str:
     """Suma wszystkiego, co zmienia gotową stronę FR-14: obróbka, napis, czcionka, układ."""
     age = config.ages[spec.age]
-    settings = config.settings.belongs_to_page
+    settings = config.belongs_to_settings(spec.market)
     font = settings.font_path.read_bytes() if settings.font_path.is_file() else b""
     parts = [
         age.postprocess.model_dump_json(),
@@ -1442,8 +1503,10 @@ def belongs_to(
         with _locked(book, level):
             _remove_front(book)
         return
-    _check_font(config)
     writer = _open_book(book)
+    config = config.for_market(writer.manifest.input.market)  # napis i czcionka rynku (FR-19)
+    _check_font(config)
+    _check_glyphs(config, writer.manifest.input.market, "belongs_to")
     blocker = _belongs_to_blocker(book, writer.manifest)
     if blocker is not None:
         raise _fail([blocker])
@@ -1470,6 +1533,7 @@ def generate(
     age: AgeOpt = None,
     style: StyleOpt = None,
     format_: FormatOpt = DEFAULT_FORMAT,
+    market: MarketOpt = None,
     pages: PagesOpt = 30,
     strict: StrictOpt = False,
     output_dir: OutputDirOpt = Path("output"),
@@ -1488,7 +1552,8 @@ def generate(
     timer = StepTimer()
     config = _config()
     level = _log_level(config, log_level)
-    spec = _book_spec(config, theme, age, style, format_, pages, strict)
+    spec = _book_spec(config, theme, age, style, format_, pages, strict, market)
+    config = config.for_market(spec.market)  # napis FR-14 i czcionki napisów rynku (FR-19)
     workers = _workers(config, concurrency)
     quality = _quality(config, image_quality)
     target = _new_book_dir(output_dir, spec)
@@ -1496,6 +1561,12 @@ def generate(
     do_review = config.settings.review_ideas if review_ideas is None else review_ideas
     do_cover = config.settings.cover.in_generate if cover_ is None else cover_
     cover_setup = _generate_cover_setup(config, spec) if do_cover else None
+    if belongs_to_page is True or (
+        belongs_to_page is None and config.settings.belongs_to_page.enabled
+    ):
+        _check_glyphs(config, spec.market, "belongs_to")
+    if not do_cover:
+        _warn_glyphs(config, spec.market)
     # Wszyscy dostawcy przed pierwszym wywołaniem API: zły klucz albo proporcja wychodzą od razu.
     provider = _text_provider(config)
     need_vision = do_qa or (cover_setup is not None and cover_setup.needs_vision)
@@ -1568,6 +1639,7 @@ def _generate_cover_setup(config: AppConfig, spec: BookSpec) -> _CoverSetup:
     """`generate --cover`: kontrole okładki przed pierwszym wywołaniem API. Strony wybiera
     model z wizją (cover.select_pages), więc nie ma tu --cover-page ani --thumbnails."""
     count = config.settings.cover.thumbnails
+    _check_glyphs(config, spec.market, "cover")
     if spec.pages <= count:
         raise _fail(
             [f"--cover: okładka potrzebuje co najmniej {count + 1} stron (przód i miniatury)"]
@@ -1599,6 +1671,9 @@ def _step_cover(
         )
         return None
     try:
+        # Tytuł książki jest znany dopiero po pomysłach: znaki czcionki tytułu tu, przed API.
+        texts = _cover_texts(target, setup.back_text)
+        _check_glyphs(config, manifest.input.market, "cover", texts)
         pick = _cover_pages(target, manifest, None, None, config.settings.cover.thumbnails)
         run = _cover_run(
             target,
@@ -1875,6 +1950,15 @@ def _cover_geometry(config: AppConfig, manifest: Manifest) -> CoverGeometry:
     )
 
 
+def _cover_texts(target: Path, back_text: bool) -> str:
+    """Teksty okładki z metadanych (tytuł, podtytuł i opis na tyle) do kontroli znaków."""
+    try:
+        book = load_ideas(target).book
+    except BookError as e:
+        raise _fail(e.errors) from e
+    return book.title + book.subtitle + (book.description if back_text else "")
+
+
 def _cover_run(
     target: Path,
     writer: ManifestWriter,
@@ -2003,9 +2087,10 @@ def cover(
     """Okładka paperback do KDP: cover.pdf w CMYK, podglądy i strefy (FR-15)."""
     config = _config()
     level = _log_level(config, log_level)
-    settings = config.settings
     writer = _open_book(book)
     manifest = writer.manifest
+    config = config.for_market(manifest.input.market)  # czcionka tytułu rynku (FR-19)
+    settings = config.settings
     geometry = _cover_geometry(config, manifest)
     previous = manifest.cover
     pages_in_book = manifest.layout.pages_in_book
@@ -2027,6 +2112,7 @@ def cover(
         _quality(config, image_quality),
         manual=bool(cover_page and thumbnails),
     )
+    _check_glyphs(config, manifest.input.market, "cover", _cover_texts(book, setup.back_text))
     if manifest.status != "completed":
         _warn([f"książka nie jest gotowa (status {manifest.status}); okładka z gotowych stron"])
 
@@ -2466,10 +2552,10 @@ def _back_info(
 def profiles(
     kind: Annotated[
         str | None,
-        typer.Argument(help="Rodzaj profili: age, style albo format. Domyślnie wszystkie."),
+        typer.Argument(help="Rodzaj profili: age, style, format albo market. Domyślnie wszystkie."),
     ] = None,
 ) -> None:
-    """Wypisuje dostępne profile wieku, stylu i formatu z opisami (FR-12)."""
+    """Wypisuje dostępne profile wieku, stylu i formatu oraz rynki z opisami (FR-12, FR-19)."""
     if kind is not None and kind not in PROFILE_KINDS:
         raise _fail([f"nieznany rodzaj profili '{kind}'. Dozwolone: {', '.join(PROFILE_KINDS)}"])
     try:

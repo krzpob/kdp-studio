@@ -77,6 +77,16 @@ Okładkę może też zrobić `generate --cover` jako ostatni krok, po `finalize`
 
 Do konwersji CMYK potrzebny jest profil ICC, który wskazujesz w `config/settings.yaml` (`cover.cmyk.profile`). KDP żadnego nie podaje; zwykle używa się U.S. Web Coated (SWOP) v2 z pakietu profili Adobe, który pobierasz sam. Do prób na macOS wystarczy `/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc`. Ostateczną kontrolą kolorów jest egzemplarz próbny z KDP.
 
+### Rynek Amazona (FR-19)
+
+Książka powstaje dla jednego rynku Amazona: `--market US|UK|CA|AU|DE|FR|ES|IT|NL|PL|SE|JP` w `ideas` albo `generate` (domyślnie `default_market: US` z `config/settings.yaml`). Od rynku zależą odmiana języka tytułu, opisu i słów kluczowych („Coloring Book” na US, „Colouring Book” na UK), napis strony „This book belongs to…” i dane cenowe (FR-16). Prompty obrazów i opisy scen zostają po angielsku. Słowa z innej odmiany angielskiego (np. „color” w książce na UK) program poprawia w metadanych sam i wypisuje ostrzeżenie. Lista rynków: `uv run kdp-studio profiles market`; dane rynków są w `config/markets.yaml`. Ta sama kolorowanka na inny rynek to osobna książka (katalog z przyrostkiem, np. `…_square_uk`).
+
+```bash
+uv run kdp-studio generate --theme "Dinozaury" --age przedszkole --style kawaii --format square --market UK
+```
+
+Napisy programu (strona FR-14, tytuł okładki) na rynkach US i UK używają czcionki Fredoka, a na pozostałych Baloo 2, która ma też polskie ą, ć, ę, ń, ś, ź, ż (`font` w `config/markets.yaml`). Przed pierwszym płatnym wywołaniem program sprawdza, czy czcionka ma wszystkie litery rynku i tytułu. Żadna z dołączonych czcionek nie ma znaków japońskich, więc na rynku JP strona „This book belongs to…” i okładka nie powstaną, dopóki w `assets/fonts/` nie będzie czcionki z tymi znakami.
+
 ### Koszt i limit (FR-10)
 
 Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i cennika `api_pricing` w `config/settings.yaml` (ceny przepisane ze strony OpenAI, z datą sprawdzenia). Gdy OpenAI zmieni ceny albo przełączysz model, zaktualizuj ten cennik: model bez ceny to błąd przed pierwszym wywołaniem. Koszt każdej strony, pomysłów i całej książki zapisuje się w `manifest.json` (`cost_usd`), a konsola pokazuje koszt stron, kroków i podsumowanie `generate`.

@@ -32,7 +32,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
-| FR-19 | ⬜ | | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. |
+| FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
 | FR-20 | ⬜ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ⬜ | | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
@@ -231,7 +231,7 @@ Przykłady przy `safe_margin_in: 0.5` i `front_matter_pages: 2`:
 - Błąd samej oceny (np. odmowa modelu) oznacza stronę jako `failed`; błąd krytyczny dostawcy (klucz, brak środków) przerywa przebieg jak w FR-05.
 
 ### ✅ FR-08: Struktura wyjścia i manifest
-- Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`).
+- Katalog wyjściowy: `<output-dir>/<slug-tematu>_<age>_<style>_<format>/` (np. `output/dinozaury_przedszkole_kawaii_square/`), z przyrostkiem `_<rynek>` dla rynku innego niż US (FR-19, np. `…_square_uk`).
 - Zawartość: patrz sekcja 10.
 - Gotowe strony leżą w katalogu głównym książki jako `page_XX.png`, z numerem dopełnionym zerami do długości największego numeru (min. 2 cyfry, np. `page_01` … `page_30`). Kolejność alfabetyczna = kolejność stron, więc po przeciągnięciu całej paczki do Canvy strony są we właściwej kolejności.
 - W katalogu głównym nie ma innych plików PNG (surowe i odrzucone są w podkatalogach), żeby do Canvy dało się zaznaczyć i przesłać wszystkie pliki naraz. Jedyny wyjątek to strony wstępne z FR-14 (`front_*.png`), które też idą do Canvy i alfabetycznie stoją przed `page_*`.
@@ -394,7 +394,7 @@ przedszkole:
 ```
 
 **Implementacja (16.11.2026)**
-- **Czcionka:** Fredoka (SIL OFL 1.1) w `assets/fonts/Fredoka-Variable.ttf` z licencją `assets/fonts/OFL.txt`, wariant `SemiBold` (`belongs_to_page.font_variation`). Litery konturowe rysuje program: biały środek i czarny obrys. Czcionka nie potrzebuje więc osobnej wersji konturowej. Domyślnie konturowe są dla `przedszkole` i `wczesnoszkolne`.
+- **Czcionka:** Fredoka (SIL OFL 1.1) w `assets/fonts/Fredoka-Variable.ttf` z licencją `assets/fonts/OFL.txt`, wariant `SemiBold` (`belongs_to_page.font_variation`). Litery konturowe rysuje program: biały środek i czarny obrys. Czcionka nie potrzebuje więc osobnej wersji konturowej. Domyślnie konturowe są dla `przedszkole` i `wczesnoszkolne`. Na rynkach innych niż US i UK napis używa Baloo 2 (`assets/fonts/Baloo2-Variable.ttf`, licencja `OFL-Baloo2.txt`), bo Fredoka nie ma polskich liter (FR-19).
 - **Napis:** po angielsku, „This book belongs to:”. Inny język to zmiana `belongs_to_page.text` w `settings.yaml`. Za szeroki napis program zmniejsza, najwyżej do 40% rozmiaru z profilu wieku. Jeśli i tak się nie mieści, strona dostaje błąd obróbki.
 - **Elementy motywu w prompcie:** najczęstsza główna postać (`subject`) i najczęstsze przedmioty (`elements`) stron książki, liczone przez program, deterministycznie. Motyw to tytuł książki (`book.title`, w języku metadanych), bo prompt jest po angielsku.
 - **Pole na tekst:** domyślnie `x: 0.2, y: 0.37, width: 0.6, height: 0.3`. Jest nieco mniejsze niż w szkicu, żeby łatwiej mieściło się w tabliczce z modelu.
@@ -863,7 +863,7 @@ comfyui:
   cost_per_image_usd: 0
 ```
 
-### ⬜ FR-19: Rynek docelowy Amazona (poza MVP)
+### ✅ FR-19: Rynek docelowy Amazona (poza MVP)
 
 Książka powstaje dla konkretnego rynku Amazona, a nie tylko dla języka. USA, Wielka Brytania i Australia mówią po angielsku, ale inaczej: „Coloring Book” i „Colouring Book”, „color” i „colour”, inne słowa w wyszukiwarce. Słowa kluczowe KDP działają tylko wtedy, gdy zgadzają się z tym, jak szukają klienci na danym rynku.
 
@@ -893,6 +893,16 @@ Książka powstaje dla konkretnego rynku Amazona, a nie tylko dla języka. USA, 
 **Jedna książka, jeden rynek**
 - Tytuł w KDP ma jeden język i jeden zestaw metadanych, a do innych rynków trafia tylko z inną ceną. Ta sama kolorowanka w innej odmianie języka to w KDP osobna książka, więc u nas osobne uruchomienie `ideas` z innym `--market`.
 - Możliwe rozszerzenie: nowa książka na innym rynku korzystająca z gotowych stron istniejącej (np. `ideas --from <katalog>`), bo grafiki nie zawierają tekstu. Na razie poza tym wymaganiem.
+
+**Implementacja (18.11.2026)**
+- **`config/markets.yaml`:** 12 rynków z listy parametru, grupa cenowa `EU` dla DE, FR, ES, IT i NL (KDP ma w niej też IE i BE), `large_trim`, `sources` i wspólne `checked`. Ceny CA, AU, SE i JP przepisane 18.11.2026 z tych samych stron pomocy KDP co w FR-16 (US, UK, EU i PL zgadzają się z FR-16). Na Amazon.com.au koszt stały obejmuje 24–108 stron.
+- **Pola rynku:** `name`, `domain`, `locale`, `language`, ceny (`currency`, `printing_cost`, `royalty`) albo `pricing_group`, `terms` (`coloring_book`, `belongs_to`, `ages` z polami `{min}` i `{max}`, `adults`), `spelling` i `alphabet`. Zakres wieku do wzoru `ages` daje nowe pole profilu wieku `age_range` (`dorosli` go nie ma, więc dostaje `adults`). Złe pole we wzorze, nieznana grupa albo grupa razem z własnymi cenami to błąd konfiguracji.
+- **Ceny FR-16** wczytuje `MarketsConfig.pricing(rynek)` (kwoty jako `Decimal`); samo polecenie `price` to dalej FR-16.
+- **`--market`** w `ideas` i `generate`, domyślnie `default_market` z `settings.yaml` (zastępuje `metadata_language`; stary klucz w `settings.yaml` to błąd konfiguracji). `ideas <katalog> --redo` nie przyjmuje `--market`, bo rynek jest w manifeście. Katalog książki dostaje przyrostek `_<rynek>` dla rynku innego niż US (np. `…_square_uk`), żeby ta sama kolorowanka na drugi rynek nie trafiała do katalogu pierwszej; książki US mają nazwy jak dotąd.
+- **Metadane:** prompt pomysłów podaje domenę, `locale` i odmianę języka, każe nazwać książkę słowem z `terms.coloring_book` i zapisać wiek jak w `terms.ages`. Pisownię odmiany sprawdza i poprawia kod, nie model: mapa `spelling` (np. na UK, CA i AU `color → colour`, `favorite → favourite`, na US odwrotnie) zamienia te słowa w tytule, podtytule, opisie i słowach kluczowych z zachowaniem wielkości liter i zgłasza ostrzeżenie z listą zmian. To kontrola z FR-03a, ale bez wywołania API i niezależnie od `--review-ideas`.
+- **Strona FR-14:** `belongs_to_page.text: null` w `settings.yaml` oznacza napis z `terms.belongs_to` rynku książki; tekst wpisany tam ręcznie ma pierwszeństwo. Okładka nie ma osobnych tekstów rynku: tytuł, podtytuł i opis na tyle pochodzą z metadanych, które już są w języku rynku.
+- **Czcionki:** program czyta mapę znaków czcionki (`fonttools`), bo Pillow rysuje brakujący znak jako pusty prostokąt bez ostrzeżenia. Wymagane znaki to teksty `terms` i `alphabet` rynku, a dla okładki także tytuł, podtytuł i (z `--back-text`) opis z `ideas.json`. `generate --belongs-to-page` i `generate --cover` sprawdzają czcionki na starcie (kod 1 przed pierwszym wywołaniem API); `belongs-to` i `cover` przed swoimi wywołaniami, `generate --cover` dodatkowo tytuł po kroku pomysłów. `ideas` i `generate` bez tych kroków tylko ostrzegają, bo strony do Canvy nie mają napisów.
+- **Czcionka rynku:** Fredoka nie ma polskich liter ą, ć, ę, ń, ś, ź, ż (ma ł i ó), co wykazała ta kontrola. Rynek może więc mieć własną czcionkę napisów (`font` w `markets.yaml`), która zastępuje `belongs_to_page.font` i `cover.title_font`; warianty grubości (`SemiBold`, `Bold`) zostają z `settings.yaml`. Rynki inne niż US i UK używają Baloo 2 (SIL OFL, Google Fonts, `assets/fonts/Baloo2-Variable.ttf`, pobrana 18.11.2026), która ma wszystkie znaki tych rynków. Japońskich znaków nie ma żadna z dwóch czcionek, więc JP nadal kończy się czytelnym błędem przy stronie FR-14 i okładce. `AppConfig.for_market()` daje konfigurację z napisem i czcionkami rynku; używają jej `generate`, `belongs-to` i `cover`.
 
 Konfiguracja (szkic):
 

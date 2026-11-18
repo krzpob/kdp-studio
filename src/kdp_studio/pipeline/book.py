@@ -103,6 +103,7 @@ def spec_from_manifest(manifest: Manifest) -> BookSpec:
         format=data.format,
         pages=data.pages,
         front_matter_pages=data.front_matter_pages,
+        market=data.market,
     )
 
 

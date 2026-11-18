@@ -63,6 +63,7 @@ def validate_book_spec(
     pages: int,
     strict: bool,
     config: AppConfig,
+    market: str | None = None,
 ) -> ValidationResult:
     """Sprawdza wszystkie parametry i zwraca BookSpec z ostrzeżeniami.
 
@@ -78,6 +79,8 @@ def validate_book_spec(
     age_ok = _check_key("--age", age, list(config.ages), errors)
     style_ok = _check_key("--style", style, list(config.styles), errors)
     _check_key("--format", format, list(config.formats), errors)
+    market = config.settings.default_market if market is None else market
+    _check_key("--market", market, list(config.markets.markets), errors)
 
     pages_ok = PAGES_MIN <= pages <= PAGES_MAX
     if not pages_ok:
@@ -125,5 +128,6 @@ def validate_book_spec(
         format=format,
         pages=pages,
         front_matter_pages=front,
+        market=market,
     )
     return ValidationResult(spec=spec, warnings=warnings)

@@ -7,9 +7,10 @@ from kdp_studio.profiles import format_profiles
 def test_all_kinds_in_order(repo_config: AppConfig) -> None:
     lines = format_profiles(repo_config)
     headers = [line for line in lines if line and not line.startswith(" ")]
-    assert headers == ["Wiek (--age)", "Styl (--style)", "Format (--format)"]
+    assert headers == ["Wiek (--age)", "Styl (--style)", "Format (--format)", "Rynek (--market)"]
     listed = {line.split()[0] for line in lines if line.startswith("  ")}
-    assert listed == {*repo_config.ages, *repo_config.styles, *repo_config.formats}
+    markets = repo_config.markets.markets
+    assert listed == {*repo_config.ages, *repo_config.styles, *repo_config.formats, *markets}
 
 
 def test_groups_are_separated_by_blank_line(repo_config: AppConfig) -> None:

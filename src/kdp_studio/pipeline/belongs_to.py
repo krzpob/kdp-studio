@@ -112,8 +112,10 @@ def draw_text_block(
     left, top, right, bottom = rect
     box_w, box_h = right - left, bottom - top
     size = round(age.font_pt / 72 * dpi)
+    text = settings.text
+    assert text is not None, "napis FR-14 ustala AppConfig.belongs_to_settings(rynek)"
     font = _font(settings, size)
-    x0, y0, x1, y1 = font.getbbox(settings.text)
+    x0, y0, x1, y1 = font.getbbox(text)
     scale = min(1.0, TEXT_WIDTH * box_w / max(1, x1 - x0))
     line_h = age.name_line_height_in * dpi
     gap = 0.35 * size
@@ -124,7 +126,7 @@ def draw_text_block(
     if scale < 1.0:
         size = max(1, round(size * scale))
         font = _font(settings, size)
-        x0, y0, x1, y1 = font.getbbox(settings.text)
+        x0, y0, x1, y1 = font.getbbox(text)
         line_h *= scale
         gap = 0.35 * size
 
@@ -138,11 +140,9 @@ def draw_text_block(
     y = top_y - y0
     if age.outline_text:
         stroke = max(2, round(size * 0.045))
-        draw.text(
-            (x, y), settings.text, font=font, fill=WHITE, stroke_width=stroke, stroke_fill=BLACK
-        )
+        draw.text((x, y), text, font=font, fill=WHITE, stroke_width=stroke, stroke_fill=BLACK)
     else:
-        draw.text((x, y), settings.text, font=font, fill=BLACK)
+        draw.text((x, y), text, font=font, fill=BLACK)
     thickness = max(3, round(dpi * 0.02))
     line_y = round(top_y + block_h - thickness)
     half = box_w * NAME_LINE_WIDTH / 2

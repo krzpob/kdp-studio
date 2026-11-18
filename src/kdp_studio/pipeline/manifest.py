@@ -74,6 +74,7 @@ class ManifestInput(_Model):
     format: str
     pages: int
     front_matter_pages: int
+    market: str = "US"  # FR-19; stara książka bez tego pola to US
     concurrency: int
     review_ideas: bool
     qa: bool = False

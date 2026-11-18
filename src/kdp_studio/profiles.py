@@ -1,4 +1,4 @@
-"""FR-12: podgląd dostępnych profili wieku, stylu i formatu."""
+"""FR-12: podgląd dostępnych profili wieku, stylu i formatu oraz rynków (FR-19)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,14 @@ from typing import Literal, Protocol, get_args
 
 from kdp_studio.config import AppConfig, StyleProfile
 
-ProfileKind = Literal["age", "style", "format"]
+ProfileKind = Literal["age", "style", "format", "market"]
 PROFILE_KINDS: tuple[ProfileKind, ...] = get_args(ProfileKind)
 
 _HEADERS: dict[ProfileKind, str] = {
     "age": "Wiek (--age)",
     "style": "Styl (--style)",
     "format": "Format (--format)",
+    "market": "Rynek (--market)",
 }
 
 
@@ -29,7 +30,9 @@ def _profiles(config: AppConfig, kind: ProfileKind) -> Mapping[str, _Described]:
         return config.ages
     if kind == "style":
         return config.styles
-    return config.formats
+    if kind == "format":
+        return config.formats
+    return config.markets.markets
 
 
 def _notes(profile: _Described, is_default: bool) -> list[str]:
@@ -46,7 +49,10 @@ def format_profiles(
     kinds: tuple[ProfileKind, ...] = PROFILE_KINDS,
     default_format: str = "letter",
 ) -> list[str]:
-    """Linie do wypisania: nagłówek grupy, potem `klucz  Nazwa: opis. Uwagi.`."""
+    """Linie do wypisania: nagłówek grupy, potem `klucz  Nazwa: opis. Uwagi.`.
+
+    `default_format` z CLI; domyślny rynek to `default_market` z settings.yaml.
+    """
     lines: list[str] = []
     for kind in kinds:
         profiles = _profiles(config, kind)
@@ -56,7 +62,10 @@ def format_profiles(
         lines.append(_HEADERS[kind])
         for key, profile in profiles.items():
             description = " ".join(profile.description.split())
-            notes = _notes(profile, is_default=kind == "format" and key == default_format)
+            default = (kind == "format" and key == default_format) or (
+                kind == "market" and key == config.settings.default_market
+            )
+            notes = _notes(profile, is_default=default)
             text = " ".join([f"{profile.name}: {description}", *notes])
             lines.append(f"  {key:<{width}}{text}")
     return lines

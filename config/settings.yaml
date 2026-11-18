@@ -12,7 +12,7 @@ front_matter_pages: 2
 # (fallback_art_height) i napis pod nią.
 belongs_to_page:
   enabled: false
-  text: "This book belongs to:"
+  text: null                  # null: napis z markets.yaml (terms.belongs_to rynku książki, FR-19)
   composition: >-
     a decorative frame made of theme elements around a large empty blank plaque in the center
     of the page, the plaque is completely empty with nothing written or drawn inside it
@@ -49,8 +49,10 @@ qa: false
 qa_max_retries: 2
 qa_max_ideas: 2
 
-# Język metadanych książki (tytuł, opis, słowa kluczowe). Spec §14, pytanie 2: na razie rynek US.
-metadata_language: English
+# Rynek Amazona książki (FR-19): klucz z config/markets.yaml; --market w ideas i generate nadpisuje.
+# Od rynku zależą odmiana języka metadanych (tytuł, opis, słowa kluczowe), stałe napisy programu
+# i dane cenowe (FR-16). Prompty obrazów i opisy scen zostają po angielsku.
+default_market: US
 
 # Implementacje z rejestru src/kdp_studio/providers/registry.py.
 providers:
