@@ -33,7 +33,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
-| FR-20 | ✅ | | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
+| FR-20 | ✅ | #61 | Poza MVP. Specyfikacja: #44. Plik parametrów książki `--config-file`, flagi mają pierwszeństwo. |
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
