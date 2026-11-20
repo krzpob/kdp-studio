@@ -46,7 +46,7 @@ from kdp_studio.config import (
     LogLevel,
     load_config,
 )
-from kdp_studio.models import BookIdeas, BookSpec
+from kdp_studio.models import BookIdeas, BookMetadata, BookSpec
 from kdp_studio.observability import (
     LOG_LEVELS,
     LoggedImageProvider,
@@ -133,6 +133,13 @@ from kdp_studio.pipeline.front_matter import (
 from kdp_studio.pipeline.idea_review import IdeaReviewer
 from kdp_studio.pipeline.ideas import IdeaGenerator
 from kdp_studio.pipeline.interior import INTERIOR_FILE, InteriorError, write_interior
+from kdp_studio.pipeline.listing import (
+    DESCRIPTION_AIM_CHARS,
+    DESCRIPTION_FILE,
+    KDP_DESCRIPTION_MAX_CHARS,
+    book_facts,
+    render_description,
+)
 from kdp_studio.pipeline.manifest import (
     AI_DISCLOSURE,
     CopyrightPage,
@@ -145,6 +152,7 @@ from kdp_studio.pipeline.manifest import (
     CoverSeamInfo,
     CoverSelectionInfo,
     CoverTemplateInfo,
+    DescriptionInfo,
     FinalInfo,
     FrontKind,
     FrontPage,
@@ -909,6 +917,7 @@ def _step_ideas(
         ),
     )
     typer.echo(f"Manifest: {manifest.path} (status: {manifest.manifest.status})")
+    _write_description(config, manifest, target, ideas.book)
     log_event(
         _log,
         logging.INFO,
@@ -919,6 +928,42 @@ def _step_ideas(
         diversity_issues=[] if ideas.diversity is None else ideas.diversity.issues,
     )
     return ideas
+
+
+def _write_description(
+    config: AppConfig, writer: ManifestWriter, target: Path, book: BookMetadata
+) -> None:
+    """Opis do KDP (FR-03) z części od modelu i faktów z manifestu: `description.html`.
+
+    Fakty (liczba stron, tryb druku, strony wstępne) mogą się zmienić po kroku 1, dlatego
+    `finalize` składa opis jeszcze raz. Bez tłumaczeń dla języka rynku opis nie ma faktów.
+    """
+    manifest = writer.manifest
+    try:
+        texts: FrontTexts | None = front_texts(config, manifest.input.market)
+    except FrontMatterError:
+        texts = None
+        _warn([f"opis bez listy faktów: brak tekstów dla rynku {manifest.input.market}"])
+    text = render_description(book, book_facts(manifest, config), texts)
+    path = target / DESCRIPTION_FILE
+    write_bytes_atomic(path, text.encode("utf-8"))
+    chars = len(text.strip())
+    manifest.description = DescriptionInfo(
+        chars=chars,
+        sha256=sha256_text(text),
+        language=None if texts is None else texts.language,
+    )
+    writer.save()
+    typer.echo(f"Opis do KDP: {path} ({chars} znaków ze znacznikami HTML)")
+    if chars > KDP_DESCRIPTION_MAX_CHARS:
+        _warn([f"opis ma {chars} znaków, a KDP przyjmuje najwyżej {KDP_DESCRIPTION_MAX_CHARS}"])
+    elif chars > DESCRIPTION_AIM_CHARS:
+        _warn(
+            [
+                f"opis ma {chars} znaków; kupujący czyta zwykle początek (cel: do "
+                f"{DESCRIPTION_AIM_CHARS})"
+            ]
+        )
 
 
 def _manifest_input(
@@ -1698,6 +1743,7 @@ def _step_finalize(config: AppConfig, target: Path, single_sided: bool | None = 
 
     status = writer.update_status()
     _finalize_interior(config, writer, target)
+    _write_description(config, writer, target, ideas.book)
     ok = len(manifest.ok_pages)
     log_event(_log, logging.INFO, "finalize_done", ok=ok, pages=len(manifest.pages), status=status)
     typer.echo(

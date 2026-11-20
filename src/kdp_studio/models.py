@@ -45,8 +45,15 @@ class BookMetadata(BaseModel):
 
     title: NonEmptyStr
     subtitle: Annotated[str, StringConstraints(strip_whitespace=True)]
+    # Zwykły tekst: hasło i akapit opisu bez znaczników (np. do tylnej okładki, FR-15).
     description: NonEmptyStr
     keywords: Annotated[list[NonEmptyStr], Field(max_length=KDP_MAX_KEYWORDS)]
+    # Części opisu KDP od modelu (FR-03): fragmenty HTML tylko z <b>, <i>, <u>. Opis składa z nich
+    # program (pipeline/listing.py). Brak w plikach sprzed zmiany: opis bierze wtedy `description`.
+    headline: str | None = None
+    about: str | None = None
+    benefits: list[NonEmptyStr] = Field(default_factory=list)
+    closing: str | None = None
 
 
 class PageIdea(BaseModel):

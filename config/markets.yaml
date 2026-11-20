@@ -295,6 +295,15 @@ texts:
       intro: "Thank you so much for buying my book! I appreciate your support. Before starting your coloring journey, please read:"
       section: Paper Quality
       body: "For the best results, test your coloring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are coloring."
+    listing:
+      pages_single: "{pages} single-sided coloring pages, so markers won't bleed onto the next picture"
+      pages_double: "{pages} coloring pages"
+      size: "Large {trim_in} pages, printed on white paper"
+      first_page_title: "A title page to color"
+      first_page_belongs_to: "A \"This book belongs to\" page to sign"
+      instructions: "A tips page where you can test your crayons and markers first"
+      benefits_kids: "Why kids and parents love it"
+      benefits_adults: "Why you'll love it"
   en-GB:                                  # tylko różnice względem en
     instructions:
       intro: "Thank you so much for buying my book! I appreciate your support. Before starting your colouring journey, please read:"
@@ -313,6 +322,15 @@ texts:
       intro: "Dziękuję za zakup tej książki! Bardzo doceniam Twoje wsparcie. Zanim zaczniesz kolorować, przeczytaj:"
       section: Jakość papieru
       body: "Najpierw wypróbuj swoje kredki i flamastry. Żeby kolor nie przebił na następną stronę, podłóż pod kolorowaną stronę czystą kartkę grubszego papieru."
+    listing:
+      pages_single: "{pages} kolorowanek drukowanych jednostronnie, więc flamaster nie przebije na następny obrazek"
+      pages_double: "{pages} kolorowanek"
+      size: "Duży format {trim_cm}, biały papier"
+      first_page_title: "Strona tytułowa do pokolorowania"
+      first_page_belongs_to: "Strona „Ta książka należy do…” do podpisania"
+      instructions: "Strona z poradami, na której najpierw wypróbujesz kredki i flamastry"
+      benefits_kids: "Dlaczego pokochają ją dzieci i rodzice"
+      benefits_adults: "Dlaczego ją pokochasz"
   de:
     copyright:
       minimal: "© {year} {owner}. Alle Rechte vorbehalten."
@@ -327,3 +345,12 @@ texts:
       intro: "Vielen Dank, dass du mein Buch gekauft hast! Ich freue mich sehr über deine Unterstützung. Bevor du mit dem Ausmalen beginnst, lies bitte:"
       section: Papierqualität
       body: "Teste deine Stifte am besten zuerst. Damit die Farbe nicht auf die nächste Seite durchdrückt, lege ein leeres Blatt dickeres Papier hinter die Seite, die du gerade ausmalst."
+    listing:
+      pages_single: "{pages} einseitig bedruckte Malvorlagen, damit Filzstifte nicht auf das nächste Bild durchdrücken"
+      pages_double: "{pages} Malvorlagen"
+      size: "Großes Format {trim_cm}, weißes Papier"
+      first_page_title: "Eine Titelseite zum Ausmalen"
+      first_page_belongs_to: "Eine Seite „Dieses Buch gehört…“ zum Eintragen des Namens"
+      instructions: "Eine Seite mit Tipps, auf der du deine Stifte zuerst ausprobieren kannst"
+      benefits_kids: "Warum Kinder und Eltern es lieben"
+      benefits_adults: "Warum du es lieben wirst"
