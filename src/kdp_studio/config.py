@@ -231,6 +231,17 @@ FirstPage = Literal["title", "belongs-to"]
 CopyrightVariant = Literal["minimal", "short", "full"]
 COPYRIGHT_FIELDS = {"year": 0, "owner": ""}  # wstawki w tekście praw autorskich
 INSTRUCTION_KEYS = ("heading", "intro", "section", "body")
+# Zdania opisu KDP składane przez program (FR-03): fakty o książce i nagłówek korzyści.
+LISTING_FIELDS: dict[str, dict[str, object]] = {
+    "pages_single": {"pages": 0},
+    "pages_double": {"pages": 0},
+    "size": {"trim_in": "", "trim_cm": ""},
+    "first_page_title": {},
+    "first_page_belongs_to": {},
+    "instructions": {},
+    "benefits_kids": {},
+    "benefits_adults": {},
+}
 
 
 def _repo_path(value: str) -> Path:
@@ -636,6 +647,7 @@ class FrontTexts(_Strict):
     language: str  # klucz z `texts`, z którego pochodzą (np. en-GB albo en)
     copyright: dict[str, str]  # minimal, short, full
     instructions: dict[str, str]  # heading, intro, section, body
+    listing: dict[str, str] = {}  # zdania opisu KDP (FR-03), klucze LISTING_FIELDS
 
 
 def _merge_texts(
@@ -670,6 +682,7 @@ class MarketsConfig(_Strict):
             language=key,
             copyright=data.get("copyright", {}),
             instructions=data.get("instructions", {}),
+            listing=data.get("listing", {}),
         )
 
     @model_validator(mode="after")
@@ -702,6 +715,21 @@ class MarketsConfig(_Strict):
             for name, text in texts.instructions.items():
                 if "{" in text or "}" in text:
                     raise ValueError(f"{where}.instructions.{name}: tekst nie ma wstawek {{…}}")
+            missing = [k for k in LISTING_FIELDS if not texts.listing.get(k, "").strip()]
+            if missing:
+                raise ValueError(f"{where}.listing: brak {', '.join(missing)}")
+            extra = set(texts.listing) - set(LISTING_FIELDS)
+            if extra:
+                raise ValueError(f"{where}.listing: nieznane klucze {', '.join(sorted(extra))}")
+            for name, text in texts.listing.items():
+                fields = LISTING_FIELDS[name]
+                try:
+                    text.format(**fields)
+                except (KeyError, IndexError, ValueError) as e:
+                    allowed = ", ".join("{" + f + "}" for f in fields) or "brak wstawek"
+                    raise ValueError(
+                        f"{where}.listing.{name}: nieznane pole {e}; dozwolone: {allowed}"
+                    ) from e
         return self
 
     @model_validator(mode="after")

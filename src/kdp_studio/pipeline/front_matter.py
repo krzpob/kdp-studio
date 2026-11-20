@@ -87,6 +87,7 @@ def front_texts(config: AppConfig, market: str) -> FrontTexts:
         update={
             "copyright": fixed(texts.copyright),
             "instructions": fixed(texts.instructions),
+            "listing": fixed(texts.listing),
         }
     )
 

@@ -238,3 +238,43 @@ def test_subtitle_with_the_audience_has_no_warnings(repo_config: AppConfig) -> N
     response = llm_ideas_response(12, subtitle="Big Dinosaurs for Kids Ages 3-5")
     result, _ = _generate(repo_config, response)
     assert result.warnings == []
+
+
+# --- Opis do KDP ----------------------------------------------------------------------
+
+
+def test_prompt_describes_the_description_parts(repo_config: AppConfig) -> None:
+    system, _ = build_prompts(_spec(), repo_config)
+    assert "the program builds it from your parts" in system
+    assert "use only <b>, <i> and <u>" in system
+    assert "no requests for reviews" in " ".join(system.split())
+
+
+def test_bad_html_in_description_retries(repo_config: AppConfig) -> None:
+    bad = llm_ideas_response(12, about='See <a href="x">this</a> book.')
+    result, provider = _generate(repo_config, bad, llm_ideas_response(12))
+    assert result.attempts == 2 and len(provider.calls) == 2
+    assert result.warnings == []
+
+
+def test_bad_html_after_all_attempts_is_cleaned(repo_config: AppConfig) -> None:
+    bad = llm_ideas_response(12, about='See <a href="x">this</a> & <b>more</b>.')
+    result, _ = _generate(repo_config, bad, bad)
+    book = result.ideas.book
+    assert book.about == "See this &amp; <b>more</b>."
+    assert book.description.endswith("See this & more.")
+    assert any(
+        "usunięty niedozwolony HTML (niedozwolony znacznik <a>" in w for w in result.warnings
+    )
+
+
+def test_too_long_description_retries(repo_config: AppConfig) -> None:
+    long = llm_ideas_response(12, about="x" * 3600)
+    result, _ = _generate(repo_config, long, llm_ideas_response(12))
+    assert result.attempts == 2
+
+
+def test_description_sales_words_are_a_warning(repo_config: AppConfig) -> None:
+    response = llm_ideas_response(12, closing="Buy now and leave a review!")
+    result, _ = _generate(repo_config, response)
+    assert any("buy now, review" in w for w in result.warnings)

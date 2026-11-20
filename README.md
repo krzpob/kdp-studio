@@ -121,6 +121,8 @@ uv run kdp-studio ideas --config-file output/<książka>/manifest.json --theme "
 
 `finalize` składa `interior.pdf`, gotowe wnętrze do wgrania w KDP: strony wstępne, potem kolorowanki. Domyślnie druk jest jednostronny: każda grafika stoi na prawej stronie z pustym tyłem, bo flamastry przebijają. `--double-sided` daje grafiki jedna po drugiej (mniej stron, cieńszy grzbiet i niższy koszt druku). Tryb wybierasz w `ideas`/`generate` albo zmieniasz później w `finalize`; zmiana liczby stron może zmienić margines od grzbietu, więc `finalize` obrabia wtedy strony ponownie i ostrzega, że okładkę trzeba zrobić od nowa. PDF powstaje tylko wtedy, gdy wszystkie strony są gotowe, i tylko dla książek ze stronami wstępnymi FR-23. `canva.md` zostaje jako ręczna droga.
 
+Opis do KDP program składa sam do `description.html` (krok 1 i ponownie `finalize`): pogrubiony tytuł, hasło, akapit o zawartości, lista faktów z manifestu (liczba kolorowanek, druk, format, strony wstępne), korzyści i zdanie na koniec. Model pisze tylko treść, a w niej może wyróżniać słowa `<b>`, `<i>` i `<u>`. Plik wklejasz w pole opisu w KDP; limit 4000 znaków liczy też znaczniki.
+
 ```bash
 uv run kdp-studio finalize output/<książka> [--single-sided|--double-sided]
 ```

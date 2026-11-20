@@ -359,6 +359,16 @@ class CoverInfo(_Model):
     error: str | None = None
 
 
+class DescriptionInfo(_Model):
+    """Opis do KDP (FR-03) złożony przez program: `description.html`."""
+
+    file: str = "description.html"
+    chars: int  # długość ze znacznikami HTML, jak liczy KDP (limit 4000)
+    sha256: str
+    language: str | None  # tłumaczenie faktów i nagłówków z `texts`; None: opis bez faktów
+    created_at: str = Field(default_factory=_now)
+
+
 class InteriorInfo(_Model):
     """Gotowe wnętrze `interior.pdf` (FR-22, krok 3)."""
 
@@ -387,6 +397,7 @@ class Manifest(_Model):
     front_matter: FrontMatter = Field(default_factory=FrontMatter)
     cover: CoverInfo | None = None  # FR-15
     interior: InteriorInfo | None = None  # FR-22
+    description: DescriptionInfo | None = None  # FR-03: opis do KDP
     ai_disclosure: str = AI_DISCLOSURE
 
     @property

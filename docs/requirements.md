@@ -141,7 +141,7 @@ Parametry techniczne opisuje sekcja 9. Wszystkie parametry można też podać w 
 - **Jedno** wywołanie LLM ze strukturyzowanym wyjściem (JSON Schema lub structured outputs).
 - Wejście promptu: temat, profil wieku, profil stylu, format, liczba stron.
 - Wyjście (`ideas.json`):
-  - `book`: `title`, `subtitle`, `description` (pod listing KDP), `keywords` (do 7);
+  - `book`: `title`, `subtitle`, `keywords` (do 7) i części opisu `headline`, `about`, `benefits`, `closing` (opis do KDP składa z nich program, niżej); `description` to ich zwykły tekst;
   - `pages`: lista `pages + ceil(pages * reserve_ratio)` pomysłów (`reserve_ratio` domyślnie 0.2), każdy z polami `id`, `title`, `scene` (opis sceny po angielsku, gotowy do promptu), `elements` (lista obiektów).
 - Pomysły muszą:
   - wyraźnie pasować do tematu: główny motyw, czynność albo dobrze widoczny przedmiot jest typowy dla tematu i jest na liście `elements`. Motywy zwyczajowo kojarzone z tematem się liczą (dla świąt także bałwan, sanki, śnieg). Ogólne słowa („holiday”, „festive”) nie wystarczą, a scena, która wyglądałaby tak samo w każdy inny dzień (tort urodzinowy z koroną, herbatka, kosz z praniem), potrzebuje konkretnego elementu tematu (dla świąt: pierniczki, choinka, skarpety na prezenty);
@@ -153,7 +153,19 @@ Parametry techniczne opisuje sekcja 9. Wszystkie parametry można też podać w 
   - **tytuł:** temat słowami, których szukają kupujący, z „Coloring Book” rynku (FR-19), gdy pasuje; krótki, cel do 60 znaków (KDP: dłuższe tytuły kupujący przeskakują);
   - **podtytuł:** jedna grupa odbiorców dokładnie frazą rynku (np. „for Kids Ages 6–8”), opcjonalnie krótko, co jest w środku; jako zwykłe zdanie, bez listy grup rozdzielonych `|` albo przecinkami; cel do 80 znaków, czyli jeden lub dwa wiersze na okładce;
   - **słowa kluczowe:** dokładnie 7 fraz, które wpisują kupujący, rozplanowanych: 2–3 na inne grupy odbiorców (zakresy wieku nachodzące na docelowy, np. „kids ages 5-8” albo „ages 4-8” dla 6–8, dziewczynki i chłopcy, przedszkole; dla dorosłych np. nastolatki i dorośli, seniorzy), 1–2 na okazje i zastosowania (prezent, święto, podróż, relaks), reszta na inne słowa tematu. Każda fraza dodaje co najmniej jedno słowo spoza tytułu i podtytułu; bez wariantów różniących się pisownią, interpunkcją, wielkością liter, kolejnością słów lub liczbą mnogą; bez znaków towarowych, ocen („best”), słów czasowych („new”) i nazw programów Amazona.
-- Kontrola w kodzie, bez dodatkowego wywołania: tytuł z podtytułem dłuższe niż 200 znaków (limit KDP) to ponowienie wywołania jak przy błędnych metadanych, a po wyczerpaniu prób kod 4. Ostrzeżenia (metadane zostają bez zmian, poprawia je użytkownik w `ideas.json` albo w KDP): podtytuł bez frazy odbiorców rynku, tytuł albo podtytuł dłuższy niż cel dla okładki, słowo kluczowe złożone tylko ze słów tytułu i podtytułu, wariant innego słowa kluczowego.
+- Kontrola w kodzie, bez dodatkowego wywołania: tytuł z podtytułem dłuższe niż 200 znaków (limit KDP) to ponowienie wywołania jak przy błędnych metadanych, a po wyczerpaniu prób kod 4. Tak samo części opisu, które ze znacznikami i miejscem na fakty przekroczyłyby 4000 znaków. Niedozwolony HTML w częściach opisu daje jedno ponowienie, a potem program usuwa znaczniki (tekst zostaje) z ostrzeżeniem. Ostrzeżenia (metadane zostają bez zmian, poprawia je użytkownik w `ideas.json` albo w KDP): podtytuł bez frazy odbiorców rynku, tytuł albo podtytuł dłuższy niż cel dla okładki, słowo kluczowe złożone tylko ze słów tytułu i podtytułu, wariant innego słowa kluczowego, treści opisu niezgodne z zasadami KDP (emoji, adres, cena, słowa sprzedażowe, prośba o recenzję; wykrywanie przybliżone).
+- **Opis do KDP** (zmiana z 20.11.2026). Opis zawsze ma te same części, a strukturę i fakty dokłada program, nie model:
+  1. pogrubiony tytuł książki (`<b>`);
+  2. hasło (`<h4>`): jedno zdanie, które przyciąga uwagę i mówi, czym książka się wyróżnia (model, do 120 znaków);
+  3. akapit o zawartości: motywy, postacie, zajęcia (model, 2–3 zdania, do 500 znaków);
+  4. lista faktów (`<ul>`) z manifestu: liczba kolorowanek i druk jednostronny („flamaster nie przebije na następny obrazek”) albo dwustronny, format strony, strona tytułowa do kolorowania albo „This book belongs to” i strona z poradami (FR-23), jeśli książka je ma;
+  5. nagłówek (`<h5>`, „Why kids and parents love it” albo dla dorosłych „Why you'll love it”) i 3–5 korzyści (model, każda do 100 znaków): co dziecko lubi albo ćwiczy i dlaczego to lubi rodzic (spokojny czas bez ekranu, prezent), dla dorosłych relaks i kreatywność;
+  6. zdanie na koniec z powodem do zakupu, np. pomysł na prezent (model, do 150 znaków).
+
+  Model zwraca te części jako osobne pola (`headline`, `about`, `benefits`, `closing` w `ideas.json`) i może w nich używać tylko `<b>`, `<i>`, `<u>`, oszczędnie i bez atrybutów. Pozostałe znaczniki KDP (`<p>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<h4>`–`<h6>`) wstawia program; `<h1>`–`<h3>` KDP nie obsługuje. Zdania faktów i nagłówki są w `texts` → `listing` w `config/markets.yaml` (pl, en, de; pisownia rynku jak w FR-19), z wstawkami `{pages}`, `{trim_in}` i `{trim_cm}`. Rynek bez tych tekstów dostaje opis bez listy faktów i bez nagłówka korzyści, z ostrzeżeniem.
+  Zasady KDP dla opisu (prompt i ostrzeżenia w kodzie): bez emoji, adresów stron i e-maili, cen, słów „free” czy „sale”, próśb o recenzje, „buy now” ani haseł typu „bestseller”, bez list słów kluczowych i bez wzmianki o AI. Odsyłanie do innych książek autora należy do A+ Content (sekcja 14a), nie do opisu.
+- `description` w `ideas.json` zostaje zwykłym tekstem (hasło i akapit bez znaczników), np. dla tyłu okładki (FR-15). Stare pliki bez części opisu dostają w HTML swój `description` jako akapit.
+- Opis składa program w kroku 1 i jeszcze raz w `finalize` (fakty mogą się zmienić, np. tryb druku, FR-22) do `description.html` w katalogu książki, gotowego do wklejenia w KDP, a manifest zapisuje `description` (`chars`, `sha256`, `language`). KDP liczy do limitu 4000 znaków także znaczniki, więc program mierzy złożony HTML: powyżej 4000 ostrzeżenie, powyżej 2000 ostrzeżenie, że kupujący czyta zwykle początek (cel 1000–1500).
 
 ### ✅ FR-03a: Weryfikacja pomysłów przed generowaniem grafik
 - Domyślnie włączona (`review_ideas: true` w `settings.yaml`); `--no-review-ideas` wyłącza.
@@ -1516,6 +1528,7 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── ideas.json
 ├── canva.md                        # instrukcja składania w Canvie (sekcja 10.1)
 ├── interior.pdf                    # gotowe wnętrze do KDP (FR-22, poza MVP)
+├── description.html                # opis do wklejenia w KDP (FR-03)
 ├── front_title.png | front_belongs_to.png, front_copyright.png, front_instructions.png   # strony wstępne (FR-23)
 ├── front_belongs_to.png            # po `belongs-to` albo `generate --belongs-to-page` (FR-14, poza MVP)
 ├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
@@ -1658,6 +1671,10 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Ograniczenie: opis tekstowy zapewnia ten sam strój i znaki szczególne, ale twarz i proporcje różnią się między stronami. Pełną spójność dałaby karta postaci generowana raz i podawana jako `reference_image` do każdej strony.
 - Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
 - W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
+
+**A+ Content: moduły strony produktu**
+- A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładki, strony, tematy i wiek. Mógłby przygotować grafiki modułów (np. baner 970 × 300 ze stronami książki, „co jest w środku”) i teksty zgodne z zasadami A+.
+- Zasady A+ są ostrzejsze niż opisu: bez wezwań do zakupu („buy now”, „add to cart”), cen, słów „free” i „bonus”, odniesień czasowych i świątecznych. Tabela porównawcza może zestawiać tylko książki z własnego konta KDP i jest właściwym miejscem na „zobacz inne moje kolorowanki”; układa się ją w KDP z numerów ASIN.
 
 **Słowa kluczowe z danych o wyszukiwaniach**
 - Dziś słowa kluczowe wybiera model z samej wiedzy o rynku (FR-03). Narzędzia typu KDSpy czy Publisher Rocket pokazują, jak często kupujący wpisują daną frazę i ile książek z nią konkuruje.

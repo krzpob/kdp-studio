@@ -18,6 +18,14 @@ from kdp_studio.models import (
     BookSpec,
     PageIdea,
 )
+from kdp_studio.pipeline.listing import (
+    FACTS_RESERVE_CHARS,
+    KDP_DESCRIPTION_MAX_CHARS,
+    content_issues,
+    description_parts_length,
+    plain_text,
+    sanitize_inline,
+)
 from kdp_studio.providers.base import ProviderError, TextProvider, Usage
 
 DEFAULT_MAX_ATTEMPTS = 2
@@ -26,6 +34,11 @@ KDP_TITLE_MAX_CHARS = 200  # tytuł i podtytuł razem (wytyczne metadanych KDP)
 # Cel długości dla czytelności na okładce (FR-15); KDP: dłuższe tytuły kupujący przeskakują.
 TITLE_AIM_CHARS = 60
 SUBTITLE_AIM_CHARS = 80
+# Części opisu KDP (FR-03): cel razem ok. 1000–1500 znaków z faktami i znacznikami.
+HEADLINE_CHARS = 120
+ABOUT_CHARS = 500
+BENEFIT_CHARS = 100
+CLOSING_CHARS = 150
 
 
 # Opisy cech sceny (FR-03b), wspólne dla generowania i weryfikacji.
@@ -54,7 +67,10 @@ ANCHORS_HELP = (
 class _LLMBook(BaseModel):
     title: str = Field(description="Book title for the Amazon KDP listing.")
     subtitle: str = Field(description="Subtitle; may be empty.")
-    description: str = Field(description="Plain-text book description for the KDP listing.")
+    headline: str = Field(description="Description headline: one sentence that grabs attention.")
+    about: str = Field(description="Description: 2-3 sentences about what is inside the book.")
+    benefits: list[str] = Field(description="3-5 short benefit points for the buyer.")
+    closing: str = Field(description="One closing sentence with a reason to buy.")
     keywords: list[str] = Field(description="Up to 7 search keywords or short phrases.")
 
 
@@ -117,8 +133,21 @@ about what is inside (e.g. the main motifs). One audience only, as a natural phr
 audiences or words separated by "|" or commas. At most {subtitle_aim} characters, so it fits on \
 the cover in one or two lines. Title and subtitle together: never more than {title_chars} \
 characters.
-- Description: plain text, no HTML, at most 4000 characters, no claims like "bestseller" or \
-"free", no mention of AI.
+- Description: the program builds it from your parts and adds the bold title, a list of facts \
+(page count, single-sided printing, size, extra pages) and the list markup, so do not repeat \
+those facts. Keep it short: buyers read the beginning.
+  - headline: one sentence that grabs attention and says what makes this book special, at most \
+{headline_chars} characters;
+  - about: 2-3 sentences about what is inside (motifs, characters, activities), at most \
+{about_chars} characters;
+  - benefits: 3-5 short points about what the buyer gets (for children: what the child enjoys \
+or practises and why the parent likes it, such as calm screen-free time or a gift; for adults: \
+relaxation, creativity), each at most {benefit_chars} characters;
+  - closing: one sentence with a reason to buy, such as a gift idea, at most {closing_chars} \
+characters.
+  In these texts use only <b>, <i> and <u>, sparingly and without attributes; no other HTML, no \
+emojis, no URLs or contact details, no prices or words like "free" or "sale", no requests for \
+reviews, no "buy now", no claims like "bestseller", no keyword lists, no mention of AI.
 - Keywords: exactly {max_keywords} short phrases that buyers would type, each at most \
 {keyword_chars} characters. They carry what the title and subtitle leave out, so plan them:
   - 2-3 for other audiences: for children, age ranges that overlap the target ages (e.g. \
@@ -187,6 +216,10 @@ def build_prompts(spec: BookSpec, config: AppConfig) -> tuple[str, str]:
         title_chars=KDP_TITLE_MAX_CHARS,
         title_aim=TITLE_AIM_CHARS,
         subtitle_aim=SUBTITLE_AIM_CHARS,
+        headline_chars=HEADLINE_CHARS,
+        about_chars=ABOUT_CHARS,
+        benefit_chars=BENEFIT_CHARS,
+        closing_chars=CLOSING_CHARS,
         theme_rule=THEME_RULE,
     )
     user = USER_PROMPT.format(
@@ -295,13 +328,35 @@ def _unique_pages(pages: list[_LLMPage]) -> list[_LLMPage]:
     return result
 
 
-def _metadata(book: _LLMBook) -> BookMetadata:
-    return BookMetadata(
+def _metadata(book: _LLMBook) -> tuple[BookMetadata, list[str]]:
+    """Metadane z odpowiedzi modelu i usterki HTML w częściach opisu (FR-03).
+
+    Części opisu przechodzą przez `sanitize_inline()`, więc nawet z usterkami są bezpieczne;
+    usterki służą do ponowienia wywołania albo ostrzeżenia.
+    """
+    problems: list[str] = []
+
+    def clean(text: str) -> str:
+        fragment, found = sanitize_inline(text)
+        problems.extend(found)
+        return fragment
+
+    headline = clean(book.headline)
+    about = clean(book.about)
+    benefits = [b for b in (clean(item) for item in book.benefits) if plain_text(b)]
+    closing = clean(book.closing)
+    description = " ".join(t for t in (plain_text(headline), plain_text(about)) if t)
+    metadata = BookMetadata(
         title=book.title,
         subtitle=book.subtitle,
-        description=book.description,
+        description=description,
         keywords=_clean_list(book.keywords)[:KDP_MAX_KEYWORDS],
+        headline=headline or None,
+        about=about or None,
+        benefits=benefits,
+        closing=closing or None,
     )
+    return metadata, list(dict.fromkeys(problems))
 
 
 def _respell(text: str, spelling: Mapping[str, str]) -> tuple[str, list[str]]:
@@ -340,11 +395,20 @@ def apply_spelling(
         changes.extend(made)
         return new
 
-    result = BookMetadata(
-        title=fixed(book.title),
-        subtitle=fixed(book.subtitle),
-        description=fixed(book.description),
-        keywords=_clean_list([fixed(k) for k in book.keywords]),
+    def maybe(text: str | None) -> str | None:
+        return None if text is None else fixed(text)
+
+    result = book.model_copy(
+        update={
+            "title": fixed(book.title),
+            "subtitle": fixed(book.subtitle),
+            "description": fixed(book.description),
+            "keywords": _clean_list([fixed(k) for k in book.keywords]),
+            "headline": maybe(book.headline),
+            "about": maybe(book.about),
+            "benefits": [fixed(b) for b in book.benefits],
+            "closing": maybe(book.closing),
+        }
     )
     return result, changes
 
@@ -441,7 +505,7 @@ class IdeaGenerator:
                 problem = f"{len(pages)} unikalnych pomysłów zamiast co najmniej {spec.pages}"
                 continue
             try:
-                book = _metadata(response.book)
+                book, html_problems = _metadata(response.book)
             except ValidationError as e:
                 fields = ", ".join(str(err["loc"][0]) for err in e.errors())
                 problem = f"niepoprawne metadane książki ({fields})"
@@ -453,8 +517,22 @@ class IdeaGenerator:
                     f"(KDP: najwyżej {KDP_TITLE_MAX_CHARS})"
                 )
                 continue
+            parts = description_parts_length(book)
+            if parts > KDP_DESCRIPTION_MAX_CHARS - FACTS_RESERVE_CHARS:
+                problem = (
+                    f"części opisu mają {parts} znaków ze znacznikami; z faktami przekroczą "
+                    f"limit KDP {KDP_DESCRIPTION_MAX_CHARS}"
+                )
+                continue
+            if html_problems and attempt < self.max_attempts:
+                problem = "niedozwolony HTML w opisie: " + ", ".join(html_problems)
+                continue
 
             warnings: list[str] = []
+            if html_problems:
+                warnings.append(
+                    "opis: usunięty niedozwolony HTML (" + ", ".join(html_problems) + ")"
+                )
             book, changes = apply_spelling(book, self.config.markets.markets[spec.market].spelling)
             if changes:
                 counts = Counter(changes)
@@ -473,6 +551,10 @@ class IdeaGenerator:
                     f"na okładce może być nieczytelny (cel: {TITLE_AIM_CHARS} i "
                     f"{SUBTITLE_AIM_CHARS} znaków)"
                 )
+            if issues := content_issues(
+                [book.headline or "", book.about or "", *book.benefits, book.closing or ""]
+            ):
+                warnings.append("opis może naruszać zasady KDP: " + "; ".join(issues))
             if len(pages) < expected:
                 warnings.append(
                     f"model zwrócił {len(pages)} unikalnych pomysłów zamiast {expected}; "

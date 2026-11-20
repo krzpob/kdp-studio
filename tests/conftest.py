@@ -82,7 +82,11 @@ def llm_ideas_response(count: int, **book: Any) -> dict[str, Any]:
         "book": {
             "title": "Dino Friends",
             "subtitle": "A Coloring Book for Kids Ages 3–5",
-            "description": "Big, simple dinosaurs to color.",
+            "description": "Big, simple dinosaurs to color.",  # dla testów budujących BookIdeas
+            "headline": "Big, friendly <b>dinosaurs</b> for little hands",
+            "about": "Simple dinosaur scenes with thick lines to color.",
+            "benefits": ["Builds fine motor skills", "Calm, screen-free time"],
+            "closing": "A great gift for young dinosaur fans.",
             "keywords": ["dinosaur coloring book", "toddler coloring"],
             **book,
         },
