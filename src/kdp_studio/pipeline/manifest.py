@@ -10,7 +10,8 @@ książki.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -369,6 +370,24 @@ class DescriptionInfo(_Model):
     created_at: str = Field(default_factory=_now)
 
 
+class PricingInfo(_Model):
+    """Koszt druku, cena minimalna i tantiema przy cenie progowej dla rynku książki (FR-16).
+
+    Kwoty w walucie rynku, jako tekst (`Decimal`), zaokrąglone jak w kalkulatorze KDP; liczone
+    z tabel `config/markets.yaml` sprawdzonych w dniu `checked`. Wiążący jest kalkulator KDP.
+    """
+
+    market: str
+    currency: str
+    pages_in_book: int
+    printing_cost: Decimal
+    min_price: Decimal
+    threshold_price: Decimal  # najniższa cena ze stawką 60%
+    royalty_at_threshold: Decimal
+    checked: date
+    created_at: str = Field(default_factory=_now)
+
+
 class InteriorInfo(_Model):
     """Gotowe wnętrze `interior.pdf` (FR-22, krok 3)."""
 
@@ -398,6 +417,7 @@ class Manifest(_Model):
     cover: CoverInfo | None = None  # FR-15
     interior: InteriorInfo | None = None  # FR-22
     description: DescriptionInfo | None = None  # FR-03: opis do KDP
+    pricing: PricingInfo | None = None  # FR-16: po kroku 3
     ai_disclosure: str = AI_DISCLOSURE
 
     @property

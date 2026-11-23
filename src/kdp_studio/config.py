@@ -571,6 +571,16 @@ class MarketPricing(_Strict):
     currency: Annotated[str, Field(min_length=3, max_length=3)]
     printing_cost: PrintingCost
     royalty: Royalty
+    # FR-16: ceny netto do tabeli tantiem `price` (obok ceny minimalnej i progów).
+    candidate_prices: list[Money] = []
+    vat: bool = False  # klient płaci cenę z VAT doliczonym do ceny z KDP
+
+    @model_validator(mode="after")
+    def _candidates_in_range(self) -> Self:
+        over = [str(p) for p in self.candidate_prices if p > self.royalty.max_price]
+        if over:
+            raise ValueError(f"candidate_prices powyżej max_price: {', '.join(over)}")
+        return self
 
 
 class MarketTerms(_Strict):
@@ -607,6 +617,8 @@ class MarketProfile(_Strict):
     printing_cost: PrintingCost | None = None
     royalty: Royalty | None = None
     pricing_group: str | None = None  # wspólne tabele KDP (np. EU) zamiast własnych liczb
+    candidate_prices: list[Money] | None = None  # FR-16, jak w MarketPricing
+    vat: bool | None = None
     terms: MarketTerms
     # Pisownia rynku: słowo innej odmiany języka → poprawne (np. color → colour na UK).
     spelling: dict[Annotated[str, Field(min_length=1)], Annotated[str, Field(min_length=1)]] = {}
@@ -622,8 +634,12 @@ class MarketProfile(_Strict):
     @model_validator(mode="after")
     def _pricing_source(self) -> Self:
         own = (self.currency, self.printing_cost, self.royalty)
-        if self.pricing_group is not None and any(v is not None for v in own):
-            raise ValueError("pricing_group wyklucza własne currency, printing_cost i royalty")
+        extra = (self.candidate_prices, self.vat)
+        if self.pricing_group is not None and any(v is not None for v in own + extra):
+            raise ValueError(
+                "pricing_group wyklucza własne currency, printing_cost, royalty, "
+                "candidate_prices i vat"
+            )
         if self.pricing_group is None and any(v is None for v in own):
             raise ValueError("podaj pricing_group albo currency, printing_cost i royalty")
         return self
@@ -662,6 +678,8 @@ def _merge_texts(
 class MarketsConfig(_Strict):
     sources: dict[str, str]
     checked: date
+    # FR-16: starsze dane cenowe dają ostrzeżenie z linkami do stron KDP w `sources`.
+    stale_after_days: Annotated[int, Field(gt=0)] = 180
     large_trim: LargeTrim
     pricing_groups: dict[str, MarketPricing] = {}
     markets: dict[str, MarketProfile]
@@ -751,7 +769,11 @@ class MarketsConfig(_Strict):
             return self.pricing_groups[market.pricing_group]
         assert market.currency and market.printing_cost and market.royalty
         return MarketPricing(
-            currency=market.currency, printing_cost=market.printing_cost, royalty=market.royalty
+            currency=market.currency,
+            printing_cost=market.printing_cost,
+            royalty=market.royalty,
+            candidate_prices=market.candidate_prices or [],
+            vat=bool(market.vat),
         )
 
 

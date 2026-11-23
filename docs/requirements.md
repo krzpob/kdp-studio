@@ -29,7 +29,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30, #46 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Polecenie `belongs-to` i krok `generate --belongs-to-page` między `images` a `finalize` (zmiana z 17.11). |
 | FR-15 | ✅ | #31, #32, #39, #40, #41, #47 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
-| FR-16 | ⬜ | | Poza MVP. Specyfikacja: #18. |
+| FR-16 | ✅ | #65 | Poza MVP. Specyfikacja: #18. Polecenie `price` (gotowa książka albo `--format`/`--pages`), sekcja `pricing` w manifeście i linia z ceną po kroku 3. Dane cenowe w `config/markets.yaml` (FR-19). |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
@@ -670,7 +670,7 @@ cover:                          # nasze ustawienia
   template_tolerance_in: 0.01
 ```
 
-### ⬜ FR-16: Koszt druku, cena minimalna i tantiemy (poza MVP)
+### ✅ FR-16: Koszt druku, cena minimalna i tantiemy (poza MVP)
 
 Program liczy koszt druku, cenę minimalną i tantiemy z tabel KDP i podpowiada cenę. Pomaga to już przy wyborze liczby grafik, przed generowaniem.
 
@@ -739,6 +739,15 @@ Przykład (Amazon.com, letter albo kwadrat):
 - **Promocje Amazona nie obniżają tantiemy.** Gdy Amazon sam obniża cenę (np. z okazji Black Friday), tantiema nadal liczy się od ceny wpisanej w KDP. Program liczy tylko na tej cenie i nie modeluje promocji.
 - Kolorowanki nie są przyjmowane do Expanded Distribution, więc program liczy tylko sprzedaż na Amazonie.
 - Twarda oprawa jest poza zakresem (FR-15), więc tabele obejmują tylko paperback.
+
+**Implementacja (23.11.2026)**
+- **Obliczenia:** `pipeline/pricing.py`, bez wywołań API, na `Decimal` z `ROUND_HALF_UP`. Wszystkie przypadki z kalkulatora KDP powyżej i tabela przykładu są testami (`tests/test_pricing.py`). Waluta bez groszy (JPY) zaokrągla się do pełnej jednostki.
+- **Dane:** `config/markets.yaml` (FR-19) dostał `stale_after_days` (domyślnie 180) oraz dla rynku albo grupy cenowej `candidate_prices` (ceny netto do tabeli tantiem w walucie rynku) i `vat: true` (UK, strefa EU, PL, SE). AU, CA, JP i US nie mają tej uwagi.
+- **`kdp-studio price`:** dla gotowej książki liczba grafik, strony wstępne i tryb druku są z manifestu, więc `--format`, `--pages`, `--single-sided/--double-sided` i `--instructions` to wtedy błąd (kod 1). Przed generowaniem domyślnie `DEFAULT_FORMAT` i 30 grafik, strony wstępne i tryb druku z `settings.yaml` albo z tych flag, a liczba stron przechodzi kontrolę FR-02. `--market` przyjmuje listę po przecinku. `--price` w walucie każdego wybranego rynku. Tabela tantiem zawiera cenę minimalną, `candidate_prices`, ostatnią cenę przed progiem, cenę progową i `--price`, bez cen spoza przedziału od minimalnej do maksymalnej.
+- **Cena progowa** w wyniku i w manifeście to najniższa dozwolona cena ze stawką 60%: próg rynku albo cena minimalna, gdy jest wyższa (np. 402 strony: $13.06).
+- **Cena między progami:** w PLN (39 i 40) KDP nie podaje stawki dla cen między progami; program liczy je ostrożnie ze stawką 50%.
+- **Zwrot kosztu generowania** liczy się tylko dla rynków w USD, bo koszt API jest w USD, a program nie przelicza walut. Podstawą jest tantiema przy `--price` albo przy cenie progowej.
+- **Sekcja `pricing` w manifeście i linia z ceną** powstają po kroku 3 (`finalize`, więc też na końcu `generate`), dla rynku książki. Liczba stron jest wtedy pewna, także po zmianie trybu druku w `finalize`.
 
 Konfiguracja (szkic, wartości z KDP sprawdzone 16.11.2026; po FR-19 te dane są częścią `config/markets.yaml`):
 

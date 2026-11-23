@@ -11,6 +11,8 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from enum import IntEnum
 from functools import partial
 from pathlib import Path
@@ -46,7 +48,15 @@ from kdp_studio.config import (
     LogLevel,
     load_config,
 )
-from kdp_studio.models import BookIdeas, BookMetadata, BookSpec
+from kdp_studio.models import (
+    PAGES_MAX,
+    PAGES_MIN,
+    BookIdeas,
+    BookMetadata,
+    BookSpec,
+    pages_in_book,
+    pages_per_image,
+)
 from kdp_studio.observability import (
     LOG_LEVELS,
     LoggedImageProvider,
@@ -165,6 +175,7 @@ from kdp_studio.pipeline.manifest import (
     ManifestPage,
     ManifestProviders,
     ManifestWriter,
+    PricingInfo,
     ProviderInfo,
     sha256_bytes,
     sha256_file,
@@ -187,6 +198,18 @@ from kdp_studio.pipeline.postprocess import (
     PostprocessError,
     page_margin_in,
 )
+from kdp_studio.pipeline.pricing import (
+    MarketQuote,
+    below_threshold_note,
+    images_without_extra_cost,
+    money,
+    payback_copies,
+    price_errors,
+    printing_cost,
+    quote,
+    trim_class,
+)
+from kdp_studio.pipeline.pricing import stale as pricing_stale
 from kdp_studio.pipeline.prompts import PromptBuilder
 from kdp_studio.pipeline.qa import QAChecker, QAResult
 from kdp_studio.pipeline.worker import (
@@ -1744,6 +1767,7 @@ def _step_finalize(config: AppConfig, target: Path, single_sided: bool | None = 
     status = writer.update_status()
     _finalize_interior(config, writer, target)
     _write_description(config, writer, target, ideas.book)
+    _record_pricing(config, writer)
     ok = len(manifest.ok_pages)
     log_event(_log, logging.INFO, "finalize_done", ok=ok, pages=len(manifest.pages), status=status)
     typer.echo(
@@ -3572,6 +3596,241 @@ def _back_info(
         ],
         seam_passed=any(s.passed for s in painter.seams) if painter.seams else None,
     )
+
+
+# --- Koszt druku, cena minimalna i tantiemy (FR-16) --------------------------------------------
+
+
+def _market_keys(config: AppConfig, value: str | None, default: str) -> list[str]:
+    """`--market US,UK,DE` (wielkość liter dowolna); bez flagi rynek książki albo domyślny."""
+    if value is None:
+        return [default]
+    keys = [part.strip().upper() for part in value.split(",") if part.strip()]
+    unknown = [key for key in keys if key not in config.markets.markets]
+    if unknown or not keys:
+        raise _fail(
+            [
+                f"--market: nieznany rynek {', '.join(unknown) or value!r}. Dostępne: "
+                f"{', '.join(config.markets.markets)}"
+            ]
+        )
+    return list(dict.fromkeys(keys))
+
+
+def _price_value(value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        price = Decimal(value.replace(",", "."))
+    except InvalidOperation:
+        price = None
+    if price is None or not price.is_finite() or price <= 0:
+        raise _fail([f"--price: '{value}' to nie jest cena (np. 9.99)"])
+    return price
+
+
+def _pricing_warnings(config: AppConfig) -> None:
+    markets = config.markets
+    if pricing_stale(markets.checked, date.today(), markets.stale_after_days):
+        links = ", ".join(
+            url for key, url in markets.sources.items() if key in ("printing_cost", "royalty")
+        )
+        _warn(
+            [
+                f"dane cenowe KDP w config/markets.yaml sprawdzono {markets.checked}, ponad "
+                f"{markets.stale_after_days} dni temu; zaktualizuj je ze stron: {links}"
+            ]
+        )
+
+
+def _pricing_footer(config: AppConfig) -> str:
+    markets = config.markets
+    calculator = markets.sources.get("calculator", "kalkulator KDP")
+    return (
+        f"Szacunek z tabel KDP (sprawdzone {markets.checked}); wiążący jest kalkulator KDP: "
+        f"{calculator}"
+    )
+
+
+def _print_quote(
+    config: AppConfig,
+    result: MarketQuote,
+    *,
+    images: int,
+    front: int,
+    single_sided: bool,
+    book_cost: float | None = None,
+    price: Decimal | None = None,
+) -> None:
+    market = config.markets.markets[result.market]
+    pricing = config.markets.pricing(result.market)
+    cur = result.currency
+    size = "duży format" if result.trim == "large" else "format regularny"
+    limit = pricing.printing_cost.fixed_only_max_pages
+    typer.echo(
+        f"\n{market.name}, {cur}: {plural(images, 'grafika', 'grafiki', 'grafik')}, "
+        f"{plural(result.pages_in_book, 'strona', 'strony', 'stron')} książki "
+        f"(druk {'jednostronny' if single_sided else 'dwustronny'}), {size}."
+    )
+    fixed = " (koszt stały)" if result.pages_in_book <= limit else ""
+    typer.echo(
+        f"Koszt druku: {result.cost_display} {cur}{fixed}. "
+        f"Cena minimalna: {result.min_price} {cur}."
+    )
+    typer.echo(f"  {'Cena':>9}  {'Stawka':>6}  {'Tantiema':>9}")
+    for row in result.rows:
+        label = f"  {row.label}" if row.label else ""
+        typer.echo(f"  {row.price:>9}  {row.rate * 100:>5.0f}%  {row.royalty:>9}{label}")
+    note = below_threshold_note(pricing, result)
+    if note:
+        _warn([note])
+    extra = images_without_extra_cost(pricing, images, front, single_sided)
+    if extra:
+        typer.echo(
+            f"Bez wzrostu kosztu druku zmieści się jeszcze "
+            f"{plural(extra, 'grafika', 'grafiki', 'grafik')} (koszt stały do {limit} stron)."
+        )
+    else:
+        trim = (
+            pricing.printing_cost.large if result.trim == "large" else pricing.printing_cost.regular
+        )
+        step = money(pages_per_image(single_sided) * trim.per_page, cur)
+        typer.echo(
+            f"Każda kolejna grafika podniesie koszt druku o ok. {step} {cur} "
+            f"(koszt stały tylko do {limit} stron)."
+        )
+    if book_cost is not None and cur == "USD":
+        basis = price if price is not None else result.threshold_price
+        row = next(r for r in result.rows if r.price == basis)
+        copies = payback_copies(Decimal(str(book_cost)), row.royalty)
+        if copies is not None:
+            typer.echo(
+                f"Koszt generowania książki ({format_usd(book_cost)}) zwróci się po "
+                f"{plural(copies, 'egzemplarzu', 'egzemplarzach', 'egzemplarzach')} "
+                f"przy cenie {basis} {cur}."
+            )
+    if pricing.vat:
+        typer.echo("Ceny netto: Amazon dolicza do nich VAT, więc klient zapłaci więcej.")
+
+
+def _record_pricing(config: AppConfig, writer: ManifestWriter) -> None:
+    """Po kroku 3: sekcja `pricing` manifestu i jedna linia dla rynku książki (FR-16)."""
+    manifest = writer.manifest
+    spec = spec_from_manifest(manifest)
+    if spec.market not in config.markets.markets:
+        return
+    pricing = config.markets.pricing(spec.market)
+    trim = trim_class(config.formats[spec.format].trim_in, config.markets.large_trim)
+    result = quote(spec.market, pricing, trim, spec.pages_in_book)
+    manifest.pricing = PricingInfo(
+        market=spec.market,
+        currency=result.currency,
+        pages_in_book=result.pages_in_book,
+        printing_cost=result.cost_display,
+        min_price=result.min_price,
+        threshold_price=result.threshold_price,
+        royalty_at_threshold=result.threshold_royalty,
+        checked=config.markets.checked,
+    )
+    writer.save()
+    cur = result.currency
+    typer.echo(
+        f"Cena ({config.markets.markets[spec.market].domain}): koszt druku "
+        f"{result.cost_display} {cur}, cena minimalna {result.min_price} {cur}, tantiema przy "
+        f"{result.threshold_price} {cur}: {result.threshold_royalty} {cur} (szacunek z tabel "
+        f"KDP, więcej: kdp-studio price {writer.path.parent})."
+    )
+
+
+@app.command()
+def price(
+    book: Annotated[
+        Path | None,
+        typer.Argument(help="Katalog gotowej książki; bez niego --format i --pages."),
+    ] = None,
+    format: FormatOpt = None,
+    pages: PagesOpt = None,
+    market: Annotated[
+        str | None,
+        typer.Option(
+            help="Rynki po przecinku, np. US,UK,DE,PL. Domyślnie rynek książki, a przed "
+            "generowaniem default_market z settings.yaml."
+        ),
+    ] = None,
+    price: Annotated[
+        str | None,
+        typer.Option("--price", help="Cena netto do sprawdzenia, w walucie rynku, np. 9.99."),
+    ] = None,
+    single_sided: SidedOpt = None,
+    instructions: InstructionsOpt = None,
+) -> None:
+    """Koszt druku, cena minimalna i tantiemy z tabel KDP, bez wywołań API (FR-16)."""
+    config = _config()
+    target_price = _price_value(price)
+    book_cost: float | None = None
+    if book is not None:
+        given = [
+            flag
+            for flag, value in (
+                ("--format", format),
+                ("--pages", pages),
+                ("--single-sided/--double-sided", single_sided),
+                ("--instructions/--no-instructions", instructions),
+            )
+            if value is not None
+        ]
+        if given:
+            raise _fail([f"{', '.join(given)}: dla gotowej książki liczba stron jest w manifeście"])
+        spec = spec_from_manifest(_open_book(book).manifest)
+        book_cost = _open_book(book).manifest.cost_usd
+        fmt, images, front, sided = (
+            spec.format,
+            spec.pages,
+            spec.front_matter_pages,
+            spec.single_sided,
+        )
+        default_market = spec.market
+    else:
+        fmt = DEFAULT_FORMAT if format is None else format
+        images = 30 if pages is None else pages
+        if fmt not in config.formats:
+            raise _fail(
+                [f"--format: nieznany profil '{fmt}'. Dozwolone: {', '.join(config.formats)}"]
+            )
+        if not PAGES_MIN <= images <= PAGES_MAX:
+            raise _fail([f"--pages: liczba grafik musi być w zakresie {PAGES_MIN}–{PAGES_MAX}"])
+        settings = config.settings
+        front = settings.front_matter.pages if instructions is None else (4 if instructions else 2)
+        sided = settings.interior.single_sided if single_sided is None else single_sided
+        errors, warnings = check_page_count(images, front, sided, config)
+        if errors:
+            raise _fail(errors)
+        _warn(warnings)
+        default_market = settings.default_market
+    keys = _market_keys(config, market, default_market)
+    trim = trim_class(config.formats[fmt].trim_in, config.markets.large_trim)
+    total = pages_in_book(images, front, sided)
+    if target_price is not None:
+        errors = []
+        for key in keys:
+            pricing = config.markets.pricing(key)
+            cost = printing_cost(pricing, trim, total)
+            errors += price_errors(pricing, cost, target_price, key)
+        if errors:
+            raise _fail(errors)
+    _pricing_warnings(config)
+    for key in keys:
+        result = quote(key, config.markets.pricing(key), trim, total, target_price)
+        _print_quote(
+            config,
+            result,
+            images=images,
+            front=front,
+            single_sided=sided,
+            book_cost=book_cost,
+            price=target_price,
+        )
+    typer.echo(f"\n{_pricing_footer(config)}")
 
 
 @app.command()
