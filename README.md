@@ -147,6 +147,19 @@ Program liczy koszt każdego wywołania API z tokenów zwracanych przez API i ce
 uv run kdp-studio images output/<książka> --max-cost 10
 ```
 
+### Cena i tantiemy (FR-16)
+
+`kdp-studio price` liczy z tabel KDP (`config/markets.yaml`) koszt druku, cenę minimalną i tantiemy, bez wywołań API. Działa przed generowaniem, żeby dobrać liczbę grafik, i dla gotowej książki:
+
+```bash
+uv run kdp-studio price --format square --pages 50 --market US,UK,DE,PL
+uv run kdp-studio price output/<książka> --price 9.99
+```
+
+Dla każdego rynku program wypisuje koszt druku, cenę minimalną i tabelę tantiem dla kilku cen (`candidate_prices` rynku, ostatnia cena przed progiem 60%, cena progowa i `--price`). Ostrzega przed cenami tuż pod progiem i podaje, ile grafik zmieści się jeszcze bez wzrostu kosztu druku. Dla gotowej książki na rynku w USD dodaje, po ilu egzemplarzach zwróci się koszt generowania. Ceny są netto; na rynkach z VAT klient zapłaci więcej. `--price` poniżej ceny minimalnej albo powyżej maksymalnej to błąd. `finalize` (także na końcu `generate`) wypisuje jedną linię z ceną dla rynku książki i zapisuje sekcję `pricing` w `manifest.json`.
+
+To szacunek: wiążący jest [kalkulator KDP](https://kdp.amazon.com/en_US/royalty-calculator). Gdy dane cenowe są starsze niż `stale_after_days` (180 dni), program prosi o ich aktualizację.
+
 ### Postęp, czasy i logi (NFR-09)
 
 W terminalu kroki `images` i `finalize` pokazują pasek postępu z czasem do końca. Każdy krok kończy się linią `Czas kroku (…)`, a `generate` podsumowuje czasy wszystkich kroków i całości, np. `Czas: pomysły 48 s, grafiki 6 min 12 s, obróbka 2 min 05 s; razem 9 min 07 s.`
