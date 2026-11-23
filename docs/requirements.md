@@ -29,7 +29,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30, #46 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Polecenie `belongs-to` i krok `generate --belongs-to-page` między `images` a `finalize` (zmiana z 17.11). |
 | FR-15 | ✅ | #31, #32, #39, #40, #41, #47 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
-| FR-16 | ✅ | #PR | Poza MVP. Specyfikacja: #18. Polecenie `price` (gotowa książka albo `--format`/`--pages`), sekcja `pricing` w manifeście i linia z ceną po kroku 3. Dane cenowe w `config/markets.yaml` (FR-19). |
+| FR-16 | ✅ | #65 | Poza MVP. Specyfikacja: #18. Polecenie `price` (gotowa książka albo `--format`/`--pages`), sekcja `pricing` w manifeście i linia z ceną po kroku 3. Dane cenowe w `config/markets.yaml` (FR-19). |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
 | FR-19 | ✅ | #56 | Poza MVP. Specyfikacja: #42. Rynek docelowy Amazona (`--market`), dane rynków w `config/markets.yaml`. Rynki poza US i UK piszą napisy czcionką Baloo 2 (Fredoka nie ma polskich liter); JP czeka na czcionkę z japońskimi znakami. |
