@@ -1682,8 +1682,54 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
 
 **A+ Content: moduły strony produktu**
-- A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładki, strony, tematy i wiek. Mógłby przygotować grafiki modułów (np. baner 970 × 300 ze stronami książki, „co jest w środku”) i teksty zgodne z zasadami A+.
-- Zasady A+ są ostrzejsze niż opisu: bez wezwań do zakupu („buy now”, „add to cart”), cen, słów „free” i „bonus”, odniesień czasowych i świątecznych. Tabela porównawcza może zestawiać tylko książki z własnego konta KDP i jest właściwym miejscem na „zobacz inne moje kolorowanki”; układa się ją w KDP z numerów ASIN.
+
+A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładkę, strony, temat, wiek i fakty o książce z manifestu. Może przygotować grafiki modułów i teksty do wklejenia w edytor A+ w KDP. Zasady A+ (https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD, sprawdzone 24.11.2026) są ostrzejsze niż zasady opisu.
+
+*Moduły (edytor A+, sprawdzone 24.11.2026)*
+
+Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze; tam, gdzie limitu brak w tabeli, trzeba go odczytać przed wymaganiem.
+
+| Moduł | Układ | Obraz | Teksty |
+|---|---|---|---|
+| Standard Company Logo | sam obraz | 600 × 180 | – |
+| Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
+| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, limit tekstu kolumny do odczytania |
+| Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
+| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | do odczytania |
+| Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
+
+- Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
+- Teksty modułów mają formatowanie: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną. To te same znaczniki co w opisie KDP (FR-03).
+
+*Układ strony (z punktu widzenia marketingu)*
+1. **Baner:** Standard Company Logo 600 × 180. Jeden obraz wydawcy przygotowany poza programem; program wskazuje tylko jego miejsce.
+2. **2–3 × Standard Image Header With Text:** mockupy gotowego produktu (książka na stole, kilka pokolorowanych stron, kredki), z minimum tekstu albo bez niego.
+3. **Jeden moduł 3 albo 4 kolumn:** cechy książki z grafiką nad każdą kolumną (np. duże proste kontury, druk jednostronny, wiek). Treść cech z manifestu, jak fakty w opisie (FR-03).
+4. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji.
+
+Bez tabeli porównawczej zostaje miejsce na pas Standard Image with Dark/Light Overlay ze stronami książki. Zestaw modułów i ich kolejność byłyby w konfiguracji, a nie w kodzie.
+
+*Grafiki*
+- **Wymagania A+ dla obrazów:** JPG albo PNG w RGB, plik poniżej 2 MB, co najmniej 72 dpi, bez animacji (GIF).
+- **Bez napisów od programu:** nagłówki i teksty idą do pól modułu, a obraz nie dostaje napisów. Tytuł widoczny na okładce w mockupie to zdjęcie produktu, nie napis.
+- **Mockupy:** dwie drogi do rozstrzygnięcia przed wymaganiem.
+  - Szablony mockupów od użytkownika: zdjęcie z zaznaczonym czworokątem w konfiguracji, w który program wkleja okładkę albo stronę przekształceniem perspektywicznym. Ta droga jest bez kosztu API i bez ryzyka zniekształceń.
+  - Scena z modelu obrazu z okładką jako `reference_image`. Ta droga jest płatna, a model może zniekształcić tytuł.
+- **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
+
+*Teksty i zakazane sformułowania*
+
+Teksty powstają w jednym wywołaniu LLM z regułami A+ w prompcie i są sprawdzane w kodzie. Wzorce i listy słów są w konfiguracji, według języka rynku. Trafienie oznacza jedno ponowienie, potem ostrzeżenie. Zakazane są trzy grupy.
+- **Nacisk czasem:** „now”, „new”, „latest”, „yet”, „on sale now”, „the latest product”, „the best yet” i ich odpowiedniki w języku rynku.
+- **Święto albo sezon jako termin lub okazja do zakupu:** KDP zakazuje „references to holidays” na tej samej liście co nacisk czasem. Czytamy to tak: zakazane jest święto jako punkt w czasie albo okazja skłaniająca do zakupu, także z nazwą konkretnego święta. Przykłady: „on sale before Christmas”, „in time for Easter”, „order before Valentine's Day”, „holiday gift”, „perfect Christmas gift”, „stocking stuffer”, a także ogólne „holidays”, „holiday season”, „na święta”, „na wakacje”. Dozwolone jest święto jako temat zawartości, np. „Christmas coloring book with Santa, reindeer and gingerbread houses”. To nasza interpretacja: rozstrzygnie pierwsza recenzja A+, a przy odrzuceniu nazwy świąt trafią na listę zakazanych.
+- **Przechwałki (Claims and awards):** „perfect”, „best”, „ultimate”, „must-have”, „#1”, „top-rated”, „bestseller” i obietnice satysfakcji („100% satisfaction guaranteed”). Rekomendacje i certyfikaty („recommended by”, „approved”, „tested”) wymagają podania źródła i roku, więc program ich nie używa.
+
+Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, „buy now”, „add to cart”, „free shipping” i bez wzmianki o Kindle+.
+
+*Wynik*
+- Polecenie, np. `kdp-studio aplus <katalog>`, zapisuje katalog `aplus/` z obrazami modułów.
+- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu, żeby wklejony tekst zachował pogrubienia i listy.
+- Wpis trafia do manifestu, a koszt wywołań do `--max-cost`.
 
 **Słowa kluczowe z danych o wyszukiwaniach**
 - Dziś słowa kluczowe wybiera model z samej wiedzy o rynku (FR-03). Narzędzia typu KDSpy czy Publisher Rocket pokazują, jak często kupujący wpisują daną frazę i ile książek z nią konkuruje.
@@ -1704,5 +1750,6 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
 - KDP: słowa kluczowe i metadane (czego unikać): https://kdp.amazon.com/help/topic/G201298500
+- KDP: zasady A+ Content (nacisk czasem, święta, przechwałki, ceny, obrazy RGB poniżej 2 MB): https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD
 - KDP: okładka paperback (CMYK zalecany, bez mieszania przestrzeni barw, profile kolorów usuwane przed publikacją, brak wskazanego profilu i limitu farb): https://kdp.amazon.com/en_US/help/topic/G201953020
 - Poradniki zewnętrzne o CMYK dla okładek (profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
