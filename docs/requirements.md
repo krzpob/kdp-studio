@@ -1699,7 +1699,7 @@ Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytor
 | Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
 
 - Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
-- Teksty modułów mają formatowanie: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną. To te same znaczniki co w opisie KDP (FR-03).
+- Teksty modułów mają formatowanie, ale tylko z paska narzędzi edytora: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną (w nakładce lista numerowana). Wklejony HTML nie działa: edytor nie zamienia znaczników na formatowanie (sprawdzone 24.11.2026). Tym różni się od opisu KDP (FR-03), który przyjmuje HTML.
 
 *Układ strony (z punktu widzenia marketingu)*
 1. **Baner:** Standard Company Logo 600 × 180. Buduje markę wydawcy na Amazonie, więc powstaje poza programem i jest wspólny dla wszystkich książek. Program bierze tylko gotowy plik z konfiguracji i wskazuje jego miejsce.
@@ -1709,7 +1709,7 @@ Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytor
    - druk jednostronny: każdy obrazek na osobnej kartce, więc przebicie nie zniszczy następnego;
    - pisaki po podłożeniu grubszej kartki, jak na stronie z instrukcją (FR-23).
 
-   Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Do sprawdzenia w edytorze, czy tekst nakładki przyjmuje listę punktowaną; jeśli nie, będą to krótkie zdania.
+   Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Tekst nakładki przyjmuje listę numerowaną (sprawdzone 24.11.2026), więc fakty będą listą numerowaną.
 4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment.
 5. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji. Bez tabeli to miejsce dostaje drugi mockup.
 
@@ -2319,7 +2319,7 @@ Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, �
 
 *Wynik*
 - Polecenie, np. `kdp-studio aplus <katalog>`, zapisuje katalog `aplus/` z obrazami modułów.
-- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu, żeby wklejony tekst zachował pogrubienia i listy.
+- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu. Przycisk kopiuje zwykły tekst, a punkty listy jako osobne wiersze; formatowanie (pogrubienie, lista) użytkownik nakłada paskiem narzędzi edytora, a podgląd pokazuje, gdzie. Do sprawdzenia przy pierwszym użyciu: czy edytor zachowuje formatowanie przy wklejeniu sformatowanego tekstu ze strony (schowek `text/html`), a nie znaczników. Jeśli tak, przycisk może kopiować i to.
 - Wpis trafia do manifestu, a koszt wywołań do `--max-cost`.
 
 **Słowa kluczowe z danych o wyszukiwaniach**
