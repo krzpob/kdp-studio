@@ -1687,15 +1687,15 @@ A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystk
 
 *Moduły (edytor A+, sprawdzone 24.11.2026)*
 
-Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze; tam, gdzie limitu brak w tabeli, trzeba go odczytać przed wymaganiem.
+Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze.
 
 | Moduł | Układ | Obraz | Teksty |
 |---|---|---|---|
 | Standard Company Logo | sam obraz | 600 × 180 | – |
 | Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
-| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, limit tekstu kolumny do odczytania |
+| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, tekst kolumny do 1000 |
 | Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
-| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | do odczytania |
+| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | nagłówek do 60 znaków, tekst do 300 |
 | Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
 
 - Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
