@@ -1682,8 +1682,645 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
 
 **A+ Content: moduły strony produktu**
-- A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładki, strony, tematy i wiek. Mógłby przygotować grafiki modułów (np. baner 970 × 300 ze stronami książki, „co jest w środku”) i teksty zgodne z zasadami A+.
-- Zasady A+ są ostrzejsze niż opisu: bez wezwań do zakupu („buy now”, „add to cart”), cen, słów „free” i „bonus”, odniesień czasowych i świątecznych. Tabela porównawcza może zestawiać tylko książki z własnego konta KDP i jest właściwym miejscem na „zobacz inne moje kolorowanki”; układa się ją w KDP z numerów ASIN.
+
+A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładkę, strony, temat, wiek i fakty o książce z manifestu. Może przygotować grafiki modułów i teksty do wklejenia w edytor A+ w KDP. Zasady A+ (https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD, sprawdzone 24.11.2026) są ostrzejsze niż zasady opisu.
+
+*Moduły (edytor A+, sprawdzone 24.11.2026)*
+
+Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze.
+
+| Moduł | Układ | Obraz | Teksty |
+|---|---|---|---|
+| Standard Company Logo | sam obraz | 600 × 180 | – |
+| Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
+| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, tekst kolumny do 1000 |
+| Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
+| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | nagłówek do 60 znaków, tekst do 300 |
+| Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
+
+- Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
+- Teksty modułów mają formatowanie, ale tylko z paska narzędzi edytora: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną (w nakładce lista numerowana). Wklejony HTML nie działa: edytor nie zamienia znaczników na formatowanie (sprawdzone 24.11.2026). Tym różni się od opisu KDP (FR-03), który przyjmuje HTML.
+
+*Układ strony (z punktu widzenia marketingu)*
+1. **Baner:** Standard Company Logo 600 × 180. Buduje markę wydawcy na Amazonie, więc powstaje poza programem i jest wspólny dla wszystkich książek. Program bierze tylko gotowy plik z konfiguracji i wskazuje jego miejsce.
+2. **1–2 × Standard Image Header With Text:** mockupy gotowego produktu (książka na stole, kilka pokolorowanych stron, kredki), z minimum tekstu albo bez niego.
+3. **Standard Image with Dark/Light Overlay z twardymi faktami:** zamiast jednego mockupu. Tekst nakładki to tekst strony, więc na telefonie skaluje się lepiej niż napis na grafice. Przykład:
+   - liczba kolorowanek;
+   - druk jednostronny: każdy obrazek na osobnej kartce, więc przebicie nie zniszczy następnego;
+   - pisaki po podłożeniu grubszej kartki, jak na stronie z instrukcją (FR-23).
+
+   Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Tekst nakładki przyjmuje listę numerowaną (sprawdzone 24.11.2026), więc fakty będą listą numerowaną.
+4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment.
+5. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji. Bez tabeli to miejsce dostaje drugi mockup.
+
+Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieści całą stronę, a pas 970 × 300 tylko jej wycinek albo rząd małych miniatur i na telefonie robi się cienki. Dlatego nakładka jest jedna, na fakty. Zestaw modułów i ich kolejność byłyby w konfiguracji, a nie w kodzie.
+
+*Grafiki**
+- Do `FIXED_CONSTRAINTS` (FR-04) dochodzi `no logos, no brand marks`. Promptu nie uzupełnia się nazwami do unikania, np. `not Grinch`, bo nazwa w prompcie przyciąga model do tej postaci.
+- QA (FR-07) dostaje kryterium `protected_character`: strona przypomina znaną postać, maskotkę, zabawkę albo logo. Model z wizją podaje w szczegółach po polsku, co przypomina; strona wraca do ponownego generowania jak przy innych kryteriach. To samo kryterium dostaje QA strony z FR-14 i okładki z FR-15.
+- Gdy `theme_check` znalazł chronioną nazwę, a QA jest wyłączone, konsola zaleca `--qa`. Bez QA podobieństwo rysunku do postaci nie jest sprawdzane.
+
+**Konfiguracja: `config/protected_names.yaml`**
+
+```yaml
+# FR-21: nazwy, których nie może zawierać żaden tekst książki ani prompt.
+# Dopasowanie: całe słowa, bez wielkości liter i polskich znaków.
+names:
+  - name: LEGO
+    forms: [Legos]
+    generic: building bricks
+  - name: Barbie
+    generic: fashion dolls and dress-up
+  - name: Grinch
+    forms: [Grincha, Grinchem, Grinchu, Grinchowi]
+    generic: mischievous holiday creatures
+  - name: Winnie-the-Pooh
+    forms: [Winnie the Pooh, Pooh, Kubuś Puchatek, Kubusia Puchatka, Kubusiem Puchatkiem, Puchatek, Puchatka]
+    generic: teddy bears and woodland animals
+    # public_domain:                       # dopisuje użytkownik po sprawdzeniu stanu prawnego
+    #   markets: [US]                      # książka z 1926 r.; w UK tekst od 2027, ilustracje dłużej
+    #   styles: [cozy, chibi]              # bez cartoon: za blisko wersji filmowej
+    #   characters: [Pooh, Piglet, Eeyore, Owl, Rabbit, Kanga, Roo]
+    #   look:
+    #     Pooh: small round teddy bear with short limbs, wearing no clothes
+    #     Piglet: very small piglet in a striped knitted jumper
+    #   avoid: [red shirt, animated film character design]
+    #   source: https://web.law.duke.edu/cspd/publicdomainday/2022/bcvpd/
+    #   checked: 2026-11-17
+```
+
+- Lista startowa obejmuje popularne w kolorowankach marki zabawek, postacie z filmów, seriali, gier i książek oraz ligi sportowe, z polskimi tytułami i odmianami. Rozwija ją użytkownik. Brak w liście nie oznacza, że nazwa jest wolna.
+- Walidacja konfiguracji (§7): pusta nazwa albo zdublowana forma kończy się kodem 1. W `public_domain` klucze `styles` muszą istnieć w `styles.yaml`, `markets` w `markets.yaml` (FR-19), każda postać z `characters` musi mieć `look`, a `source` i `checked` są wymagane. Po FR-19 formy obejmują pisownię każdego rynku.
+
+**Ograniczenia**
+- Ani lista, ani model nie znają wszystkich chronionych nazw, a „inspiracja” może wyjść zbyt podobna. Program zmniejsza ryzyko, ale nie zastępuje porady prawnej. Ostateczną decyzję przed publikacją podejmuje użytkownik.
+- Podsumowanie `generate` i `canva.md` przypominają, gdy temat zawierał chronioną nazwę: przed publikacją sprawdź tytuł, słowa kluczowe i okładkę.
+
+**Uwagi do implementacji**
+- Moduł `pipeline/protected.py`: `ProtectedNames` z konfiguracji, `find(text) -> list[Hit]` i wspólna funkcja składania znaków z `slugify`.
+- Pola `protected_terms` i `generic_theme` w `_LLMIdeas` (opcjonalne przy wczytywaniu, żeby stare `ideas.json` działały). Werdykt kodu dla pomysłu przechodzi przez `IdeaReviewer._apply()`.
+- Testy: odmiany polskie, „legowisko” bez trafienia, samo „Kubuś” bez trafienia, ponowienie z informacją zwrotną, nazwa w ręcznie poprawionym `ideas.json` (kod 1), `--strict` (kod 1 bez wywołań API), kryterium QA w `FakeVisionProvider`, wyjątek `public_domain` (dozwolony styl i rynek: imiona tylko w tytułach stron; styl spoza listy albo inny rynek: temat ogólny z powodem w konsoli; nowy styl domyślnie zablokowany).
+### ✅ FR-22: Wnętrze książki jako PDF i druk jednostronny (poza MVP)
+
+Cel: program składa gotowy plik wnętrza `interior.pdf` do wgrania w KDP, zamiast ręcznego składania w Canvie (D9). Strony wstępne opisuje FR-23.
+
+**Druk jednostronny jako opcja**
+- Flaga `--single-sided/--double-sided` w `ideas` i `generate`, domyślnie z `settings.yaml` (`interior.single_sided: true`). Przy druku jednostronnym każda kolorowanka stoi na stronie nieparzystej (prawej), a jej tył jest pusty. Przy dwustronnym kolorowanki idą jedna po drugiej.
+- Wartość należy do książki: zapisuje ją `input.single_sided` w manifeście (stare książki: `true`, jak w D8), a FR-20 dodaje klucz `single_sided`.
+- `finalize --single-sided/--double-sided` może ją zmienić później. Zmiana liczby stron może zmienić margines od grzbietu (§7.4), więc `finalize` przelicza wtedy strony, którym zmieniła się geometria (hash obróbki, FR-17). Okładka z inną liczbą stron jest nieaktualna: `finalize` to ostrzega, a `cover` liczy grzbiet od nowa.
+
+**Kolejność stron**
+- Strony wstępne (FR-23) zajmują parzystą liczbę stron, więc pierwsza kolorowanka zawsze trafia na stronę nieparzystą (prawą). Bez instrukcji: strona 1 i prawa autorskie (2 strony). Z instrukcją: dodatkowo instrukcja i pusta strona za nią (4 strony).
+- Jednostronnie: `[1] pierwsza strona, [2] prawa autorskie, [3] instrukcja, [4] pusta, [5] page_01, [6] pusta, [7] page_02, …, page_N, pusta`.
+- Dwustronnie: `[1] pierwsza strona, [2] prawa autorskie, [3] instrukcja, [4] pusta, [5] page_01, [6] page_02, …`. Na końcu program dodaje pustą stronę, jeśli liczba stron jest nieparzysta. KDP i tak zaokrągla liczbę stron w górę do parzystej, a ta liczba wpływa na grzbiet okładki, więc lepiej, żeby plik miał ją od razu.
+- FR-02 liczy odtąd `pages_in_book = front_matter_pages + pages × (2 przy druku jednostronnym, 1 przy dwustronnym)`, zaokrąglone w górę do parzystej. `front_matter_pages` wynika z FR-23 (2 albo 4) i przestaje być ustawieniem w `settings.yaml`. Stare manifesty zachowują zapisaną wartość.
+- KDP przyjmuje najwyżej 4 puste strony z rzędu na początku i w środku pliku oraz 10 na końcu. Ten układ ma najwyżej jedną pustą stronę z rzędu, ale program i tak to sprawdza.
+
+**Plik `interior.pdf`**
+- Powstaje w kroku 3 (`finalize`), bez wywołań API, gdy wszystkie strony mają status `ok`. W przeciwnym razie `finalize` go nie pisze i podaje brakujące strony. Wyłącza go `interior.pdf: false` w `settings.yaml`.
+- Każda strona PDF ma wymiary formatu (MediaBox i TrimBox), bez spadu. Zawiera całą stronę PNG z katalogu książki (FR-06, FR-23) w 300 DPI, bez skalowania. Pusta strona nie ma żadnej treści.
+- Tekst stron wstępnych program rysuje w obrazie strony (jak w FR-14), więc PDF zawiera tylko obrazy i nie trzeba osadzać czcionek. Strony mają tylko wartości 0 i 255, więc zapisuje je jako 1-bitowe DeviceGray z kompresją Flate. Plik pozostaje mały i nie ma szarości od kompresji JPEG.
+- PDF nie zawiera adnotacji, zakładek, komentarzy, znaczników cięcia ani metadanych. KDP wymienia te elementy wśród powodów odrzucenia pliku. Zapis rozszerza `pipeline/pdf.py` (dziś jednostronicowy PDF okładki w CMYK), bez nowej zależności.
+- Kontrola po zapisie (jak NFR-07): liczba stron parzysta, ≥ 24 i równa `pages_in_book` z manifestu; wymiary każdej strony; pierwsza kolorowanka na stronie nieparzystej; limity pustych stron.
+- Manifest → `interior`: ścieżka, liczba stron, `sha256`, tryb druku i mapa „strona PDF → plik” (pusta strona jako `null`). `cover` bierze liczbę stron do grzbietu z tego wpisu i ostrzega, gdy okładkę zrobiono dla innej liczby stron.
+
+**Canva**
+- D9 się zmienia: wnętrze składa program. Strony PNG i `canva.md` zostają jako ręczna droga na wypadek, gdyby ktoś chciał coś poprawić w Canvie. `canva.md` wskazuje najpierw `interior.pdf` i opisuje strony wstępne według kolejności z tego wymagania.
+
+**Uwagi do implementacji**
+- `pipeline/interior.py`: `interior_layout(manifest) -> list[str | None]` (czysta funkcja, łatwa do testów obu trybów) i zapis przez `pipeline/pdf.py`.
+- Testy: kolejność stron w obu trybach, z instrukcją i bez; wyrównanie do parzystej; zmiana trybu w `finalize` (przeliczenie stron przy zmianie marginesu, ostrzeżenie o okładce); brak PDF przy niegotowych stronach; kontrola po zapisie.
+
+**Implementacja (18.11.2026)**
+- **Tryb druku:** `--single-sided/--double-sided` w `ideas`, `generate` i `finalize`, domyślnie `interior.single_sided` z `settings.yaml`; `input.single_sided` w manifeście (stare książki: `true`). `ideas <katalog> --redo` go nie przyjmuje. `finalize` ze zmianą trybu sprawdza liczbę stron jak FR-02 (ponad tabelę marginesów: kod 1, poniżej 24: ostrzeżenie), zapisuje nowy tryb i przelicza geometrię; strony, którym zmienił się margines, obrabia ponownie przez hash obróbki (FR-17), razem ze stronami wstępnymi. Gdy `manifest.cover` jest dla innej liczby stron, `finalize` ostrzeża i podaje `kdp-studio cover`.
+- **Liczenie stron:** `models.pages_in_book(pages, front_matter_pages, single_sided)` zaokrągla w górę do parzystej; ostrzeżenie FR-02 podaje mnożnik i tryb druku, a `min_pages_for_kdp()` liczy minimum dla obu trybów.
+- **`pipeline/interior.py`:** `interior_layout()` (czysta funkcja manifestu; `front_matter_files()` przeniesione z `canva.py`), `blank_run_problems()` (najwyżej 4 puste z rzędu, 10 na końcu), `layout_problems()` (parzysta, ≥ 24, równa `layout.pages_in_book`, pierwsza kolorowanka na stronie nieparzystej), `write_interior()` i `verify_interior()` (czyta zapisany plik: liczba stron, wymiary, puste strony tam, gdzie w układzie).
+- **`pipeline/pdf.py`:** `bilevel_pdf()` przyjmuje generator stron, więc w pamięci jest naraz jedna strona; strona z obrazem ma `MediaBox` = `TrimBox` formatu i obraz 1-bit DeviceGray Flate, pusta nie ma `/Contents`. Bez `/Info`, adnotacji i zakładek. Wspólny zapis xref z `cover.pdf`. 102 strony kwadratowe 300 DPI: 2,5 MB, około 7 s.
+- **Kiedy powstaje:** tylko w książce ze stronami wstępnymi FR-23 (z właścicielem praw); starsza dostaje komunikat, jak je dodać (`front-matter --copyright-owner`). Brakujące strony, zły układ albo nieudana kontrola to ostrzeżenie (kod wyjścia bez zmian) i usunięcie nieaktualnego `interior.pdf` oraz wpisu w manifeście, żeby nie wgrać do KDP starego wnętrza. Te same strony (hash kolejności i plików `inputs_sha256`) nie zapisują pliku od nowa.
+- **Manifest → `interior`:** `file`, `pages`, `single_sided`, `sha256`, `inputs_sha256`, `order`, `created_at`. `cover` liczy grzbiet z `interior.pages`, jeśli PDF powstał.
+- **`canva.md`:** najpierw wskazuje `interior.pdf` (albo mówi, że jeszcze nie powstał), tryb druku w opisie i w kroku 5, tabela kolejności z `interior_layout()`.
+- **Bez zmian:** FR-20 (`--config-file`) nie istnieje, więc klucz `single_sided` w pliku książki dojdzie z nim.
+
+### ✅ FR-23: Strony wstępne: pierwsza strona, prawa autorskie, instrukcja (poza MVP)
+
+Cel: komplet stron przed kolorowankami w `interior.pdf` (FR-22). Strona 1 to tytułowa do kolorowania albo „This book belongs to…” (FR-14), strona 2 to informacja o prawach autorskich w języku rynku, a opcjonalna strona 3 to instrukcja z przykładową kolorowanką z postacią z książki.
+
+**Polecenie**
+- `kdp-studio front-matter <katalog-książki>` robi strony, które wymagają modelu obrazu: stronę 1 i ilustrację instrukcji. Opcje: `--first-page title|belongs-to`, `--instructions/--no-instructions`, `--qa`, `--image-quality`, `--max-cost`. Wymaga kroku 2 (gotowych surowych stron), jak FR-14.
+- `generate` uruchamia je jako krok między `images` a `finalize` z tymi samymi flagami. Wartości domyślne pochodzą z `settings.yaml`: `front_matter.first_page` (domyślnie `belongs-to`) i `front_matter.instructions` (domyślnie `true`). `--belongs-to-page` zostaje jako skrót dla `--first-page belongs-to`, a `kdp-studio belongs-to` jako skrót dla `front-matter --first-page belongs-to`.
+- Strona z prawami autorskimi nie wymaga modelu, więc powstaje w `finalize`. Gdy `front-matter` nie zostało uruchomione, `finalize` robi stronę 1 bez modelu: tytuł książki konturowymi literami na środku strony. Wtedy `interior.pdf` i tak powstaje, a konsola podaje ostrzeżenie.
+- Wybór instrukcji zmienia liczbę stron wstępnych (2 albo 4), więc może zmienić margines od grzbietu. `front-matter` zapisuje nowy wybór w manifeście, a `finalize` przelicza strony jak w FR-22.
+
+**Strona 1: tytułowa do kolorowania (`--first-page title`)**
+- Działa jak FR-14. Model rysuje scenę z motywem książki z pustym polem w górnej części, a program sprawdza, czy pole jest puste, i wpisuje tytuł książki konturowymi literami do pokolorowania. Pole zapisuje `title_page.text_box`, a opis kompozycji `title_page.composition` w `settings.yaml`.
+- Tytuł pochodzi z metadanych (FR-03; po FR-19 w języku rynku). Kontrola chronionych nazw (FR-21) obejmuje także ten tekst.
+- Układ zapasowy, gdy pole nie jest puste po `max_retries`: tytuł w górnej części, a pod nim grafika pierwszej gotowej strony. Plik to `front_title.png`.
+- `--first-page belongs-to` daje stronę z FR-14 bez zmian (`front_belongs_to.png`).
+
+**Strona 2: prawa autorskie**
+- Treść pochodzi z tłumaczeń w `config/markets.yaml` (FR-19), w sekcji `texts` według języka. Na start są wersje `pl`, `en` i `de`, które przygotował użytkownik, każda w trzech wariantach: `minimal` (jedno zdanie), `short` (z zakazem kopiowania) i `full` (rozbudowany). Wariant wybiera `--copyright minimal|short|full` w `ideas`, `generate` i `front-matter`, domyślnie `front_matter.copyright: short` w `settings.yaml`; wybór zapisuje manifest. Rynek wybiera tłumaczenie przez swój `locale` (np. `en-GB`), a jeśli go nie ma, przez sam język (`en`). Dopóki FR-19 nie działa, książka ma rynek US, czyli wersję `en`.
+- Wstawki w tekście: `{year}` (rok z daty utworzenia książki w manifeście, więc ponowne `finalize` w styczniu go nie zmienia) i `{owner}`, czyli właściciel praw. Właściciel nie musi być autorem z KDP (pseudonim, firma), więc ma osobną wartość: `--copyright-owner` w `ideas` i `generate` albo `publisher.copyright_owner` w `settings.yaml`. Manifest go zapisuje. Brak tłumaczenia dla rynku książki albo brak właściciela praw kończy się kodem 1 przed pierwszym wywołaniem API.
+- Każdy wiersz tekstu w konfiguracji to osobny akapit, a program zawija go do szerokości obszaru treści i zostawia między akapitami odstęp pół wiersza. Pierwsze zdanie (`© … Wszelkie prawa zastrzeżone.`) jest więc zawsze osobnym akapitem, jak we wzorze.
+- Wygląd: zwykła, prosta czcionka bezszeryfowa (`front_matter.text_font`, czcionka OFL dołączona do repozytorium, z polskimi i niemieckimi znakami; kontrola znaków jak w FR-19), rozmiar `copyright_pt` (domyślnie 12 pt), wyrównanie do lewej. Blok tekstu stoi na dole obszaru treści, czyli tuż nad dolnym marginesem. Gdy się nie mieści, program zmniejsza czcionkę do `copyright_min_pt` (domyślnie 9 pt), a dalej kończy się kodem 1.
+- Plik `front_copyright.png`, kontrola druku jak NFR-07.
+
+**Strona 3: instrukcja (`--instructions`, domyślnie włączona)**
+- Wzór to strona „Before you start”. U góry nagłówek grubą czcionką (Fredoka Bold), pod nim podziękowanie, śródtytuł i akapit o teście kredek i podkładaniu grubszej kartki. Teksty są w `texts` w `markets.yaml`, jak prawa autorskie. Wszystkie wpisuje program.
+- Pod tekstem jest ilustracja z modelu: **główna postać książki** (najczęstszy `subject` stron, jak w FR-14) podkłada kartkę grubszego papieru pod stronę otwartej kolorowanki, ze strzałkami. Prompt dostaje blok stylu stron (FR-04), więc ilustracja pasuje do książki i sama nadaje się do kolorowania. Ograniczenia FR-04 zostają, z `no text` włącznie.
+- Ilustracja trafia do pola `instructions.art_box` pod tekstem. QA (gdy włączone) sprawdza kryteria `text` i `scene_mismatch`. Po `max_retries` program bierze grafikę zapasową bez postaci: otwarta książka z kartką i strzałkami jako plik SVG w `assets/`, narysowany raz na potrzeby projektu.
+- Za instrukcją jest zawsze pusta strona, także przy druku dwustronnym. Na instrukcji można testować kredki, a pusty tył chroni pierwszą kolorowankę.
+- Plik `front_instructions.png`, surowa ilustracja w `raw/front_instructions.png`, odrzucone próby w `rejected/`.
+
+**Teksty w `config/markets.yaml`**
+
+```yaml
+texts:
+  en:
+    copyright:
+      minimal: "© {year} {owner}. All rights reserved."
+      short: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced or distributed without prior written permission from the copyright owner, except as permitted by law.
+      full: |
+        © {year} {owner}. All rights reserved.
+        No part of this publication may be reproduced, stored in a retrieval system, or transmitted in any form or by any means, including electronic, mechanical, photocopying, or recording, without prior written permission from the copyright owner, except as permitted by applicable law.
+    instructions:
+      heading: BEFORE YOU START
+      intro: "Thank you so much for buying my book! I appreciate your support. Before starting your coloring journey, please read:"
+      section: Paper Quality
+      body: "For the best results, test your coloring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are coloring."
+  en-GB:                                  # tylko różnice względem en
+    instructions:
+      intro: "Thank you so much for buying my book! I appreciate your support. Before starting your colouring journey, please read:"
+      body: "For the best results, test your colouring supplies first. To help prevent bleed-through and protect the next page, place a blank sheet of thicker paper behind the page you are colouring."
+  pl:
+    copyright:
+      minimal: "© {year} {owner}. Wszelkie prawa zastrzeżone."
+      short: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Żadna część tej publikacji nie może być kopiowana ani rozpowszechniana bez uprzedniej pisemnej zgody właściciela praw, z wyjątkiem przypadków dozwolonych przez prawo.
+      full: |
+        © {year} {owner}. Wszelkie prawa zastrzeżone.
+        Bez uprzedniej pisemnej zgody właściciela praw żadna część tej publikacji nie może być powielana, przechowywana w systemach wyszukiwania informacji ani przekazywana w jakiejkolwiek formie lub za pomocą jakichkolwiek środków, w tym elektronicznych, mechanicznych, poprzez fotokopiowanie lub nagrywanie. Wyjątek stanowią przypadki dozwolone przez obowiązujące prawo.
+    instructions:
+      heading: ZANIM ZACZNIESZ
+      intro: "Dziękuję za zakup tej książki! Bardzo doceniam Twoje wsparcie. Zanim zaczniesz kolorować, przeczytaj:"
+      section: Jakość papieru
+      body: "Najpierw wypróbuj swoje kredki i flamastry. Żeby kolor nie przebił na następną stronę, podłóż pod kolorowaną stronę czystą kartkę grubszego papieru."
+  de:
+    copyright:
+      minimal: "© {year} {owner}. Alle Rechte vorbehalten."
+      short: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers vervielfältigt oder verbreitet werden, soweit dies nicht gesetzlich erlaubt ist.
+      full: |
+        © {year} {owner}. Alle Rechte vorbehalten.
+        Kein Teil dieser Publikation darf ohne vorherige schriftliche Genehmigung des Rechteinhabers in irgendeiner Form oder mit irgendwelchen Mitteln vervielfältigt, in einem Informationsabrufsystem gespeichert oder übertragen werden. Dies umfasst insbesondere elektronische und mechanische Verfahren sowie Fotokopien und Aufzeichnungen. Gesetzlich erlaubte Nutzungen bleiben unberührt.
+    instructions:
+      heading: BEVOR DU LOSLEGST
+      intro: "Vielen Dank, dass du mein Buch gekauft hast! Ich freue mich sehr über deine Unterstützung. Bevor du mit dem Ausmalen beginnst, lies bitte:"
+      section: Papierqualität
+      body: "Teste deine Stifte am besten zuerst. Damit die Farbe nicht auf die nächste Seite durchdrückt, lege ein leeres Blatt dickeres Papier hinter die Seite, die du gerade ausmalst."
+```
+
+- Walidacja (§7): każdy język ma komplet kluczy, z trzema wariantami praw autorskich (po scaleniu `en-GB` z `en`), a wstawki są tylko z listy (`{year}`, `{owner}`). Wersja `en-GB` nie potrzebuje własnych praw autorskich, bo angielski tekst nie ma różnic w pisowni.
+
+**Manifest i `canva.md`**
+- `front_matter` w manifeście ma wpisy `first_page` (rodzaj, układ, pliki jak w FR-14), `copyright` (język, hash tekstu) i `instructions`. Zmiana tekstu, czcionki albo autora przelicza stronę w `finalize` bez wywołań API, jak przy FR-14.
+- `canva.md` wymienia strony wstępne w kolejności z FR-22.
+
+**Uwagi do implementacji**
+- Wspólna logika ramki z pustym polem i układu zapasowego z FR-14 (`BelongsToMaker`, `BelongsToRenderer`) obsługuje rodzaje `belongs_to`, `title` i `instructions`.
+- Testy: wybór tłumaczenia (`en-GB` → `en`) i wariantu (`minimal`, `short`, `full`), brak tłumaczenia lub właściciela praw (kod 1 bez API), blok praw autorskich nad dolnym marginesem i zmniejszanie czcionki, strona 1 bez `front-matter` (sam tytuł), układ zapasowy instrukcji, zmiana `--no-instructions` (2 strony wstępne zamiast 4).
+
+**Implementacja (18.11.2026)**
+- **Kolejność:** FR-23 przed FR-22. Strony wstępne powstają jako pliki PNG (dla Canvy i dla `interior.pdf` z FR-22).
+- **Polecenie `front-matter`:** opcje ze specyfikacji oraz `--copyright` i `--copyright-owner`, żeby dało się dodać strony wstępne do książki zrobionej przed FR-23. `generate` ma krok „strony wstępne” między `images` a `finalize`, włączany `--front-matter/--no-front-matter` (`front_matter.in_generate`, domyślnie tak); `--first-page`, `--instructions/--no-instructions`, `--copyright`, `--copyright-owner` jak w spec. `--belongs-to-page` to skrót dla `--first-page belongs-to`, a `--no-belongs-to-page` dla `--first-page title`. `belongs-to` w książce FR-23 ustawia stronę 1 i usuwa tytułową.
+- **Ustawienia:** `front_matter` (`first_page`, `instructions`, `copyright`, `in_generate`, `text_font`, `copyright_pt`, `copyright_min_pt`), `publisher.copyright_owner`, `title_page`, `instructions`. `front_matter_pages` przestaje być ustawieniem (2 albo 4 z `instructions`), a `belongs_to_page.enabled` znika. Manifest: `input.copyright`, `input.copyright_owner`, `input.first_page`, `input.instructions`; `front_matter.title`, `front_matter.instructions` (wpisy jak FR-14, układy `frame`, `fallback`, a dla strony 1 bez modelu `text_only`) i `front_matter.copyright` (język, wariant, właściciel, rok, hash tekstu).
+- **Czcionki:** zwykły tekst Noto Sans (SIL OFL, `assets/fonts/NotoSans-Variable.ttf`, pobrana 18.11.2026; polskie i niemieckie znaki), nagłówek instrukcji i tytuł strony 1 czcionką napisów rynku (Fredoka albo Baloo 2, FR-19) w wariancie `Bold`. Kontrola znaków jak w FR-19, także dla właściciela praw i tytułu.
+- **Teksty:** `texts` w `markets.yaml` z wersjami `en`, `en-GB`, `pl` i `de` ze specyfikacji. Na teksty rynku program nakłada też mapę pisowni (FR-19), więc CA i AU dostają „colouring” bez osobnej wersji `en-CA`. Rynki bez tłumaczenia (FR, ES, IT, NL, SE, JP) kończą `ideas` i `generate` kodem 1, jak w spec.
+- **Właściciel praw** jest wymagany od nowej książki: bez `--copyright-owner` i `publisher.copyright_owner` (domyślnie `null`) `ideas` i `generate` kończą się kodem 1. Książki sprzed FR-23 (bez właściciela w manifeście) `finalize` zostawia bez stron FR-23.
+- **Strona 1 bez `front-matter`:** `finalize` robi `front_title.png` z samym tytułem i wypisuje, jak dostać stronę z modelu. Instrukcja bez `front-matter` (gdy jest włączona) dostaje w `finalize` grafikę zapasową SVG, bez API. Obie informacje to zwykłe komunikaty, nie ostrzeżenia: strona jest poprawna.
+- **Prawa autorskie:** akapity zawijane do szerokości obszaru treści, wysokość wiersza z metryk czcionki (Noto Sans ma duży zapas na wydłużenia liter), litery z ujemnym odstępem przesunięte do marginesu. Za długi tekst zmniejsza się co 0,5 pt do `copyright_min_pt`, dalej kod 1.
+- **Instrukcja:** ilustrację rysuje model wg `instructions.composition` z `{subject}` (najczęstszy `subject` stron), z blokiem stylu stron. Bez kontroli pustego pola (tekst stoi nad ilustracją, w osobnej części strony); QA sprawdza `text` (tylko teksty programu) i `scene_mismatch`. Grafika zapasowa: `assets/front_matter/instructions.svg` (otwarta kolorowanka, kartka wsuwana pod stronę, strzałki).
+- **`canva.md`:** strony wstępne w kolejności druku. Nazwy plików (`front_belongs_to`, `front_copyright`, `front_instructions`, `front_title`) nie układają się alfabetycznie w tej kolejności, więc instrukcja każe wstawiać je według tabeli.
+
+## 7. Profile (konfiguracja YAML)
+
+Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
+
+### 7.1 Profile wieku: `config/ages.yaml`
+
+| Klucz | Linia | Obiekty | Tło | Wypełnienia | Fragment promptu (szkic) |
+|---|---|---|---|---|---|
+| `przedszkole` | bardzo gruba | 1 duży, proste kształty | brak | duże, zamknięte pola | `very thick bold outlines, one large simple subject, minimal details, no background, large closed areas, the whole drawing fits inside the image with white space on every side, for toddlers` |
+| `wczesnoszkolne` | gruba | 1–3 | proste | średnie | `thick clean outlines, simple scene with 1-3 subjects, simple background, the whole scene fits inside the image with white space on every side, nothing cut off by the edges, for kids 6-8` |
+| `szkolne` | średnia | pełna scena | tak | więcej detali | `medium outlines, full scene, moderate detail, background lines such as floor, walls or horizon may run to the edges but no object is cut off, for kids 9-12` |
+| `nastolatki` | cienka | scena, stylizacja | pełne | wzory | `fine clean lines, detailed scene, decorative patterns, detailed background may extend to the edges of the image, for teens` |
+| `dorosli` | bardzo cienka | wzory, mandale, zentangle | gęste | drobne pola | `fine intricate line work, highly detailed patterns, many small areas to color, background and patterns may extend to the edges of the image, for adults` |
+
+Każdy profil ma też minimalny udział stron z kilkoma postaciami (`multi_subject_share`, FR-03b) oraz parametry obróbki (np. `min_speck_area`, wygładzanie potrace). Parametry obróbki różnią się, bo cienkie linie dla dorosłych wymagają innego progowania niż grube linie dla przedszkolaków. Fragment promptu określa też, co może dotykać krawędzi grafiki: dla najmłodszych cała scena mieści się w kadrze z białym marginesem, a w szczegółowych scenach dla starszych tło może sięgać krawędzi. Główny motyw nigdy nie jest ucięty (wskazówka kompozycji formatu, §7.3).
+
+### 7.2 Profile stylu: `config/styles.yaml`
+
+Lista otwarta. Startowe propozycje: `kawaii`, `cartoon`, `realistic`, `mandala`, `boho`, `manga`, `zentangle`.
+Każdy styl ma: `name`, `description`, `prompt_fragment` i opcjonalnie `allowed_ages` (np. `zentangle` tylko dla `nastolatki` i `dorosli`). Niedozwolone połączenie wieku i stylu daje ostrzeżenie.
+
+### 7.3 Profile formatu: `config/formats.yaml`
+
+```yaml
+letter:            # 8.5" × 11", pion
+  trim_in: [8.5, 11]
+  dpi: 300
+  page_px: [2550, 3300]
+  aspect: "3:4"
+  safe_margin_in: 0.5     # nasz minimalny margines (wygoda kolorowania); KDP wymaga ≥ 0.25"
+  composition_hint: "vertical composition, main subjects fill most of the portrait frame, fully inside the image, not cut off by the edges"
+square:            # 8.5" × 8.5"
+  trim_in: [8.5, 8.5]
+  dpi: 300
+  page_px: [2550, 2550]
+  aspect: "1:1"
+  safe_margin_in: 0.5
+  composition_hint: "centered composition, one clear focal point (a character, a small group or a concentric design), main subjects fully inside the image, not cut off by the edges"
+```
+
+Bez spadu (bleed): grafika zawsze mieści się w obszarze bezpiecznym na białym tle.
+
+Profil formatu nie ma pola `gutter_in`: margines przy grzbiecie zależy od liczby stron książki, a nie od formatu (sekcja 7.4).
+
+### 7.4 Marginesy KDP: `config/settings.yaml`
+
+Wartości z tabeli marginesów KDP dla druku bez spadu. Kolumna „z spadem” (≥ 0.375" na zewnątrz) nie dotyczy MVP, bo nie używamy spadu.
+
+```yaml
+kdp_margins:
+  outside_min_in: 0.25          # zewnętrzne marginesy bez spadu: co najmniej 0.25"
+  gutter_by_pages:              # margines przy grzbiecie wg liczby stron książki
+    - {max_pages: 150, gutter_in: 0.375}   # 24–150
+    - {max_pages: 300, gutter_in: 0.5}     # 151–300
+    - {max_pages: 500, gutter_in: 0.625}   # 301–500
+    - {max_pages: 700, gutter_in: 0.75}    # 501–700
+    - {max_pages: 828, gutter_in: 0.875}   # 701–828
+```
+
+Zasady:
+- `gutter_in(pages_in_book)` to wartość z pierwszego wiersza, dla którego `pages_in_book ≤ max_pages`.
+- Walidacja konfiguracji: wiersze rosną według `max_pages` i `gutter_in`, a `safe_margin_in` każdego formatu jest ≥ `outside_min_in`.
+- `pages_in_book` większe niż ostatni `max_pages` to błąd walidacji (FR-02). Przy limicie `--pages` 200 i domyślnych 2 stronach wstępnych książka ma maks. 402 strony, więc ten przypadek wystąpi tylko przy zmienionej konfiguracji.
+- Gdy KDP zmieni tabelę, aktualizuje się tylko YAML.
+
+## 8. Architektura i API wewnętrzne
+
+### 8.1 Pipeline
+
+```
+CLI (typer)
+  └─ BookSpec (walidacja: FR-01, FR-02)
+      ├─ IdeaGenerator ── TextProvider ──► pomysły               (FR-03)
+      ├─ IdeaReviewer  ── TextProvider ──► ideas.json            (FR-03a, FR-03b)
+      ├─ PromptBuilder ◄─ ages/styles/formats.yaml               (FR-04)
+      ├─ PageWorker × concurrency                                (FR-05..07)
+      │    ├─ ImageProvider.generate() ──► raw/page_XX.png
+      │    ├─ PostProcessor chain      ──► svg/, page_XX.png
+      │    └─ QAChecker (opcjonalnie)  ──► pass / użyj zapasu
+      └─ Manifest (zapis przyrostowy, koszty, wznawianie)        (FR-08..10)
+```
+
+### 8.2 Interfejsy (szkic, `typing.Protocol`)
+
+```python
+class TextProvider(Protocol):
+    def complete_json(self, system: str, user: str, schema: type[BaseModel]) -> tuple[BaseModel, Usage]: ...
+
+class ImageProvider(Protocol):
+    name: str
+    def supported_aspects(self) -> list[str]: ...
+    def generate(self, req: ImageRequest) -> ImageResult: ...
+    # ImageRequest: prompt, aspect, quality, seed (opcjonalnie), reference_image (opcjonalnie),
+    #   mask (opcjonalnie, PNG z alfą: przezroczyste = do dorysowania; tylko z reference_image)
+    #   + struktura promptu (scene, części stylu, negative) dla dostawców z osobnym promptem negatywnym (FR-18)
+    # ImageResult: png_bytes, width, height, usage/cost, raw_response_meta
+
+class VisionProvider(Protocol):
+    def assess(self, image_png: bytes, instructions: str, schema: type[BaseModel]) -> tuple[BaseModel, Usage]: ...
+
+class PostProcessor(Protocol):
+    def process(self, img: Image, ctx: PageContext) -> Image: ...
+```
+
+Zasady:
+- Pipeline zależy wyłącznie od interfejsów. Implementacje są wybierane z konfiguracji przez rejestr (`providers.image = "openai"`).
+- **Dodanie Gemini** = nowy plik `providers/gemini_image.py` z klasą implementującą `ImageProvider` i wpis w rejestrze. Zero zmian w `pipeline/`.
+- `ImageRequest.reference_image` jest w kontrakcie od początku (pierwsza zaakceptowana strona jako referencja stylu), nawet jeśli adapter OpenAI w MVP go ignoruje.
+- Modele danych (`BookSpec`, `PageIdea`, `PageResult`, `Manifest`) w Pydantic v2.
+
+### 8.3 Dostawcy w MVP
+
+| Rola | Dostawca | Model (konfigurowalny) | Uwagi |
+|---|---|---|---|
+| Pomysły (tekst) | OpenAI | aktualny model GPT z rodziny 5.x, wersja mini (ustalić przy implementacji) | structured outputs |
+| Grafiki | OpenAI Image API (`images.generate`) | `gpt-image-2.5-flare` (szybki, „everyday”); alternatywnie `gpt-image-2.5-sunburst` (najwyższa jakość) | `gpt-image-1` wyłączony 23.10.2026; przypinać pełną nazwę snapshotu |
+| QA (wizja) | OpenAI | ten sam model co do pomysłów | tylko z `--qa` |
+
+Mapowanie rozmiarów dla OpenAI: `square` → `1024x1024`, `letter` → `1024x1536` (proporcja 2:3; różnica względem 3:4 wyrównywana białym marginesem w FR-06). Jeśli wybrany model obsługuje dowolne wymiary, adapter używa wymiarów 3:4.
+
+**Uwaga:** abonament ChatGPT nie obejmuje API. Potrzebny jest osobny klucz API OpenAI z włączonymi płatnościami (platform.openai.com).
+
+### 8.4 Następny adapter: Gemini (Nano Banana)
+- Model: `Nano Banana 2.1` (Gemini API, płatność za obraz). Natywnie obsługuje proporcje `1:1` i `3:4` oraz obrazy referencyjne.
+- Klucz: `GEMINI_API_KEY` z Google AI Studio.
+- Wymagania wobec adaptera są takie same jak w FR-05.
+
+### 8.5 Adapter lokalny: ComfyUI
+- Serwer ComfyUI w sieci lokalnej, workflow użytkownika w formacie API, generowanie maks. 512 × 512 albo 768 × 512 px. Szczegóły w FR-18.
+
+## 9. Interfejs CLI
+
+### 9.1 Komendy
+
+```bash
+# Generowanie książki: wszystkie trzy kroki po kolei (FR-17)
+kdp-studio generate \
+  [--config-file ksiazki/dinozaury.yaml] \
+  --theme "Dinozaury" \
+  --age przedszkole \
+  --style kawaii \
+  --format square \
+  --pages 30 \
+  [--market US] \
+  [--output-dir ./output] \
+  [--concurrency 4] \
+  [--max-cost 5.00] \
+  [--qa] \
+  [--image-quality low|medium|high] \
+  [--no-review-ideas] \
+  [--belongs-to-page] \
+  [--first-page title|belongs-to] [--instructions|--no-instructions] \
+  [--single-sided|--double-sided] [--copyright minimal|short|full] [--copyright-owner "Jan Kowalski"] \
+  [--cover] \
+  [--strict] \
+  [--image-provider openai|comfyui] \
+  [--seed 1234] \
+  [--log-level info|debug]
+
+# Generowanie krokowe (FR-17)
+kdp-studio ideas --theme "Dinozaury" --age przedszkole --style kawaii --format square --pages 30 \
+  [--market US] [--output-dir ./output] [--no-review-ideas] [--strict] [--max-cost 5.00]
+kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,idea_19
+kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
+  [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
+kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
+# Każdy krok przyjmuje też --log-level info|debug (NFR-09)
+# Plik parametrów książki (FR-20, poza MVP): flagi nadpisują wartości z pliku
+kdp-studio generate --config-file ksiazki/dinozaury.yaml --pages 40
+kdp-studio images ./output/dinozaury_przedszkole_kawaii_square --config-file ksiazki/dinozaury.yaml
+# Wznowienie przerwanego kroku = ponowne uruchomienie tej samej komendy
+
+# Lista dostępnych profili
+kdp-studio profiles [age|style|format|market]
+
+# Strona „This book belongs to…” (FR-14, poza MVP), po kroku images
+kdp-studio belongs-to ./output/dinozaury_przedszkole_kawaii_square \
+  [--qa] [--image-quality low|medium|high] [--max-cost 1.00] [--remove]
+
+# Okładka do gotowej książki (FR-15, poza MVP); generate --cover robi to samo bez --cover-page i --thumbnails
+kdp-studio cover ./output/dinozaury_przedszkole_kawaii_square \
+  [--cover-page 07] \
+  [--thumbnails 03,12,21] \
+  [--template kdp_template.png] \
+  [--color|--no-color] [--image-quality low|medium|high] \
+  [--select-pages|--no-select-pages] [--back-text] \
+  [--qa] \
+  [--max-cost 1.00]
+
+# Strony wstępne (FR-23, poza MVP), po kroku images; generate robi to jako krok przed finalize
+kdp-studio front-matter ./output/dinozaury_przedszkole_kawaii_square \
+  [--first-page title|belongs-to] [--instructions|--no-instructions] \
+  [--qa] [--image-quality low|medium|high] [--max-cost 1.00]
+# finalize pisze też interior.pdf (FR-22) i może zmienić tryb druku
+kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square [--single-sided|--double-sided]
+
+# Koszt druku, cena minimalna i tantiemy (FR-16, poza MVP)
+kdp-studio price ./output/dinozaury_przedszkole_kawaii_square [--market US,UK,DE,PL] [--price 9.99]
+kdp-studio price --format letter --pages 30 [--market US]
+```
+
+### 9.2 Konfiguracja i sekrety
+- Sekrety wyłącznie w zmiennych środowiskowych lub `.env` (w `.gitignore`): `OPENAI_API_KEY`, później `GEMINI_API_KEY`, a dla ComfyUI opcjonalnie `COMFYUI_URL` i `COMFYUI_TOKEN` (FR-18).
+- Ustawienia domyślne w `config/settings.yaml` (dostawcy, modele, cenniki, `reserve_ratio`, strony wstępne `front_matter` (FR-23), wnętrze `interior` (FR-22), `review_ideas`, limity różnorodności `diversity` (FR-03b), `qa`, `qa_max_retries`, domyślna równoległość, poziom logu `log_level` (NFR-09), cennik API `api_pricing` i limit kosztu `max_cost_usd` (FR-10)). Flagi CLI nadpisują plik parametrów książki (`--config-file`, FR-20), a ten nadpisuje `settings.yaml`. Plik książki nie przyjmuje sekretów.
+
+### 9.3 Kody wyjścia
+
+| Kod | Znaczenie |
+|---|---|
+| 0 | Sukces: wszystkie strony `ok` |
+| 1 | Błąd walidacji wejścia lub konfiguracji |
+| 2 | Zakończono częściowo: brakuje stron `ok` (failed lub QA) |
+| 3 | Przekroczony budżet (`--max-cost`, FR-10): status `budget_exceeded` |
+| 4 | Błąd dostawcy API po wyczerpaniu ponowień |
+
+## 10. Struktura katalogu wyjściowego
+
+```
+output/dinozaury_przedszkole_kawaii_square/
+├── manifest.json
+├── ideas.json
+├── canva.md                        # instrukcja składania w Canvie (sekcja 10.1)
+├── interior.pdf                    # gotowe wnętrze do KDP (FR-22, poza MVP)
+├── description.html                # opis do wklejenia w KDP (FR-03)
+├── front_title.png | front_belongs_to.png, front_copyright.png, front_instructions.png   # strony wstępne (FR-23)
+├── front_belongs_to.png            # po `belongs-to` albo `generate --belongs-to-page` (FR-14, poza MVP)
+├── page_01.png … page_30.png      # pełne strony do importu w Canvie, 300 DPI
+├── svg/page_01.svg …               # archiwum wektorowe (nie do Canvy)
+├── raw/page_01.png …               # surowe wyniki z modelu
+├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
+├── kdp-studio.log                  # logi strukturalne wszystkich kroków, wiersze JSON (NFR-09)
+├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
+└── cover/                          # tylko po `kdp-studio cover` albo `generate --cover` (FR-15, poza MVP)
+    ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
+    ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
+    ├── cover.png, front.png
+    ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
+    └── raw/                        # front_sketch, front_color_tryN, back_tryN, contact_sheet
+```
+
+Przykład wpisu strony w `manifest.json`:
+
+```json
+{
+  "page": 7,
+  "idea_id": "idea_07",
+  "status": "ok",
+  "action": null,
+  "edited_by_user": false,
+  "attempts": 2,
+  "provider": "openai",
+  "model": "gpt-image-2.5-flare",
+  "quality": "medium",
+  "prompt": "…",
+  "prompt_sha256": "…",
+  "raw_sha256": "…",
+  "final": {"raw_sha256": "…", "postprocess_sha256": "…"},
+  "qa": {"pass": true, "issues": []},
+  "cost_usd": 0.08,
+  "duration_s": 14.2,
+  "files": {"png": "page_07.png", "svg": "svg/page_07.svg", "raw": "raw/page_07.png"}
+}
+```
+
+### 10.1 Składanie książki w Canvie
+
+Treść `canva.md` (wartości w nawiasach wypełnia program):
+
+1. Utwórz projekt o wymiarach własnych `[trim_in]` cali (np. 8.5 × 11 in).
+2. Strony wstępne: `[front_matter_pages]` (domyślnie strona tytułowa i „This book belongs to…”). Jeśli książka ma stronę z FR-14 (`front_belongs_to.png`), wstaw `front_belongs_to.png` na drugą stronę i rozciągnij na całą stronę, jak grafiki. W przeciwnym razie zaprojektuj tę stronę w Canvie.
+3. Prześlij wszystkie `page_XX.png` naraz.
+4. Każdą grafikę wstaw na osobną stronę i rozciągnij na całą stronę. Marginesy (`[margin_in]` cala z każdej strony, zgodnie z tabelą KDP dla `[pages_in_book]` stron) są już w pliku, więc niczego nie skaluj ani nie przycinaj.
+5. Po każdej grafice dodaj pustą stronę (druk jednostronny, D8). Razem `[pages_in_book]` stron.
+6. Pobierz jako **PDF Print** z zaznaczonym **Flatten PDF**. Bez spadu (bleed).
+7. Przy publikacji w KDP zaznacz *AI-generated content* dla obrazów (FR-13).
+
+## 11. Wymagania pozafunkcjonalne
+
+| ID | Obszar | Wymaganie |
+|---|---|---|
+| NFR-01 | Technologia | Python ≥ 3.12, zarządzanie projektem przez `uv`, CLI w `typer`, modele w `pydantic` v2, obraz: `Pillow`, `opencv-python-headless`, `pypotrace` lub `potracer`, render SVG: `cairosvg` lub `resvg`. |
+| NFR-02 | Wymienność dostawców | Zmiana dostawcy grafik = nowy adapter + zmiana konfiguracji. Pipeline nie importuje SDK dostawców (sprawdzane testem lub regułą lintera). |
+| NFR-03 | Testowalność | Testy jednostkowe na fałszywych dostawcach (`FakeImageProvider` zwraca przygotowane PNG), bez sieci. Post-processing testowany na plikach-wzorcach. Pokrycie pipeline ≥ 80%. |
+| NFR-04 | Niezawodność | Ponowienia z backoffem, przyrostowy manifest, wznawianie (FR-09). Przerwanie Ctrl+C nie uszkadza manifestu (zapis atomowy: plik tymczasowy, potem zmiana nazwy). |
+| NFR-05 | Wydajność | 30 stron przy `--concurrency 4` w ≤ 15 min (bez QA), zależnie od limitów API. Post-processing jednej strony ≤ 5 s. |
+| NFR-06 | Koszt | Docelowo ≤ 3 USD za 30-stronicową książkę z QA. Twardy limit przez `--max-cost`. |
+| NFR-07 | Jakość druku | Każdy `page_XX.png` ma dokładnie wymiary `page_px` profilu formatu, metadane 300 DPI, tryb 8-bit grayscale bez kanału alfa, wyłącznie wartości 0 i 255, a czarne piksele mieszczą się w obszarze treści (FR-06). Sprawdzane automatycznie po zapisie. |
+| NFR-08 | Odtwarzalność | Manifest zawiera wszystko, czego potrzeba do ponownego wygenerowania strony (prompt, model, snapshot, seed, jeśli dostępny). |
+| NFR-09 | Obserwowalność | Logi strukturalne (poziomy INFO/DEBUG), pasek postępu w konsoli, podsumowanie kosztów i czasu na końcu. Logi to wiersze JSON w `kdp-studio.log` w katalogu książki, dopisywane przez każdy krok. `info` zapisuje kroki, strony, ostrzeżenia i błędy z czasami, `debug` dodatkowo każde wywołanie API (czas, tokeny, prompt grafiki). Do pliku trafiają tylko logi programu, nie bibliotek dostawców (NFR-10). Każdy krok podaje w konsoli swój czas, a `generate` na końcu czasy kroków i całości. |
+| NFR-10 | Bezpieczeństwo | Klucze API nigdy nie trafiają do logów, manifestu ani repozytorium. |
+| NFR-11 | Przenośność | Działa na Linux, macOS i Windows. Zależności natywne (cairo, potrace) opisane w README albo zastąpione czysto pythonowymi odpowiednikami. |
+| NFR-12 | Zgodność z KDP | Domyślne profile formatów zgodne ze specyfikacją KDP (trim, 300 DPI, marginesy, min. 24 strony). Przypomnienie o ujawnieniu AI (FR-13). Prompty nie generują postaci ani znaków chronionych prawem autorskim; chronione nazwy w temacie, metadanych, pomysłach i promptach sprawdza kod (FR-21). |
+| NFR-13 | Jakość kodu | `ruff` (lint i format), `mypy --strict` dla `pipeline/` i `providers/`, pre-commit, CI w GitHub Actions (lint, typy, testy). |
+
+## 12. Proponowana struktura repozytorium
+
+```
+kdp-studio/
+├── pyproject.toml
+├── config/
+│   ├── settings.yaml
+│   ├── ages.yaml
+│   ├── styles.yaml
+│   └── formats.yaml
+├── src/kdp_studio/
+│   ├── cli.py
+│   ├── models.py            # BookSpec, PageIdea, PageResult, Manifest
+│   ├── config.py            # ładowanie YAML i .env
+│   ├── pipeline/
+│   │   ├── ideas.py
+│   │   ├── prompts.py
+│   │   ├── worker.py
+│   │   ├── postprocess.py
+│   │   ├── qa.py
+│   │   └── manifest.py
+│   └── providers/
+│       ├── base.py          # Protocols + rejestr
+│       ├── openai_text.py
+│       ├── openai_image.py
+│       └── fake.py          # do testów
+└── tests/
+```
+
+## 13. Roadmapa
+
+| Etap | Zakres | Kryterium wyjścia |
+|---|---|---|
+| 0. Spike promptów | Notebook: 3 tematy × 5 wieków × 2 style, ocena ręczna | Prompty dają czysty line art w ≥ 80% prób |
+| 1. MVP CLI | FR-01–FR-13 i FR-17 (generowanie krokowe) z dostawcą OpenAI | Kompletna 30-stronicowa książka w katalogu, złożona w Canvie według `canva.md` i przyjęta przez kreator KDP bez błędów |
+| 1a. Strona „This book belongs to…” | FR-14: ramka w motywie książki z modelu obrazu, napis i miejsce na imię dokładane przez program, polecenie `belongs-to` i krok `generate --belongs-to-page` | Na 3 tematach × 5 wiekach strona pasuje stylem do grafik, a pole na imię jest puste bez ręcznych poprawek w ≥ 80% przypadków (reszta przez układ zapasowy) |
+| 1b. Okładka | FR-15: komenda `cover`, geometria z wzorów KDP, przód z pokolorowanej strony z tytułem, tył z grzbietem dopasowany do przodu, miniatury w ramkach, PDF | Na 3 książkach (letter i kwadrat, różna liczba stron) PDF przechodzi kreator KDP bez błędów, a podgląd KDP nie pokazuje szwu na grzbiecie ani elementów w polu kodu |
+| 1c. Cena i tantiemy | FR-16: tabele kosztów druku i progów tantiem KDP w konfiguracji, komenda `price`, podsumowanie w `generate` i manifeście | Koszt druku i cena minimalna zgadzają się z kalkulatorem KDP dla letter i kwadratu przy 30, 54 i 100 grafikach na rynkach US, UK, DE i PL |
+| 2. PDF w skrypcie | FR-22 i FR-23: `interior.pdf` ze stronami wstępnymi (tytułowa do kolorowania albo FR-14, prawa autorskie, instrukcja) i pustymi stronami, druk jednostronny lub dwustronny | `interior.pdf` dla letter i kwadratu, w obu trybach druku, przechodzi kreator KDP bez błędów, a liczba stron zgadza się z okładką |
+| 3. Gemini | Adapter `GeminiImageProvider` i porównanie jakości z OpenAI | Przełączenie przez `--image-provider gemini` |
+| 3a. ComfyUI lokalnie | FR-18: adapter `ComfyUIImageProvider`, workflow użytkownika w formacie API, osobny prompt negatywny, limit 512 × 512 / 768 × 512 px | Książka dla wieku przedszkolnego i wczesnoszkolnego (letter i kwadrat) przechodzi `finalize` i QA na poziomie zbliżonym do OpenAI; dla starszych wieków z węzłem powiększania w workflow |
+| 4. UI | Streamlit albo Gradio (React dopiero przy produkcie dla innych) | Generowanie bez terminala |
+
+Stan na 17.11.2026 (sekcja 0): zakres etapu 1 jest zrobiony, a jego kryterium wyjścia (książka przyjęta przez kreator KDP) czeka na pierwsze złożenie w Canvie. Etap 1a (FR-14) ma kod; jego kryterium wyjścia wymaga prób na prawdziwych tematach. Etap 1b (FR-15) ma kod wszystkich trzech etapów; jego kryterium wyjścia wymaga próby w kreatorze KDP. Etap 1c ma gotową specyfikację.
+
+## 14. Otwarte pytania
+
+1. Startowa lista stylów i dozwolone połączenia wiek × styl.
+2. ~~Język metadanych książki: angielski czy parametr `--lang`?~~ Rozstrzygnięte w FR-19: parametr `--market` (rynek Amazona, domyślnie US), bo odmiana języka i słowa kluczowe zależą od rynku, a nie od samego języka.
+3. Czy QA ma być domyślnie włączone po etapie 0, gdy znany będzie jego koszt i skuteczność?
+4. Czy używać pierwszej zaakceptowanej strony jako referencji stylu dla kolejnych (spójność kontra koszt i czas)?
+5. Wybór modelu tekstowego i domyślnej jakości (`quality`) modelu obrazu. Jakość sprawdzić porównaniem `low` i `medium` na tych samych pomysłach (FR-17).
+6. ~~FR-14: wybór czcionki z licencją OFL i wariant polski napisu.~~ Rozstrzygnięte 16.11.2026: Fredoka, napis po angielsku, inny język przez `belongs_to_page.text`.
+7. FR-15: ~~wybór czcionki tytułowej (OFL)~~ Fredoka Bold (16.11.2026). Kolory szablonu KDP są skalibrowane na szablonach kwadratu i letter. Profil CMYK (domyślnie SWOP 2013 CRPC5 z repozytorium; porównać z SWOP v2 i GRACoL przez `KDP_STUDIO_CMYK_PROFILE`) i sposób konwersji (`perceptual` czy `relative_colorimetric`) do wyboru po porównaniu `cover_proof.png` z egzemplarzem próbnym z KDP.
+8. FR-18: model bazowy to SD 1.5 (`v1-5-pruned-emaonly`), a pion 512 × 768 jest przyjęty jako dozwolony. Do ustalenia po próbach: LoRA lub checkpoint do line artu (z licencją dopuszczającą sprzedaż) i węzeł powiększania dla starszych wieków.
+
+## 14a. Pomysły na rozwój
+
+Kierunki do rozważenia po MVP, jeszcze bez wymagań.
+
+**`--humanize/--no-humanize`: uczłowieczone zwierzęta**
+- Zwierzęta stoją na tylnych łapkach, noszą ubranka pasujące do sceny, używają łapek jak rąk i robią ludzkie rzeczy (pieczenie, łyżwy, ubieranie choinki).
+- Reguła trafia do generatora pomysłów (FR-03), do weryfikacji pomysłów (FR-03a), do kontroli jakości (FR-07) i jako linia `Characters: …` do wspólnego bloku stylu (FR-04), więc obowiązuje jednakowo na każdej stronie. Jedna wartość na całą książkę, bo mieszanie zwierząt naturalnych i uczłowieczonych wygląda niespójnie.
+- Wartość domyślna w profilu stylu (`humanize` w `styles.yaml`), flaga ją nadpisuje.
+
+**`--character`: opis bohaterów**
+- Tekst albo plik (`--character @bohaterowie/lisek.md`), flaga powtarzalna: jedno wystąpienie to jeden bohater. Przykłady: konkretny bohater dla nastolatków, maskotka serii, postacie z własnych opowiadań.
+- Opis ma dwie warstwy. Wygląd (sylwetka, ubranie, znaki szczególne) trafia do każdego promptu obrazu. Imię i charakter trafiają tylko do generatora pomysłów, nigdy do promptu obrazu, bo model mógłby próbować napisać imię.
+- Generator umieszcza bohaterów na większości stron, a weryfikacja pomysłów sprawdza zgodność z opisem.
+- Ograniczenie: opis tekstowy zapewnia ten sam strój i znaki szczególne, ale twarz i proporcje różnią się między stronami. Pełną spójność dałaby karta postaci generowana raz i podawana jako `reference_image` do każdej strony.
+- Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
+- W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
+
+**A+ Content: moduły strony produktu**
+
+A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładkę, strony, temat, wiek i fakty o książce z manifestu. Może przygotować grafiki modułów i teksty do wklejenia w edytor A+ w KDP. Zasady A+ (https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD, sprawdzone 24.11.2026) są ostrzejsze niż zasady opisu.
+
+*Moduły (edytor A+, sprawdzone 24.11.2026)*
+
+Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze.
+
+| Moduł | Układ | Obraz | Teksty |
+|---|---|---|---|
+| Standard Company Logo | sam obraz | 600 × 180 | – |
+| Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
+| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, tekst kolumny do 1000 |
+| Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
+| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | nagłówek do 60 znaków, tekst do 300 |
+| Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
+
+- Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
+- Teksty modułów mają formatowanie: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną. To te same znaczniki co w opisie KDP (FR-03).
+
+*Układ strony (z punktu widzenia marketingu)*
+1. **Baner:** Standard Company Logo 600 × 180. Jeden obraz wydawcy przygotowany poza programem; program wskazuje tylko jego miejsce.
+2. **2–3 × Standard Image Header With Text:** mockupy gotowego produktu (książka na stole, kilka pokolorowanych stron, kredki), z minimum tekstu albo bez niego.
+3. **Jeden moduł 3 albo 4 kolumn:** cechy książki z grafiką nad każdą kolumną (np. duże proste kontury, druk jednostronny, wiek). Treść cech z manifestu, jak fakty w opisie (FR-03).
+4. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji.
+
+Bez tabeli porównawczej zostaje miejsce na pas Standard Image with Dark/Light Overlay ze stronami książki. Zestaw modułów i ich kolejność byłyby w konfiguracji, a nie w kodzie.
+
+*Grafiki*
+- **Wymagania A+ dla obrazów:** JPG albo PNG w RGB, plik poniżej 2 MB, co najmniej 72 dpi, bez animacji (GIF).
+- **Bez napisów od programu:** nagłówki i teksty idą do pól modułu, a obraz nie dostaje napisów. Tytuł widoczny na okładce w mockupie to zdjęcie produktu, nie napis.
+- **Mockupy:** dwie drogi do rozstrzygnięcia przed wymaganiem.
+  - Szablony mockupów od użytkownika: zdjęcie z zaznaczonym czworokątem w konfiguracji, w który program wkleja okładkę albo stronę przekształceniem perspektywicznym. Ta droga jest bez kosztu API i bez ryzyka zniekształceń.
+  - Scena z modelu obrazu z okładką jako `reference_image`. Ta droga jest płatna, a model może zniekształcić tytuł.
+- **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
+
+*Teksty i zakazane sformułowania*
+
+Teksty powstają w jednym wywołaniu LLM z regułami A+ w prompcie i są sprawdzane w kodzie. Wzorce i listy słów są w konfiguracji, według języka rynku. Trafienie oznacza jedno ponowienie, potem ostrzeżenie. Zakazane są trzy grupy.
+- **Nacisk czasem:** „now”, „new”, „latest”, „yet”, „on sale now”, „the latest product”, „the best yet” i ich odpowiedniki w języku rynku.
+- **Święto albo sezon jako termin lub okazja do zakupu:** KDP zakazuje „references to holidays” na tej samej liście co nacisk czasem. Czytamy to tak: zakazane jest święto jako punkt w czasie albo okazja skłaniająca do zakupu, także z nazwą konkretnego święta. Przykłady: „on sale before Christmas”, „in time for Easter”, „order before Valentine's Day”, „holiday gift”, „perfect Christmas gift”, „stocking stuffer”, a także ogólne „holidays”, „holiday season”, „na święta”, „na wakacje”. Dozwolone jest święto jako temat zawartości, np. „Christmas coloring book with Santa, reindeer and gingerbread houses”. To nasza interpretacja: rozstrzygnie pierwsza recenzja A+, a przy odrzuceniu nazwy świąt trafią na listę zakazanych.
+- **Przechwałki (Claims and awards):** „perfect”, „best”, „ultimate”, „must-have”, „#1”, „top-rated”, „bestseller” i obietnice satysfakcji („100% satisfaction guaranteed”). Rekomendacje i certyfikaty („recommended by”, „approved”, „tested”) wymagają podania źródła i roku, więc program ich nie używa.
+
+Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, „buy now”, „add to cart”, „free shipping” i bez wzmianki o Kindle+.
+
+*Wynik*
+- Polecenie, np. `kdp-studio aplus <katalog>`, zapisuje katalog `aplus/` z obrazami modułów.
+- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu. Przycisk kopiuje zwykły tekst, a punkty listy jako osobne wiersze; formatowanie (pogrubienie, lista) użytkownik nakłada paskiem narzędzi edytora, a podgląd pokazuje, gdzie. Do sprawdzenia przy pierwszym użyciu: czy edytor zachowuje formatowanie przy wklejeniu sformatowanego tekstu ze strony (schowek `text/html`), a nie znaczników. Jeśli tak, przycisk może kopiować i to.
+- Wpis trafia do manifestu, a koszt wywołań do `--max-cost`.
 
 **Słowa kluczowe z danych o wyszukiwaniach**
 - Dziś słowa kluczowe wybiera model z samej wiedzy o rynku (FR-03). Narzędzia typu KDSpy czy Publisher Rocket pokazują, jak często kupujący wpisują daną frazę i ile książek z nią konkuruje.
@@ -1704,5 +2341,6 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Canva: formaty i limity przesyłanych plików (PNG, SVG): https://www.canva.com/help/upload-formats-requirements/
 - KDP: wymagania dla plików do druku (300 DPI, spłaszczanie przezroczystości): https://kdp.amazon.com/help/topic/G202145060
 - KDP: słowa kluczowe i metadane (czego unikać): https://kdp.amazon.com/help/topic/G201298500
+- KDP: zasady A+ Content (nacisk czasem, święta, przechwałki, ceny, obrazy RGB poniżej 2 MB): https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD
 - KDP: okładka paperback (CMYK zalecany, bez mieszania przestrzeni barw, profile kolorów usuwane przed publikacją, brak wskazanego profilu i limitu farb): https://kdp.amazon.com/en_US/help/topic/G201953020
 - Poradniki zewnętrzne o CMYK dla okładek (profile SWOP v2 / GRACoL; limit farb 240% w IngramSpark): https://www.ebookpbook.com/2026/04/30/rgb-vs-cmyk-book-covers/, https://www.kdpeasy.com/guides/kdp-cover-requirements
