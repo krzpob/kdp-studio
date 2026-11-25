@@ -28,7 +28,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-12 | ✅ | #7 | |
 | FR-13 | ✅ | #13 | |
 | FR-14 | ✅ | #30, #46 | Poza MVP. Specyfikacja: #16. Czcionka Fredoka (OFL), układ zapasowy z grafiką pierwszej strony. Polecenie `belongs-to` i krok `generate --belongs-to-page` między `images` a `finalize` (zmiana z 17.11). |
-| FR-15 | ✅ | #31, #32, #39, #40, #41, #47 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
+| FR-15 | ✅ | #31, #32, #39, #40, #41, #47 | Poza MVP. Specyfikacja: #17. Trzy etapy zrobione: geometria, szablon, układ, CMYK i PDF; kolorowy przód z modelu; tył z grzbietem z modelu z kontrolą styku, wybór stron i QA modelem z wizją, opis na tyle. `generate --cover` jako ostatni krok generowania. Planowane: opcjonalny pas na grzbiecie zamiast wygładzenia styku (#67). Kryterium wyjścia etapu 1b (plik przyjęty przez KDP) czeka na próbę. |
 | FR-16 | ✅ | #65 | Poza MVP. Specyfikacja: #18. Polecenie `price` (gotowa książka albo `--format`/`--pages`), sekcja `pricing` w manifeście i linia z ceną po kroku 3. Dane cenowe w `config/markets.yaml` (FR-19). |
 | FR-17 | ✅ | #23, #24 | |
 | FR-18 | ⬜ | | Poza MVP. Specyfikacja: #25. |
@@ -506,6 +506,16 @@ Komenda `kdp-studio cover <katalog-książki>` tworzy gotową do KDP okładkę p
 - **Dopasowanie tyłu do przodu:** model nie trzyma się podanej wysokości horyzontu (na próbach z 17.11 listwa podłogi wyszła o 14% wyżej i była cieńsza niż na przodzie, a linia śniegu przesunęła się o 0,7%). Dlatego przed kontrolą styku program dopasowuje tył w pionie do przodu: pionowy profil kolorów pasa przy grzbiecie wyrównuje do profilu lewej krawędzi przodu (DTW z nachyleniem 1/2–2 i karą za odkształcenie, przesunięcie najwyżej `seam_align_max` wysokości). Tę samą, wygładzoną mapę wierszy stosuje do całej szerokości tyłu, więc listwa czy linia śniegu zostają proste. Tył przesuwa się tylko w pionie; obiekty na nim mogą się nieco rozciągnąć albo ścisnąć.
 - **Kontrola styku z przodem:** program porównuje kolory w pasach poziomych po obu stronach zgięcia grzbiet/przód (ΔE w przestrzeni Lab) i położenie horyzontu. Przekroczenie progu (`seam_max_delta_e`, `horizon_tolerance`) to ponowienie, maks. `max_retries`.
 - **Wygładzenie styku:** w pasie `seam_band_in` po stronie grzbietu program płynnie przechodzi z tła tyłu w kolory lewej krawędzi przodu. Przód zostaje nienaruszony, a przesunięcie przy oprawie nie odsłania szwu.
+- **⬜ Pas na grzbiecie (opcja, planowane, #67):** gdy po `max_retries` żadna próba nie przejdzie kontroli styku, a opcja jest włączona, program zamiast wygładzenia rysuje jednolity pas na całym grzbiecie. Przy dużej różnicy kolorów wygładzenie nie ukrywa szwu, a pas wygląda na celowy element projektu.
+  - **Geometria:** pas zachodzi równo na tył i przód, `overlap_in` (domyślnie 0.125") za każdą linią zgięcia, więc ma szerokość grzbiet + 2 × `overlap_in`. Rozrzut zgięcia w drukarni wypada na pasie: nie odsłania szwu i nie zostawia paska tła na grzbiecie ani koloru na tyle. Na przodzie pas kończy się na granicy strefy bezpiecznej tekstu (`safe_in`), więc zasłania tylko wąski pas ilustracji, nie tytuł; na tyle nie dotyka pola kodu kreskowego (0.25" od grzbietu). Tekst grzbietu leży na pasie, a kontrola czytelności liczy kontrast z jego kolorem.
+  - **Kolor (w kodzie, bez modelu):** kolor różny od tła, ale już obecny na okładce.
+    1. Paleta z pokolorowanego przodu, kolory grupowane w Lab. Kandydat musi zajmować co najmniej `min_share` okładki.
+    2. ΔE do barw przy krawędziach pasa (prawa krawędź tyłu, lewa krawędź przodu) co najmniej `min_delta_e`.
+    3. Wśród pozostałych wygrywa odcień najbliższy `hue` (domyślnie czerwony, np. czerwień już obecna na świątecznej okładce) przy wystarczającym nasyceniu, a bez takiego koloru najbardziej nasycony kandydat.
+    4. Kolor nie może mocno zmieniać się po przeliczeniu na CMYK (kontrola gamutu).
+    5. `color_rgb` w konfiguracji nadpisuje wybór. Bez żadnego kandydata pas nie powstaje: zostaje wygładzenie i ostrzeżenie.
+  - **Włączanie:** domyślnie wyłączone, domyślnym wyjściem awaryjnym zostaje wygładzenie. Włącza ustawienie `cover.spine_band.enabled` albo flaga `--spine-band/--no-spine-band` w `cover` i `generate --cover` (flaga nadpisuje ustawienie; w pliku książki FR-20 klucz w sekcji `cover`).
+  - **Manifest:** `cover.spine_band` z kolorem (`rgb`), udziałem na okładce, ΔE, szerokością, zakładką i źródłem koloru (`palette` albo `config`). Ostrzeżenie: „styk niezgodny po N próbach: grzbiet zakryty pasem w kolorze …”.
 - **Tekst na grzbiecie:** tylko gdy `pages_in_book ≥ spine_text_min_pages` (domyślnie 100; twarde minimum KDP to 79). Tytuł czytany z góry na dół, min. 0.0625" od linii zgięcia, rozmiar dopasowany do szerokości grzbietu, min. 7 pt. Gdy się nie mieści, program pomija tekst z ostrzeżeniem. Poniżej progu grzbiet to samo tło. Przy typowej książce z 30 grafikami (62 strony) grzbietu nie da się podpisać.
 
 **Miniatury na tyle**
@@ -602,7 +612,7 @@ FR-15 powstaje w trzech PR-ach.
   - prompt `cover.back_prompt` z polami `{horizon}`, `{colors}`, `{spine_pct}` (grzbiet z zapasem 0.25"), `{margin_pct}`; nieznane pole to błąd konfiguracji;
   - dopasowanie w pionie (`align_to_front()`): profile Lab 256 wierszy po obu stronach zgięcia, DTW w pasie `seam_align_max` (domyślnie 0.2, 0 wyłącza), mapa wierszy wygładzona w oknie 3% wysokości i zastosowana do całego tyłu (`cv2.remap`); przesunięcie poniżej piksela zostawia tył bez zmian, a największe przesunięcie trafia do manifestu (`seams[].align_shift`);
   - kontrola styku (po dopasowaniu): mediany kolorów w `seam_bands` pasach (domyślnie 8) po obu stronach zgięcia grzbiet/przód, ΔE w Lab. Wiersze w odległości `horizon_tolerance` od wykrytego horyzontu są pominięte, bo przesunięcie w granicach tolerancji zamieniłoby w pasie niebo na ziemię; położenie horyzontu sprawdza osobny warunek (tylko gdy widać go po obu stronach);
-  - po `max_retries` nieudanych kontrolach program bierze próbę z najmniejszym ΔE i ostrzega; wygładzenie styku i tak działa;
+  - po `max_retries` nieudanych kontrolach program bierze próbę z najmniejszym ΔE i ostrzega; wygładzenie styku i tak działa, a z włączonym pasem na grzbiecie (planowane, #67) pas zastępuje wygładzenie;
   - pliki prób: `cover/raw/back_tryN.png`; manifest: `cover.back` (prompt, ocena przodu, próbki krawędzi, wynik kontroli każdej próby, użyta próba).
 - **Opis na tyle** (`--back-text`, `cover.back_text`): najwięcej pełnych zdań opisu z metadanych, które mieszczą się w `back_text_max_height` (30%) strefy tyłu, w rozmiarze od `back_text_pt` (16 pt) do `back_text_min_pt` (10 pt); litery jak tytuł (kolor z czarnym obrysem K100). Miniatury przesuwają się pod opis. Gdy nie mieści się nawet jedno zdanie, tył jest bez opisu z ostrzeżeniem.
 - **QA** (`--qa`, `cover.qa`): jedna ocena całej okładki (zmniejszonej do 2048 px) według kryteriów `text` (tekst inny niż napisy programu), `front_mismatch` (przód nie pokazuje sceny wybranej strony), `style_mismatch` (tył nie pasuje do przodu albo widać szew) i `other`. Wynik w `cover.qa` jak przy stronach (`{pass, issues}`).
@@ -655,6 +665,13 @@ cover:                          # nasze ustawienia
   max_retries: 2
   back_text: false
   title_font: assets/fonts/<czcionka-tytułowa-OFL>.ttf
+  spine_band:                   # planowane (#67): pas na grzbiecie po nieudanych kontrolach styku
+    enabled: false              # --spine-band/--no-spine-band
+    overlap_in: 0.125           # zakładka na tył i na przód, równa po obu stronach
+    hue: red                    # preferowany odcień z palety przodu
+    min_delta_e: 25             # różnica od barw przy krawędziach pasa
+    min_share: 0.01             # kolor musi zajmować tyle okładki
+    color_rgb: null             # ręczny kolor zamiast wyboru z palety
   cmyk:
     profile: assets/icc/SWOP2013C3_CRPC5.icc   # dołączony; własny: KDP_STUDIO_CMYK_PROFILE w .env
     rendering_intent: perceptual          # albo relative_colorimetric
