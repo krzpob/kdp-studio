@@ -284,6 +284,7 @@ cover:
 aplus:
   modules: [logo, header_fan, overlay_facts, features, comparison]
   logo: null                    # baner 600 × 180 przygotowany poza programem (JPG/PNG, RGB)
+  logo_alt: null                # tekst alternatywny banera (A+ wymaga go przy każdej grafice)
   image_format: jpg             # JPG mieści wachlarz w 0,4 MB; PNG ma ok. 1,9 MB przy limicie 2 MB
   jpeg_quality: 90
   scale: 2                      # obrazy w dwukrotności proporcji z edytora (970 × 600 → 1940 × 1200)
@@ -293,6 +294,7 @@ aplus:
     header: {headline: 200, body: 6000}
     columns: {module_headline: 200, headline: 160, body: 1000}
     overlay: {headline: 60, body: 300}
+    alt_text: 100               # tekst alternatywny każdej grafiki (wymagany przez A+)
   header_fan:                   # referencja: docs/aplus/naglowek_wachlarz_referencja.jpg
     front_angle_deg: 7          # przód na wierzchu, obrócony w lewo
     back_angle_deg: -9          # tył pod spodem, obrócony w prawo

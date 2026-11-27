@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from kdp_studio.cli import ExitCode, main
 from kdp_studio.config import AplusSettings, AppConfig, ConfigError, load_config
 from kdp_studio.pipeline import aplus_images as ai
 from kdp_studio.pipeline.aplus_models import AplusCopy, ColumnCopy, FeaturesCopy, OverlayCopy
-from kdp_studio.pipeline.aplus_text import apply_limits, banned_hits, clip
+from kdp_studio.pipeline.aplus_text import alt_issues, apply_limits, banned_hits, clip, copy_issues
 from kdp_studio.pipeline.cmyk import NaiveConverter
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
 from tests.conftest import ConfigDirFactory, fake_settings
@@ -40,6 +41,14 @@ GOOD: dict[str, Any] = {
         {"headline": "Bold lines", "body": "Thick outlines are easy to color."},
         {"headline": "Friendly faces", "body": "Smiling dinosaurs spark stories."},
         {"headline": "Simple shapes", "body": "Large areas suit small hands."},
+    ],
+    "alt_texts": [
+        {"image": "header_fan", "text": "Front and back covers of a dinosaur coloring book"},
+        {"image": "overlay_facts", "text": "A row of three dinosaur coloring pages"},
+        {"image": "features_1", "text": "Coloring page with a dinosaur by a volcano"},
+        {"image": "features_2", "text": "Coloring page with two dinosaurs playing"},
+        {"image": "features_3", "text": "Coloring page with a baby dinosaur hatching"},
+        {"image": "header_pages", "text": "Three inside pages fanned out"},
     ],
 }
 BAD = {
@@ -203,6 +212,62 @@ def test_banned_phrases_twice_are_warnings(
     assert _aplus_calls(text) == 2
 
 
+def test_alt_text_for_every_image(book: Path, text: FakeTextProvider) -> None:
+    assert main(["aplus", ARG]) == ExitCode.OK
+    call = next(c for c in text.calls if c.schema.__name__ == "_AplusTexts")
+    assert "Image header_fan: The front and back covers" in call.user
+    assert "Image features_1: A black-and-white coloring page from the book:" in call.user
+    assert "screen readers" in call.system and "alt text 100" in call.system
+    texts = yaml.safe_load((book / "aplus" / "texts.yaml").read_text(encoding="utf-8"))
+    keys = ["header_fan", "overlay_facts", "features_1", "features_2", "features_3"]
+    assert sorted(texts["alt"]) == sorted([*keys, "header_pages"])
+    aplus = _manifest()["aplus"]
+    assert aplus["texts"]["alt"]["features_1"] == "Coloring page with a dinosaur by a volcano"
+    assert not any("tekstu alternatywnego" in w for w in aplus["warnings"])
+    page = (book / "aplus.html").read_text(encoding="utf-8")
+    assert 'alt="Coloring page with a dinosaur by a volcano"' in page
+    assert page.count("Tekst alternatywny") >= 6
+
+
+def test_missing_alt_text_is_a_warning(
+    book: Path, text: FakeTextProvider, capsys: pytest.CaptureFixture[str]
+) -> None:
+    alts = [a for a in GOOD["alt_texts"] if a["image"] != "features_2"]
+    alts.append({"image": "made_up", "text": "Something else"})
+    text.routes["_AplusTexts"] = {**GOOD, "alt_texts": alts}
+    capsys.readouterr()
+    assert main(["aplus", ARG]) == ExitCode.OK
+    assert "brak tekstu alternatywnego: features_2" in capsys.readouterr().err
+    texts = _manifest()["aplus"]["texts"]["alt"]
+    assert "made_up" not in texts and "features_2" not in texts
+    assert "Brak tekstu alternatywnego" in (book / "aplus.html").read_text(encoding="utf-8")
+
+
+def test_logo_alt_text_comes_from_settings(
+    book: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logo = tmp_path / "logo.png"
+    Image.new("RGB", (600, 180), (30, 60, 90)).save(logo)
+    settings_path = Path(os.environ["KDP_STUDIO_CONFIG_DIR"]) / "settings.yaml"
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    settings["aplus"]["logo"] = str(logo)
+    settings_path.write_text(yaml.safe_dump(settings, allow_unicode=True), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["aplus", ARG]) == ExitCode.OK
+    assert "brak tekstu alternatywnego: logo (baner: ustaw aplus.logo_alt)" in (
+        capsys.readouterr().err
+    )
+    settings["aplus"]["logo_alt"] = "Mira Blue coloring books logo"
+    settings_path.write_text(yaml.safe_dump(settings, allow_unicode=True), encoding="utf-8")
+    assert main(["aplus", ARG]) == ExitCode.OK
+    aplus = _manifest()["aplus"]
+    assert aplus["texts"]["alt"]["logo"] == "Mira Blue coloring books logo"
+    assert not any("tekstu alternatywnego" in w for w in aplus["warnings"])
+    assert 'alt="Mira Blue coloring books logo"' in (book / "aplus.html").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_comparison_chart_from_other_manifests(
     book: Path, text: FakeTextProvider, tmp_path: Path
 ) -> None:
@@ -277,6 +342,21 @@ def test_limits_clip_and_drop_facts(repo_config: AppConfig) -> None:
     assert fitted.overlay_facts.items == ["a" * 200, "b" * 90]
     assert len(fitted.features.columns[0].body) <= 1000
     assert any("pominięto" in w for w in warnings) and any("przycięto" in w for w in warnings)
+
+
+def test_alt_texts_are_clipped_checked_and_unique(repo_config: AppConfig) -> None:
+    copy = AplusCopy(alt={"header_fan": "word " * 40, "features_1": "Best coloring book ever"})
+    fitted, warnings = apply_limits(copy, repo_config.settings.aplus.limits)
+    assert len(fitted.alt["header_fan"]) <= 100
+    assert any(w.startswith("alt.header_fan:") for w in warnings)
+    banned = repo_config.markets.aplus_for("en-US")
+    assert banned is not None
+    assert any("„best”" in i for i in copy_issues(copy, banned.banned))
+    same = AplusCopy(alt={"features_1": "A cat", "features_2": "a cat"})
+    assert alt_issues(same, ["features_1", "features_2", "features_3"]) == [
+        "brak tekstu alternatywnego: features_3",
+        "ten sam tekst alternatywny: features_1 i features_2",
+    ]
 
 
 def test_clip_cuts_at_a_word() -> None:

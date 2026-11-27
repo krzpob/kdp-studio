@@ -37,7 +37,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
-| FR-24 | ✅ | #76 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. |
+| FR-24 | ✅ | #76, #77 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. Alt text każdej grafiki. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1393,6 +1393,14 @@ Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieśc
   - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
 - **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
 
+**Tekst alternatywny (alt text)**
+- Amazon wymaga tekstu alternatywnego przy każdej grafice A+; bez niego edytor nie przyjmie treści do zatwierdzenia. Limit to 100 znaków (według poradników; do potwierdzenia w polu edytora).
+- Zasady A+ (<https://kdp.amazon.com/help/topic/G4WB7VPPEAREHAAD>): alt text, który nie opisuje obrazu i nie pomógłby osobie z czytnikiem ekranu (dawniej „image keywords”), może być powodem odrzucenia. Program opisuje więc, co widać, i nie upycha w nim słów kluczowych, choć radzą to poradniki SEO.
+- Alt text grafik programu pisze model w tym samym wywołaniu co teksty pól, w języku rynku. Program podaje mu dla każdej grafiki klucz i opis po angielsku: wachlarz okładek z tytułem, strony wnętrza i pas nakładki ze scenami, kolumny ze sceną strony (pokolorowana pierwsza kolumna jako pokolorowana), okładki książek z tabeli porównawczej z tytułem. Klucze: `header_fan`, `header_pages`, `overlay_facts`, `features_1…`, `chart_1…`.
+- Baner wydawcy ma alt text z ustawienia `aplus.logo_alt`, bo model nie wie, co na nim jest.
+- Kod przycina alt text do limitu (`aplus.limits.alt_text`) z ostrzeżeniem, odrzuca klucze spoza listy i ostrzega, gdy grafika nie ma tekstu (przy banerze z podpowiedzią `aplus.logo_alt`) albo dwie mają ten sam. Zakazane sformułowania sprawdza tak samo jak w polach tekstowych.
+- Alt text jest w `aplus/texts.yaml` (sekcja `alt`; ręczne poprawki zostają), w manifeście (`aplus.texts.alt`) i w podglądzie `aplus.html` pod każdą grafiką z przyciskiem kopiowania (także w nagłówkach kolumn tabeli porównawczej). Zmiana opisów grafik (np. inne strony w kolumnach) zmienia hash wejść tekstów, więc teksty powstają od nowa.
+
 **Teksty i zakazane sformułowania**
 
 Teksty powstają w jednym wywołaniu LLM z regułami A+ w prompcie i są sprawdzane w kodzie. Wzorce i listy słów są w konfiguracji, według języka rynku. Trafienie oznacza jedno ponowienie, potem ostrzeżenie. Zakazane są trzy grupy.
@@ -1420,6 +1428,7 @@ Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, �
 aplus:
   modules: [logo, header_fan, overlay_facts, features, comparison]   # kolejność, najwyżej 5
   logo: null                    # plik banera 600 × 180 przygotowany poza programem
+  logo_alt: null                # tekst alternatywny banera (A+ wymaga go przy każdej grafice)
   image_format: jpg
   jpeg_quality: 90
   scale: 2                      # obrazy w dwukrotności proporcji z edytora
@@ -1428,6 +1437,7 @@ aplus:
     header: {headline: 200, body: 6000}
     columns: {module_headline: 200, headline: 160, body: 1000}
     overlay: {headline: 60, body: 300}
+    alt_text: 100               # tekst alternatywny każdej grafiki
   header_fan:
     front_angle_deg: 7
     back_angle_deg: -9
@@ -1449,10 +1459,11 @@ aplus:
 **Uwagi do implementacji**
 - Moduły: `pipeline/aplus_images.py` (wachlarz okładek, kwadraty kolumn ze stron, pas nakładki, kontrola rozmiaru i trybu pliku), `pipeline/aplus_text.py` (prompt z faktami z `book_facts()` z FR-03, schemat pól z limitami, kontrola zakazanych sformułowań, przycinanie do limitu z ostrzeżeniem), `pipeline/aplus_preview.py` (`aplus.html`). Prototyp wachlarza: `docs/aplus/mockup_prototype.py`.
 - Grafiki bez modelu są deterministyczne, więc testy porównują je z plikami wzorcowymi (jak FR-06).
-- Testy: wymiary, tryb i rozmiar plików poniżej 2 MB; wybór tła (najlepszy kandydat, próg i przyciemnianie); grzbiet tyłu i cienie bez urwania; zakazane sformułowania (święto jako temat przechodzi, jako termin albo okazja nie; przechwałki; nacisk czasem); limity znaków; tabela porównawcza z manifestów innych książek; brak wywołań API dla samych grafik; kod 1 bez okładki.
+- Testy: wymiary, tryb i rozmiar plików poniżej 2 MB; wybór tła (najlepszy kandydat, próg i przyciemnianie); grzbiet tyłu i cienie bez urwania; zakazane sformułowania (święto jako temat przechodzi, jako termin albo okazja nie; przechwałki; nacisk czasem); limity znaków; alt text przy każdej grafice (klucze, brak, powtórzenie, limit, baner z ustawień); tabela porównawcza z manifestów innych książek; brak wywołań API dla samych grafik; kod 1 bez okładki.
 
 **Do sprawdzenia przy pierwszej książce**
 - Czy wklejony sformatowany tekst ze strony (schowek `text/html`) zachowuje formatowanie; jeśli tak, przyciski mogą kopiować też formatowanie.
+- Limit znaków alt text w polu edytora (zakładamy 100) i czy pole przyjmuje interpunkcję (jeden poradnik twierdzi, że nie).
 - Wynik pierwszej recenzji A+: czy sama nazwa święta jako temat przechodzi.
 - Próg ΔE tła po kilku różnych okładkach.
 
@@ -1709,7 +1720,7 @@ output/dinozaury_przedszkole_kawaii_square/
 │   └── raw/                        # front_sketch, front_color_tryN, back_tryN, contact_sheet
 └── aplus/                          # tylko po `kdp-studio aplus` (FR-24, poza MVP)
     ├── 02_header_fan.jpg …         # obrazy modułów w kolejności modułów, RGB, < 2 MB
-    ├── texts.yaml                  # teksty pól; ręczne poprawki zostają przy ponownym uruchomieniu
+    ├── texts.yaml                  # teksty pól i alt text grafik; ręczne poprawki zostają
     └── aplus.html                  # podgląd modułów z przyciskami kopiowania
 ```
 
