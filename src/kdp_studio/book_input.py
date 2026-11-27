@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from kdp_studio.config import (
     MAX_CONCURRENCY,
+    AplusComparisonBook,
     AppConfig,
     CopyrightVariant,
     FirstPage,
@@ -63,6 +64,15 @@ class CoverInput(_Input):
     max_cost: Annotated[float, Field(gt=0)] | None = None
 
 
+class AplusBookInput(_Input):
+    """Sekcja `aplus` (FR-24): opcje polecenia `aplus` i książki do tabeli porównawczej."""
+
+    color_page: bool | None = None
+    image_quality: ImageQuality | None = None
+    max_cost: Annotated[float, Field(gt=0)] | None = None
+    comparison: list[AplusComparisonBook] | None = None  # 2–6 książek z własnego konta
+
+
 class BookInput(_Input):
     """Parametry książki i uruchomienia; None znaczy „nie podano”."""
 
@@ -90,6 +100,7 @@ class BookInput(_Input):
     front_matter: SectionInput | None = None
     belongs_to: SectionInput | None = None
     cover: CoverInput | None = None
+    aplus: AplusBookInput | None = None  # FR-24
 
     @field_validator("cover", mode="before")
     @classmethod
@@ -196,6 +207,11 @@ def load_book_file(path: Path) -> LoadedFile:
     if book.cover is not None:
         template = _relative_to(book.cover.template, base)
         update["cover"] = book.cover.model_copy(update={"template": template})
+    if book.aplus is not None and book.aplus.comparison is not None:
+        books = [
+            b.model_copy(update={"book": _relative_to(b.book, base)}) for b in book.aplus.comparison
+        ]
+        update["aplus"] = book.aplus.model_copy(update={"comparison": books})
     return LoadedFile(
         path=path, sha256=hashlib.sha256(raw).hexdigest(), input=book.model_copy(update=update)
     )
@@ -239,6 +255,12 @@ def settings_defaults(config: AppConfig) -> BookInput:
             qa=cover.qa,
             image_quality=s.image_quality,
             max_cost=s.max_cost_usd,
+        ),
+        aplus=AplusBookInput(
+            color_page=s.aplus.color_page,
+            image_quality=s.image_quality,
+            max_cost=s.max_cost_usd,
+            comparison=list(s.aplus.comparison.books),
         ),
     )
 
@@ -329,6 +351,7 @@ def _construct(data: dict[str, Any]) -> BookInput:
         ("front_matter", SectionInput),
         ("belongs_to", SectionInput),
         ("cover", CoverInput),
+        ("aplus", AplusBookInput),
     ):
         if name in data:
             sections[name] = model.model_construct(**data[name])

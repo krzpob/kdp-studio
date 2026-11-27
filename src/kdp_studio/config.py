@@ -510,6 +510,149 @@ class CoverSettings(_Strict):
         return self
 
 
+# --- A+ Content (FR-24) ------------------------------------------------------------------
+
+AplusModuleName = Literal[
+    "logo", "header_fan", "header_pages", "overlay_facts", "features", "comparison"
+]
+APLUS_MAX_MODULES = 5  # edytor A+: najwyżej 5 modułów na stronie
+APLUS_CHART_MAX_BOOKS = 6  # Comparison Chart: 2–6 produktów z własnego konta
+
+
+class AplusHeaderLimits(_Strict):
+    headline: Annotated[int, Field(gt=0)] = 200
+    body: Annotated[int, Field(gt=0)] = 6000
+
+
+class AplusColumnLimits(_Strict):
+    module_headline: Annotated[int, Field(gt=0)] = 200
+    headline: Annotated[int, Field(gt=0)] = 160
+    body: Annotated[int, Field(gt=0)] = 1000
+
+
+class AplusOverlayLimits(_Strict):
+    headline: Annotated[int, Field(gt=0)] = 60
+    body: Annotated[int, Field(gt=0)] = 300
+
+
+class AplusLimits(_Strict):
+    """Limity znaków pól modułów, odczytane w edytorze A+ (24.11.2026)."""
+
+    header: AplusHeaderLimits = AplusHeaderLimits()
+    columns: AplusColumnLimits = AplusColumnLimits()
+    overlay: AplusOverlayLimits = AplusOverlayLimits()
+
+
+class AplusBackground(_Strict):
+    """Tło mockupów: kandydat najdalszy (ΔE) od brzegów okładek, nie bliżej niż `min_delta_e`."""
+
+    candidates: dict[str, tuple[int, int, int]] = {
+        "beż": (226, 212, 190),
+        "szałwia": (200, 212, 190),
+        "pudrowy róż": (232, 206, 200),
+        "szaroniebieski": (200, 210, 222),
+        "ciepły szary": (214, 208, 200),
+    }
+    min_delta_e: Annotated[float, Field(ge=0)] = 15
+    percentile: Annotated[float, Field(ge=0, le=100)] = 5  # odporne na pojedyncze piksele
+    border: Annotated[float, Field(gt=0, lt=0.5)] = 0.04  # pas brzegowy okładki (ułamek boku)
+    darken_step: Annotated[float, Field(gt=0, lt=1)] = 0.05  # gdy żaden kandydat nie przejdzie
+    gradient: Annotated[float, Field(ge=0, lt=0.5)] = 0.04  # jaśniej u góry, ciemniej na dole
+
+    @model_validator(mode="after")
+    def _candidates(self) -> Self:
+        if not self.candidates:
+            raise ValueError("aplus.header_fan.background.candidates: podaj co najmniej 1 kolor")
+        for name, rgb in self.candidates.items():
+            if any(not 0 <= v <= 255 for v in rgb):
+                raise ValueError(f"aplus.header_fan.background.candidates.{name}: RGB 0–255")
+        return self
+
+
+class AplusShadow(_Strict):
+    blur: Annotated[float, Field(ge=0)] = 0.022  # względem boku okładki
+    offset: tuple[float, float] = (0.016, 0.024)  # w prawo i w dół, względem boku
+    opacity: Annotated[float, Field(ge=0, le=1)] = 0.4
+
+
+class AplusFan(_Strict):
+    """Wachlarz okładek pod banerem (Standard Image Header With Text, 970 × 600)."""
+
+    front_angle_deg: float = 7  # przód obrócony w lewo, na wierzchu
+    back_angle_deg: float = -9  # tył obrócony w prawo, pod spodem
+    back_offset: Annotated[float, Field(ge=0)] = 0.62  # przesunięcie tyłu w bokach okładki
+    size: Annotated[float, Field(gt=0, le=1)] = 0.83  # bok okładki względem wysokości grafiki
+    left: Annotated[float, Field(ge=0, lt=1)] = 0.04  # lewy brzeg przodu względem szerokości
+    page_edge: Annotated[float, Field(gt=0, lt=0.1)] = 1 / 120  # blok kartek względem boku
+    spine_shade: Annotated[float, Field(gt=0, le=1)] = 0.85  # grzbiet tyłu lekko w cieniu
+    shadow: AplusShadow = AplusShadow()
+    background: AplusBackground = AplusBackground()
+
+
+class AplusPages(_Strict):
+    """Drugi mockup (bez tabeli porównawczej): kilka stron wnętrza w wachlarzu."""
+
+    count: Annotated[int, Field(ge=2, le=4)] = 3
+    angles_deg: list[float] = [8, 0, -8]
+    size: Annotated[float, Field(gt=0, le=1)] = 0.78  # wysokość strony względem grafiki
+
+
+class AplusFeatures(_Strict):
+    columns: Literal[3, 4] = 3  # Standard Three albo Four Images & Text
+    margin: Annotated[float, Field(ge=0, lt=0.5)] = 0.06  # biały margines wokół strony w kwadracie
+
+
+class AplusComparisonBook(_Strict):
+    asin: Annotated[str, Field(pattern=r"^[A-Z0-9]{10}$")]
+    book: str  # katalog książki (z manifest.json), względny wobec katalogu roboczego
+
+
+class AplusComparison(_Strict):
+    books: Annotated[list[AplusComparisonBook], Field(max_length=APLUS_CHART_MAX_BOOKS)] = []
+
+
+class AplusSettings(_Strict):
+    """A+ Content (FR-24): moduły, limity znaków, grafiki i teksty."""
+
+    modules: list[AplusModuleName] = [
+        "logo",
+        "header_fan",
+        "overlay_facts",
+        "features",
+        "comparison",
+    ]
+    logo: str | None = None  # baner 600 × 180 przygotowany poza programem
+    image_format: Literal["jpg", "png"] = "jpg"
+    jpeg_quality: Annotated[int, Field(ge=50, le=100)] = 90
+    scale: Annotated[int, Field(ge=1, le=4)] = 2  # obrazy w wielokrotności proporcji z edytora
+    max_file_mb: Annotated[float, Field(gt=0)] = 2.0  # limit A+ na plik
+    color_page: bool = False  # --color-page: pokolorowana strona z modelu (płatna)
+    limits: AplusLimits = AplusLimits()
+    header_fan: AplusFan = AplusFan()
+    header_pages: AplusPages = AplusPages()
+    features: AplusFeatures = AplusFeatures()
+    comparison: AplusComparison = AplusComparison()
+
+    @property
+    def logo_path(self) -> Path | None:
+        return None if self.logo is None else _repo_path(self.logo)
+
+    @model_validator(mode="after")
+    def _modules(self) -> Self:
+        if not self.modules:
+            raise ValueError("aplus.modules: podaj co najmniej jeden moduł")
+        if len(self.modules) > APLUS_MAX_MODULES:
+            raise ValueError(
+                f"aplus.modules: edytor A+ przyjmuje najwyżej {APLUS_MAX_MODULES} modułów "
+                f"(podano {len(self.modules)})"
+            )
+        if len(set(self.modules)) != len(self.modules):
+            raise ValueError("aplus.modules: moduł powtórzony")
+        if len(self.header_pages.angles_deg) < self.header_pages.count:
+            raise ValueError("aplus.header_pages.angles_deg: podaj kąt dla każdej strony")
+        return self
+
+
 class Settings(_Strict):
     front_matter: FrontMatterSettings = FrontMatterSettings()  # FR-23
     interior: InteriorSettings = InteriorSettings()  # FR-22
@@ -532,6 +675,7 @@ class Settings(_Strict):
     belongs_to_page: BelongsToSettings = BelongsToSettings()
     kdp_cover: KdpCover = KdpCover()
     cover: CoverSettings = CoverSettings()
+    aplus: AplusSettings = AplusSettings()  # FR-24
     api_pricing: ApiPricing = ApiPricing()
     max_cost_usd: Annotated[float, Field(gt=0)] = DEFAULT_MAX_COST_USD
 
@@ -675,6 +819,45 @@ def _merge_texts(
     return merged
 
 
+class AplusOccasion(_Strict):
+    """Święto jako termin albo okazja do zakupu: `phrases` zawsze, `holidays` tylko w pobliżu
+    słowa z `context` (termin, zakup, prezent). Samo święto jako temat przechodzi."""
+
+    phrases: list[str] = []
+    holidays: list[str] = []
+    context: list[str] = []
+    window: Annotated[int, Field(ge=1, le=10)] = 3  # słów między świętem a kontekstem
+
+
+class AplusBanned(_Strict):
+    """Zakazane sformułowania A+ (FR-24) w jednym języku."""
+
+    time: list[str] = []  # nacisk czasem: now, new, latest…
+    occasion: AplusOccasion = AplusOccasion()
+    claims: list[str] = []  # przechwałki: best, perfect, #1…
+    sales: list[str] = []  # ceny, rabaty, wezwania do zakupu
+
+
+APLUS_CHART_ROWS = ("age", "pages", "size")
+
+
+class AplusTexts(_Strict):
+    """Teksty A+ w jednym języku: zakazane sformułowania i etykiety wierszy tabeli."""
+
+    banned: AplusBanned = AplusBanned()
+    chart: dict[str, str] = {}  # etykiety wierszy Comparison Chart: APLUS_CHART_ROWS
+
+    @model_validator(mode="after")
+    def _chart(self) -> Self:
+        missing = [k for k in APLUS_CHART_ROWS if not self.chart.get(k, "").strip()]
+        if missing:
+            raise ValueError(f"chart: brak {', '.join(missing)}")
+        extra = set(self.chart) - set(APLUS_CHART_ROWS)
+        if extra:
+            raise ValueError(f"chart: nieznane klucze {', '.join(sorted(extra))}")
+        return self
+
+
 class MarketsConfig(_Strict):
     sources: dict[str, str]
     checked: date
@@ -685,6 +868,12 @@ class MarketsConfig(_Strict):
     markets: dict[str, MarketProfile]
     # FR-23: teksty stron wstępnych według języka (`en`) albo odmiany (`en-GB`, tylko różnice).
     texts: dict[str, dict[str, dict[str, str]]] = {}
+    # FR-24: zakazane sformułowania A+ i etykiety tabeli według języka (`en`) albo odmiany.
+    aplus_texts: dict[str, AplusTexts] = {}
+
+    def aplus_for(self, locale: str) -> AplusTexts | None:
+        """Teksty A+ dla `locale`: odmiana, a bez niej język; None, gdy brak obu."""
+        return self.aplus_texts.get(locale) or self.aplus_texts.get(locale.split("-")[0])
 
     def texts_for(self, locale: str) -> FrontTexts | None:
         """Teksty dla `locale` rynku: odmiana scalona z językiem, sam język albo None."""

@@ -117,6 +117,22 @@ uv run kdp-studio ideas --config-file output/<książka>/manifest.json --theme "
 
 `images`, `belongs-to`, `front-matter` i `cover` biorą z pliku ustawienia swojego kroku, a temat, wiek, styl, format, liczba stron i rynek muszą się zgadzać z książką.
 
+### A+ Content (FR-24)
+
+`kdp-studio aplus <katalog>` przygotowuje grafiki i teksty modułów A+ Content (obrazki i teksty pod opisem na stronie Amazona). Wymaga gotowych stron i okładki (`kdp-studio cover`). Grafiki składa program z okładki i stron, bez API:
+- wachlarz okładek na tle wybranym tak, żeby okładki się z nim nie zlewały;
+- nakładka z faktami z manifestu (liczba kolorowanek, druk, format);
+- 3 albo 4 kolumny ze stronami książki;
+- drugi mockup ze stronami wnętrza albo tabela porównawcza Twoich książek.
+
+Teksty pól pisze model jednym wywołaniem, a program sprawdza zakazane w A+ sformułowania (nacisk czasem, święto jako termin albo okazja do zakupu, przechwałki, ceny) i limity znaków edytora. Wynik to katalog `aplus/` z obrazami JPG, plik `aplus/texts.yaml` (ręczne poprawki zostają przy kolejnym uruchomieniu) i podgląd `aplus.html` z przyciskiem „Kopiuj” przy każdym polu. Baner wydawcy (600 × 180) przygotowujesz sam i wskazujesz w `aplus.logo`.
+
+```bash
+uv run kdp-studio aplus output/<książka> [--color-page] [--config-file ksiazki/kotki.yaml]
+```
+
+Tabela porównawcza bierze książki z sekcji `aplus.comparison` pliku parametrów, np. `comparison: [{asin: B0XXXXXXXX, book: ../output/swiateczne_kotki_…}]`.
+
 ### Wnętrze książki i tryb druku (FR-22)
 
 `finalize` składa `interior.pdf`, gotowe wnętrze do wgrania w KDP: strony wstępne, potem kolorowanki. Domyślnie druk jest jednostronny: każda grafika stoi na prawej stronie z pustym tyłem, bo flamastry przebijają. `--double-sided` daje grafiki jedna po drugiej (mniej stron, cieńszy grzbiet i niższy koszt druku). Tryb wybierasz w `ideas`/`generate` albo zmieniasz później w `finalize`; zmiana liczby stron może zmienić margines od grzbietu, więc `finalize` obrabia wtedy strony ponownie i ostrzega, że okładkę trzeba zrobić od nowa. PDF powstaje tylko wtedy, gdy wszystkie strony są gotowe, i tylko dla książek ze stronami wstępnymi FR-23. `canva.md` zostaje jako ręczna droga.

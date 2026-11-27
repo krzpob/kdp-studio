@@ -24,6 +24,7 @@ from PIL import Image
 
 from kdp_studio.book_input import (
     DEFAULT_FORMAT,
+    AplusBookInput,
     BookInput,
     BookInputError,
     CoverInput,
@@ -69,6 +70,17 @@ from kdp_studio.observability import (
     progress_bar,
 )
 from kdp_studio.pipeline import cmyk
+from kdp_studio.pipeline.aplus import (
+    APLUS_DIR,
+    TEXTS_FILE,
+    AplusError,
+    AplusRun,
+    aplus_blockers,
+    load_other_book,
+    plan_aplus,
+)
+from kdp_studio.pipeline.aplus_images import AplusImageError
+from kdp_studio.pipeline.aplus_preview import PREVIEW_FILE
 from kdp_studio.pipeline.belongs_to import (
     FRONT_NAME,
     BelongsToMaker,
@@ -258,8 +270,9 @@ STEP_LABELS = {
     "belongs-to": "strona „belongs to”",
     "front-matter": "strony wstępne",
     "cover": "okładka",
+    "aplus": "A+ Content",
 }
-COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA"}
+COST_LABELS = {"ideas": "pomysły", "images": "grafiki", "qa": "QA", "aplus": "teksty A+"}
 
 _log = logging.getLogger("kdp_studio.cli")
 
@@ -493,6 +506,10 @@ def _cli_section(**values: Any) -> SectionInput:
 
 def _cli_cover(**values: Any) -> CoverInput:
     return CoverInput.model_construct(**values)
+
+
+def _cli_aplus(**values: Any) -> AplusBookInput:
+    return AplusBookInput.model_construct(**values)
 
 
 def _load_file(path: Path | None) -> LoadedFile | None:
@@ -3831,6 +3848,159 @@ def price(
             price=target_price,
         )
     typer.echo(f"\n{_pricing_footer(config)}")
+
+
+# --- A+ Content (FR-24) ----------------------------------------------------------------------
+
+ColorPageOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--color-page/--no-color-page",
+        help="Pokolorowana strona z modelu obrazu w pierwszej kolumnie (płatna, liczy się do "
+        "--max-cost). Domyślnie aplus.color_page z settings.yaml.",
+    ),
+]
+
+
+@app.command()
+def aplus(
+    book: BookArg,
+    config_file: ConfigFileOpt = None,
+    color_page: ColorPageOpt = None,
+    image_quality: QualityOpt = None,
+    max_cost: MaxCostOpt = None,
+    log_level: LogLevelOpt = None,
+) -> None:
+    """Grafiki i teksty modułów A+ Content z okładki i stron (FR-24): katalog aplus/ i podgląd
+    aplus.html z przyciskami kopiowania. Po okładce; grafiki bez API, teksty jednym wywołaniem."""
+    config = _config()
+    resolved = _resolve(
+        config,
+        config_file,
+        _cli_input(
+            log_level=log_level,
+            aplus=_cli_aplus(color_page=color_page, image_quality=image_quality, max_cost=max_cost),
+        ),
+    )
+    inp = resolved.input
+    section = inp.aplus or AplusBookInput()
+    level = _log_level(config, inp.log_level)
+    quality = _quality(config, section.image_quality)
+    writer = _open_book(book)
+    manifest = writer.manifest
+    _check_book_file(resolved, manifest)
+    blockers = aplus_blockers(book, manifest)
+    if blockers:
+        raise _fail(blockers)
+    ideas = _load_book_ideas(book)
+    market = config.markets.markets[manifest.input.market]
+    aplus_texts = config.markets.aplus_for(market.locale)
+    if aplus_texts is None:
+        _warn(
+            [
+                f"brak list zakazanych sformułowań A+ dla {market.locale} (aplus_texts w "
+                "markets.yaml): teksty bez kontroli w kodzie"
+            ]
+        )
+    plan = plan_aplus(
+        book,
+        manifest,
+        ideas.book.title,
+        config,
+        market,
+        aplus_texts.chart if aplus_texts else None,
+        section.comparison or [],
+        load_other_book,
+    )
+    run = AplusRun(
+        book_dir=book,
+        manifest=manifest,
+        ideas=ideas,
+        config=config,
+        market=market,
+        banned=aplus_texts.banned if aplus_texts else None,
+        plan=plan,
+        color_page=bool(section.color_page),
+        quality=quality,
+        log=typer.echo,
+    )
+    try:
+        texts_state = run.texts_state()
+    except AplusError as e:
+        raise _fail(e.errors) from e
+    if texts_state != "new" and not run.color_needed():
+        models: list[str] = []
+    else:
+        if texts_state == "new":
+            run.text_provider = _text_provider(config)
+        if run.color_needed():
+            run.image_provider, _ = _image_providers(
+                config, manifest.input.format, inp.image_provider, False
+            )
+        models = [p.model for p in (run.text_provider, run.image_provider) if p is not None]
+    costs = _cost_tracker(config, section.max_cost, models, manifest.cost_usd) if models else None
+    run.costs = costs
+    with _locked(book, level), _timed(StepTimer(), "aplus", costs):
+        code = _make_aplus(writer, run)
+    raise typer.Exit(code)
+
+
+def _make_aplus(writer: ManifestWriter, run: AplusRun) -> ExitCode:
+    """Krok A+ pod blokadą książki: grafiki, teksty, podgląd, wpis w manifeście."""
+    target = run.book_dir
+    for warning in run.plan.warnings:
+        _warn([warning])
+    try:
+        outcome = run.run()
+    except AplusError as e:
+        raise _fail(e.errors) from e
+    except AplusImageError as e:
+        raise _fail([f"A+: {e}"]) from e
+    except ProviderError as e:  # błąd krytyczny dostawcy: tylko koszt do manifestu
+        if run.costs is not None and run.costs.spent > 0:
+            writer.manifest.cost_usd = round(writer.manifest.cost_usd + run.costs.spent, 6)
+            writer.save()
+        _fail_lines([f"A+: {e}"])
+        return ExitCode.PROVIDER_ERROR
+    info = outcome.info
+    spent = run.costs.spent if run.costs is not None else 0.0
+    writer.manifest.aplus = info
+    writer.manifest.cost_usd = round(writer.manifest.cost_usd + spent, 6)
+    writer.save()
+    log_event(
+        _log,
+        logging.INFO,
+        "aplus_done",
+        modules=[m.name for m in info.modules],
+        images_written=outcome.written_images,
+        texts=outcome.texts_source,
+        background=info.background.name if info.background else None,
+        cost_usd=round(spent, 6),
+        status=info.status,
+    )
+    files = sum(len(m.files) for m in info.modules)
+    state = "zapisane" if outcome.written_images else "aktualne, bez zmian"
+    typer.echo(f"Grafiki A+: {files} w {target / APLUS_DIR} ({state}).")
+    if info.background is not None:
+        bg = info.background
+        darker = f", przyciemnione {bg.darkened_steps}×" if bg.darkened_steps else ""
+        typer.echo(f"Tło mockupów: {bg.name} (ΔE {bg.delta_e:g}{darker}).")
+    typer.echo(f"Teksty A+: {outcome.texts_source} ({target / APLUS_DIR / TEXTS_FILE}).")
+    for module in info.modules:
+        if module.skipped:
+            typer.echo(f"{module.name}: pominięty ({module.skipped}).")
+    _warn(info.warnings[len(run.plan.warnings) :])
+    if run.costs is not None:
+        typer.echo(
+            f"Koszt A+: {format_usd(spent)}; książka: {format_usd(run.costs.total)} z limitu "
+            f"{format_usd(run.costs.limit_usd)}."
+        )
+    typer.echo(f"Podgląd z przyciskami kopiowania: {target / PREVIEW_FILE}")
+    if outcome.budget_exceeded:
+        return ExitCode.BUDGET_EXCEEDED
+    if outcome.provider_error is not None:
+        return ExitCode.PARTIAL
+    return ExitCode.OK
 
 
 @app.command()

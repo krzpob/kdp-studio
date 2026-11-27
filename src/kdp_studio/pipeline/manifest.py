@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from kdp_studio import __version__
 from kdp_studio.book_input import BookInput, ConfigFileInfo
 from kdp_studio.config import CopyrightVariant
+from kdp_studio.pipeline.aplus_models import AplusInfo
 from kdp_studio.pipeline.belongs_to import FRONT_NAME, BelongsToOutcome, Layout
 from kdp_studio.pipeline.cost import COST_DIGITS
 from kdp_studio.pipeline.cover_vision import CoverQAResult
@@ -416,6 +417,7 @@ class Manifest(_Model):
     front_matter: FrontMatter = Field(default_factory=FrontMatter)
     cover: CoverInfo | None = None  # FR-15
     interior: InteriorInfo | None = None  # FR-22
+    aplus: AplusInfo | None = None  # FR-24
     description: DescriptionInfo | None = None  # FR-03: opis do KDP
     pricing: PricingInfo | None = None  # FR-16: po kroku 3
     ai_disclosure: str = AI_DISCLOSURE
