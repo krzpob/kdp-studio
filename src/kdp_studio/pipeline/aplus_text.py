@@ -85,7 +85,7 @@ def banned_hits(texts: Iterable[str], banned: AplusBanned) -> list[str]:
 
 
 def copy_texts(copy: AplusCopy) -> list[str]:
-    """Wszystkie teksty pól, w kolejności modułów."""
+    """Wszystkie teksty pól, w kolejności modułów, i teksty alternatywne grafik."""
     texts: list[str] = []
     for header in (copy.header_fan, copy.header_pages):
         if header is not None:
@@ -96,7 +96,26 @@ def copy_texts(copy: AplusCopy) -> list[str]:
         texts.append(copy.features.headline)
         for column in copy.features.columns:
             texts += [column.headline, column.body]
+    texts += copy.alt.values()
     return [t for t in texts if t]
+
+
+def alt_issues(copy: AplusCopy, keys: Sequence[str]) -> list[str]:
+    """Grafiki bez tekstu alternatywnego (A+ go wymaga) i powtórzone teksty."""
+    issues: list[str] = []
+    missing = [key for key in keys if not copy.alt.get(key, "").strip()]
+    if missing:
+        issues.append(f"brak tekstu alternatywnego: {', '.join(missing)}")
+    seen: dict[str, str] = {}
+    for key in keys:
+        text = copy.alt.get(key, "").strip().casefold()
+        if not text:
+            continue
+        if text in seen:
+            issues.append(f"ten sam tekst alternatywny: {seen[text]} i {key}")
+        else:
+            seen[text] = key
+    return issues
 
 
 def copy_issues(copy: AplusCopy, banned: AplusBanned | None) -> list[str]:
@@ -174,6 +193,7 @@ def apply_limits(copy: AplusCopy, limits: AplusLimits) -> tuple[AplusCopy, list[
                 for i, c in enumerate(features.columns, start=1)
             ],
         )
+    data.alt = {key: fit(f"alt.{key}", text, limits.alt_text) for key, text in data.alt.items()}
     return data, warnings
 
 
@@ -193,6 +213,12 @@ class _Column(BaseModel):
     body: str
 
 
+class _Alt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image: str
+    text: str
+
+
 class _AplusTexts(BaseModel):
     """Schemat odpowiedzi modelu: bez limitów (pilnuje ich kod, jak w FR-03)."""
 
@@ -202,6 +228,7 @@ class _AplusTexts(BaseModel):
     overlay_headline: str
     features_headline: str
     columns: list[_Column]
+    alt_texts: list[_Alt]
 
 
 SYSTEM = """You write the text fields of Amazon A+ Content modules for a printed coloring book.
@@ -222,8 +249,12 @@ Amazon A+ rules (strict, a breach gets the content rejected):
 {banned}
 Character limits (hard): header headline and subheadline {header_headline}, header body
 {header_body}; overlay headline {overlay_headline}; features headline {columns_module};
-column headline {column_headline}, column body {column_body}. Prefer short, concrete texts:
-header body 1-2 sentences, column body 1-2 sentences."""
+column headline {column_headline}, column body {column_body}; alt text {alt_text}. Prefer short,
+concrete texts: header body 1-2 sentences, column body 1-2 sentences.
+
+Alt text: every image needs one. It is read aloud by screen readers, so describe what the image
+shows in plain words, as you would to someone who cannot see it. No keyword lists, no selling,
+the same A+ rules as above. Each alt text must differ from the others."""
 
 USER = """Book title: {title}
 Subtitle: {subtitle}
@@ -240,7 +271,9 @@ Fields to write:
 - columns: exactly {columns} columns, one per picture below, in this order. Each column
   shows the named page; describe what the child or adult gets from it (benefit, level of
   difficulty for the age, calm screen-free fun), not a fact from the list above.
-{scenes}"""
+{scenes}
+- alt_texts: one entry per image below, with its image id and the alt text.
+{images}"""
 
 
 @dataclass(frozen=True)
@@ -276,7 +309,10 @@ class AplusWriter:
         audience: str,
         facts: Sequence[str],
         scenes: Sequence[str],
+        images: Sequence[tuple[str, str]] = (),
     ) -> AplusTextResult:
+        """`images`: (klucz `alt_key()`, co pokazuje grafika, po angielsku) dla tekstów
+        alternatywnych."""
         limits = self.config.settings.aplus.limits
         system = SYSTEM.format(
             language=market.language,
@@ -288,6 +324,7 @@ class AplusWriter:
             columns_module=limits.columns.module_headline,
             column_headline=limits.columns.headline,
             column_body=limits.columns.body,
+            alt_text=limits.alt_text,
         )
         user = USER.format(
             title=title,
@@ -297,6 +334,7 @@ class AplusWriter:
             facts="; ".join(facts),
             columns=len(scenes),
             scenes="\n".join(f"Column {i}: {scene}" for i, scene in enumerate(scenes, start=1)),
+            images="\n".join(f"Image {key}: {what}" for key, what in images),
         )
         usage = Usage()
         copy = AplusCopy()
@@ -317,7 +355,7 @@ class AplusWriter:
                     raise
                 break  # ponowienie nieudane: zostają teksty z pierwszej próby z ostrzeżeniem
             usage += call_usage
-            copy = _to_copy(response, facts, len(scenes))
+            copy = _to_copy(response, facts, len(scenes), [key for key, _ in images])
             # Fakty wstawia program, więc ponowienie dotyczy tylko tekstów od modelu.
             model_part = copy.model_copy(update={"overlay_facts": None})
             issues = copy_issues(model_part, banned)
@@ -327,6 +365,7 @@ class AplusWriter:
         warnings += [f"fakty A+: {issue}" for issue in copy_issues(_facts_only(facts), banned)]
         if len(copy.features.columns if copy.features else []) != len(scenes):
             warnings.append(f"teksty A+: model dał inną liczbę kolumn niż {len(scenes)}")
+        warnings += [f"teksty A+: {issue}" for issue in alt_issues(copy, [k for k, _ in images])]
         return AplusTextResult(copy=copy, usage=usage, attempts=attempts, warnings=warnings)
 
 
@@ -334,7 +373,9 @@ def _facts_only(facts: Sequence[str]) -> AplusCopy:
     return AplusCopy(overlay_facts=OverlayCopy(items=list(facts)))
 
 
-def _to_copy(response: _AplusTexts, facts: Sequence[str], columns: int) -> AplusCopy:
+def _to_copy(
+    response: _AplusTexts, facts: Sequence[str], columns: int, alt_keys: Sequence[str]
+) -> AplusCopy:
     def header(h: _Header) -> HeaderCopy:
         return HeaderCopy(
             headline=h.headline.strip(), subheadline=h.subheadline.strip(), body=h.body.strip()
@@ -347,4 +388,10 @@ def _to_copy(response: _AplusTexts, facts: Sequence[str], columns: int) -> Aplus
         header_pages=header(response.pages_header),
         overlay_facts=OverlayCopy(headline=response.overlay_headline.strip(), items=list(facts)),
         features=FeaturesCopy(headline=response.features_headline.strip(), columns=cols),
+        # Tylko grafiki z listy: model mógłby dopisać id, którego nie ma.
+        alt={
+            a.image.strip(): a.text.strip()
+            for a in response.alt_texts
+            if a.image.strip() in alt_keys and a.text.strip()
+        },
     )

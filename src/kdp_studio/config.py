@@ -541,6 +541,7 @@ class AplusLimits(_Strict):
     header: AplusHeaderLimits = AplusHeaderLimits()
     columns: AplusColumnLimits = AplusColumnLimits()
     overlay: AplusOverlayLimits = AplusOverlayLimits()
+    alt_text: Annotated[int, Field(gt=0)] = 100  # tekst alternatywny każdej grafiki
 
 
 class AplusBackground(_Strict):
@@ -622,6 +623,7 @@ class AplusSettings(_Strict):
         "comparison",
     ]
     logo: str | None = None  # baner 600 × 180 przygotowany poza programem
+    logo_alt: str | None = None  # tekst alternatywny banera (wymagany przez A+, wpisuje wydawca)
     image_format: Literal["jpg", "png"] = "jpg"
     jpeg_quality: Annotated[int, Field(ge=50, le=100)] = 90
     scale: Annotated[int, Field(ge=1, le=4)] = 2  # obrazy w wielokrotności proporcji z edytora

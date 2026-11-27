@@ -54,6 +54,17 @@ class AplusCopy(_Copy):
     header_pages: HeaderCopy | None = None
     overlay_facts: OverlayCopy | None = None
     features: FeaturesCopy | None = None
+    # Tekst alternatywny grafik według `alt_key()`: header_fan, features_2, chart_1…
+    alt: dict[str, str] = {}
+
+
+def alt_key(module: str, index: int = 1) -> str:
+    """Klucz tekstu alternatywnego grafiki: nazwa modułu, a dla kolumn i tabeli z numerem."""
+    if module == "features":
+        return f"features_{index}"
+    if module == "comparison":
+        return f"chart_{index}"
+    return module
 
 
 class ChartColumn(_Copy):

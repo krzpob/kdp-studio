@@ -40,6 +40,7 @@ from kdp_studio.pipeline.aplus_models import (
     ChartColumn,
     HeaderCopy,
     OverlayCopy,
+    alt_key,
 )
 from kdp_studio.pipeline.aplus_preview import (
     PREVIEW_FILE,
@@ -47,7 +48,13 @@ from kdp_studio.pipeline.aplus_preview import (
     PreviewModule,
     render_preview,
 )
-from kdp_studio.pipeline.aplus_text import AplusWriter, apply_limits, copy_issues, overlay_body
+from kdp_studio.pipeline.aplus_text import (
+    AplusWriter,
+    alt_issues,
+    apply_limits,
+    copy_issues,
+    overlay_body,
+)
 from kdp_studio.pipeline.cost import CostTracker
 from kdp_studio.pipeline.listing import book_facts, fact_lines
 from kdp_studio.pipeline.manifest import Manifest, ManifestPage, sha256_bytes, sha256_file
@@ -291,8 +298,10 @@ def texts_inputs_sha256(
     market: MarketProfile,
     config: AppConfig,
     banned: AplusBanned | None,
+    images: Sequence[tuple[str, str]] = (),
 ) -> str:
-    """Hash wejść tekstów: metadane, fakty, sceny kolumn, rynek, limity i zakazane słowa."""
+    """Hash wejść tekstów: metadane, fakty, sceny kolumn, opisy grafik (do tekstów
+    alternatywnych), rynek, limity i zakazane słowa."""
     book = ideas.book
     return _sha(
         [
@@ -301,6 +310,7 @@ def texts_inputs_sha256(
             book.description,
             *facts,
             *scenes,
+            *(f"{key}: {what}" for key, what in images),
             market.model_dump_json(),
             config.settings.aplus.limits.model_dump_json(),
             "" if banned is None else banned.model_dump_json(),
@@ -372,6 +382,73 @@ class AplusRun:
             ideas[p.idea_id].scene if p.idea_id in ideas else p.name for p in self.plan.features
         ]
 
+    def _page_scene(self, page: ManifestPage) -> str:
+        ideas = {i.id: i for i in self.ideas.pages}
+        idea = ideas.get(page.idea_id)
+        return idea.scene.strip().rstrip(".") if idea is not None else page.name
+
+    def alt_images(self) -> list[tuple[str, str]]:
+        """Grafiki, które dostają tekst alternatywny od modelu: (klucz `alt_key()`, co pokazuje
+        grafika, po angielsku). Baner ma tekst z `aplus.logo_alt`, nie od modelu."""
+        title = self.ideas.book.title
+        result: list[tuple[str, str]] = []
+        for name in self.plan.modules:
+            if name in self.plan.skipped or name == "logo":
+                continue
+            if name == "header_fan":
+                result.append(
+                    (
+                        name,
+                        f'The front and back covers of the coloring book "{title}", lying flat '
+                        "and fanned out on a plain background",
+                    )
+                )
+            elif name == "header_pages":
+                scenes = "; ".join(self._page_scene(p) for p in self.plan.sheets)
+                result.append(
+                    (
+                        name,
+                        f"{len(self.plan.sheets)} black-and-white inside pages of the coloring "
+                        f"book, fanned out: {scenes}",
+                    )
+                )
+            elif name == "overlay_facts":
+                scenes = "; ".join(self._page_scene(p) for p in self.plan.strip)
+                result.append(
+                    (
+                        name,
+                        f"A row of {len(self.plan.strip)} black-and-white coloring pages from "
+                        f"the book: {scenes}",
+                    )
+                )
+            elif name == "features":
+                for k, page in enumerate(self.plan.features, start=1):
+                    colored = self.color_page and k == 1
+                    kind = (
+                        "A coloring page from the book, colored in with crayons"
+                        if colored
+                        else "A black-and-white coloring page from the book"
+                    )
+                    result.append((alt_key(name, k), f"{kind}: {self._page_scene(page)}"))
+            elif name == "comparison":
+                for k, column in enumerate(self.plan.chart, start=1):
+                    result.append(
+                        (alt_key(name, k), f'The front cover of the coloring book "{column.title}"')
+                    )
+        return result
+
+    def alt_keys(self) -> list[str]:
+        """Klucze tekstów alternatywnych wszystkich grafik, z banerem."""
+        logo = "logo" in self.plan.modules and "logo" not in self.plan.skipped
+        return (["logo"] if logo else []) + [key for key, _ in self.alt_images()]
+
+    def _with_logo_alt(self, copy: AplusCopy) -> AplusCopy:
+        """Tekst alternatywny banera z `aplus.logo_alt`, chyba że plik tekstów ma własny."""
+        logo_alt = self.config.settings.aplus.logo_alt
+        if "logo" not in self.alt_keys() or not logo_alt or copy.alt.get("logo"):
+            return copy
+        return copy.model_copy(update={"alt": {"logo": logo_alt.strip(), **copy.alt}})
+
     def texts_state(self) -> str:
         """„edited”, „current” albo „new”: czy teksty trzeba napisać modelem."""
         previous = self.manifest.aplus
@@ -381,7 +458,13 @@ class AplusRun:
         if previous.texts_sha256 is not None and sha256_file(path) != previous.texts_sha256:
             return "edited"
         inputs = texts_inputs_sha256(
-            self.ideas, self.facts(), self.scenes(), self.market, self.config, self.banned
+            self.ideas,
+            self.facts(),
+            self.scenes(),
+            self.market,
+            self.config,
+            self.banned,
+            self.alt_images(),
         )
         return "current" if previous.texts_inputs_sha256 == inputs else "new"
 
@@ -558,13 +641,27 @@ class AplusRun:
     # --- Teksty ---
 
     def _texts(self, outcome: AplusOutcome) -> None:
+        self._write_texts(outcome)
+        info = outcome.info
+        info.texts = self._with_logo_alt(info.texts)
+        if outcome.texts_source == "brak":
+            return
+        # Grafiki od modelu sprawdza już AplusWriter; tu baner i pliki poprawione ręcznie.
+        keys = self.alt_keys() if outcome.texts_source != "model" else ["logo"]
+        keys = [k for k in keys if k in self.alt_keys()]
+        for issue in alt_issues(info.texts, keys):
+            hint = " (baner: ustaw aplus.logo_alt)" if "logo" in issue else ""
+            info.warnings.append(f"teksty A+: {issue}{hint}")
+
+    def _write_texts(self, outcome: AplusOutcome) -> None:
         path = self.out / TEXTS_FILE
         state = self.texts_state()
         previous = self.manifest.aplus
         facts = self.facts()
         scenes = self.scenes()
+        images = self.alt_images()
         inputs = texts_inputs_sha256(
-            self.ideas, facts, scenes, self.market, self.config, self.banned
+            self.ideas, facts, scenes, self.market, self.config, self.banned, images
         )
         limits = self.config.settings.aplus.limits
         if state == "edited":
@@ -604,6 +701,7 @@ class AplusRun:
                 audience=self._audience(),
                 facts=facts,
                 scenes=scenes,
+                images=images,
             )
         except ProviderError as e:
             if e.fatal:
@@ -729,14 +827,26 @@ def preview_modules(info: AplusInfo, config: AppConfig) -> list[PreviewModule]:
                 "Tabelę układa się w KDP z numerów ASIN książek z Twojego konta; wiersze cech "
                 "przepisz z tabeli niżej."
             )
+        is_chart = module.name == "comparison"
         result.append(
             PreviewModule(
                 title=title,
                 note=note,
                 images=module.files,
                 fields=fields,
-                chart=info.chart if module.name == "comparison" else (),
+                chart=info.chart if is_chart else (),
                 warnings=warnings,
+                alts=[
+                    texts.alt.get(alt_key(module.name, k), "")
+                    for k in range(1, len(module.files) + 1)
+                ],
+                chart_alts=[
+                    texts.alt.get(alt_key("comparison", k), "")
+                    for k in range(1, len(info.chart) + 1)
+                ]
+                if is_chart
+                else (),
+                alt_limit=limits.alt_text,
             )
         )
     return result

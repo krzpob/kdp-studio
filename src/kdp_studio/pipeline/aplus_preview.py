@@ -33,6 +33,9 @@ class PreviewModule:
     fields: Sequence[PreviewField] = ()
     chart: Sequence[ChartColumn] = ()
     warnings: Sequence[str] = field(default_factory=tuple)
+    alts: Sequence[str] = ()  # tekst alternatywny każdej grafiki z `images`
+    chart_alts: Sequence[str] = ()  # tekst alternatywny okładki w każdej kolumnie tabeli
+    alt_limit: int | None = None
 
 
 STYLE = """
@@ -57,6 +60,7 @@ figcaption { font-size: 12px; color: #666; }
 .text { white-space: pre-wrap; margin: 6px 0 0; }
 .hint { font-size: 12px; color: #7a5b00; margin: 4px 0 0; }
 .warn { color: #b00020; font-size: 13px; }
+.alt { font-size: 12px; color: #333; margin: 4px 0 0; }
 button { cursor: pointer; border: 1px solid #888; background: #fafafa; border-radius: 6px;
   padding: 3px 10px; font: inherit; font-size: 13px; }
 button.done { background: #dff3e0; border-color: #4a8; }
@@ -118,21 +122,35 @@ def _field(item: PreviewField) -> str:
     )
 
 
-def _image(info: AplusFileInfo) -> str:
+def _alt(text: str, limit: int | None) -> str:
+    """Tekst alternatywny pod grafiką: A+ wymaga go przy każdej grafice."""
+    if not text:
+        return '<p class="warn">⚠ Brak tekstu alternatywnego: A+ go wymaga.</p>'
+    count = ""
+    if limit is not None:
+        over = " over" if len(text) > limit else ""
+        count = f' <span class="count{over}">{len(text)} / {limit}</span>'
+    return f'<p class="alt">Tekst alternatywny{count}: {_esc(text)} {_button(text)}</p>'
+
+
+def _image(info: AplusFileInfo, alt: str = "", limit: int | None = None) -> str:
     size = f"{info.bytes / 1024:.0f} KB"
     return (
-        f'<figure><img src="{_esc(info.path)}" alt="{_esc(info.path)}">'
+        f'<figure><img src="{_esc(info.path)}" alt="{_esc(alt or info.path)}">'
         f"<figcaption>{_esc(info.path)} · {info.width} × {info.height} px · {size}</figcaption>"
-        "</figure>"
+        f"{_alt(alt, limit)}</figure>"
     )
 
 
-def _chart(columns: Sequence[ChartColumn]) -> str:
+def _chart(
+    columns: Sequence[ChartColumn], alts: Sequence[str] = (), limit: int | None = None
+) -> str:
     labels = list(columns[0].rows) if columns else []
+    alts = list(alts) + [""] * (len(columns) - len(alts))
     head = "".join(
         f"<th>{_esc(c.title)}<br><small>{_esc(c.asin or 'ta książka (ASIN po publikacji)')}"
-        f"{' ' + _button(c.asin) if c.asin else ''}</small></th>"
-        for c in columns
+        f"{' ' + _button(c.asin) if c.asin else ''}</small>{_alt(alt, limit)}</th>"
+        for c, alt in zip(columns, alts, strict=True)
     )
     rows = "".join(
         f"<tr><th>{_esc(label)} {_button(label)}</th>"
@@ -152,10 +170,13 @@ def render_preview(title: str, modules: Sequence[PreviewModule]) -> str:
     for module in modules:
         note = f'<p class="note">{_esc(module.note)}</p>' if module.note else ""
         warnings = "".join(f'<p class="warn">⚠ {_esc(w)}</p>' for w in module.warnings)
-        images = "".join(_image(i) for i in module.images)
+        alts = list(module.alts) + [""] * (len(module.images) - len(module.alts))
+        images = "".join(
+            _image(i, a, module.alt_limit) for i, a in zip(module.images, alts, strict=True)
+        )
         images = f'<div class="images">{images}</div>' if images else ""
         fields = "".join(_field(f) for f in module.fields)
-        chart = _chart(module.chart) if module.chart else ""
+        chart = _chart(module.chart, module.chart_alts, module.alt_limit) if module.chart else ""
         parts.append(
             f"<section><h2>{_esc(module.title)}</h2>{note}{warnings}{images}{fields}{chart}"
             "</section>"
@@ -167,7 +188,8 @@ def render_preview(title: str, modules: Sequence[PreviewModule]) -> str:
         f"<h1>A+ Content: {_esc(title)}</h1>"
         '<p class="lead">Moduły w kolejności na stronie. Obrazy wgraj z katalogu aplus/, teksty '
         "skopiuj przyciskiem „Kopiuj” (zwykły tekst). Pogrubienie i listy nałóż paskiem "
-        "narzędzi edytora A+, bo edytor nie przyjmuje HTML.</p>"
+        "narzędzi edytora A+, bo edytor nie przyjmuje HTML. Każda grafika potrzebuje tekstu "
+        "alternatywnego: jest pod nią, też z przyciskiem.</p>"
         + "".join(parts)
         + f"<script>{SCRIPT}</script></main></body></html>\n"
     )
