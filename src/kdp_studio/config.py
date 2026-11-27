@@ -541,7 +541,8 @@ class AplusLimits(_Strict):
     header: AplusHeaderLimits = AplusHeaderLimits()
     columns: AplusColumnLimits = AplusColumnLimits()
     overlay: AplusOverlayLimits = AplusOverlayLimits()
-    alt_text: Annotated[int, Field(gt=0)] = 100  # tekst alternatywny każdej grafiki
+    # Tekst alternatywny każdej grafiki: pole edytora przyjmuje najwyżej 99 znaków (28.11.2026).
+    alt_text: Annotated[int, Field(gt=0)] = 99
 
 
 class AplusBackground(_Strict):

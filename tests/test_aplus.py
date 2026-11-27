@@ -217,7 +217,7 @@ def test_alt_text_for_every_image(book: Path, text: FakeTextProvider) -> None:
     call = next(c for c in text.calls if c.schema.__name__ == "_AplusTexts")
     assert "Image header_fan: The front and back covers" in call.user
     assert "Image features_1: A black-and-white coloring page from the book:" in call.user
-    assert "screen readers" in call.system and "alt text 100" in call.system
+    assert "screen readers" in call.system and "alt text 99" in call.system
     texts = yaml.safe_load((book / "aplus" / "texts.yaml").read_text(encoding="utf-8"))
     keys = ["header_fan", "overlay_facts", "features_1", "features_2", "features_3"]
     assert sorted(texts["alt"]) == sorted([*keys, "header_pages"])
@@ -347,7 +347,7 @@ def test_limits_clip_and_drop_facts(repo_config: AppConfig) -> None:
 def test_alt_texts_are_clipped_checked_and_unique(repo_config: AppConfig) -> None:
     copy = AplusCopy(alt={"header_fan": "word " * 40, "features_1": "Best coloring book ever"})
     fitted, warnings = apply_limits(copy, repo_config.settings.aplus.limits)
-    assert len(fitted.alt["header_fan"]) <= 100
+    assert len(fitted.alt["header_fan"]) <= 99
     assert any(w.startswith("alt.header_fan:") for w in warnings)
     banned = repo_config.markets.aplus_for("en-US")
     assert banned is not None
