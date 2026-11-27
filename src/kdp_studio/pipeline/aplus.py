@@ -622,6 +622,7 @@ class AplusRun:
                     choice.rgb,
                     settings.header_fan,
                     images.scaled(images.OVERLAY_SIZE, scale),
+                    settings.overlay_facts,
                 )
                 saved = images.save_image(img, stem.with_suffix(f".{ext}"), settings)
                 info.files.append(self._file_info(saved))
@@ -794,7 +795,12 @@ def preview_modules(info: AplusInfo, config: AppConfig) -> list[PreviewModule]:
             ]
         elif module.name == "overlay_facts":
             overlay = texts.overlay_facts or OverlayCopy()
-            note = "Wybierz jasną nakładkę (Light): lewa część obrazu jest spokojna pod tekst."
+            side = "prawa" if config.settings.aplus.overlay_facts.text_side == "right" else "lewa"
+            note = (
+                f"Wybierz jasną nakładkę (Light). Na komputerze Amazon kładzie ramkę z tekstem "
+                f"na obrazie ({side} część jest pod nią pusta); na telefonie tekst jest pod "
+                "obrazem."
+            )
             fields = [
                 PreviewField("Nagłówek", overlay.headline, limits.overlay.headline),
                 PreviewField(

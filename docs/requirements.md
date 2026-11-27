@@ -1475,6 +1475,7 @@ aplus:
 - **Pokolorowana strona** (`--color-page`): strona pierwszej kolumny, `images.edit` z referencją, zapis w `aplus/raw/<strona>_color.png`; ta sama strona nie jest kolorowana ponownie. Opcja `--image-quality` dla tego wywołania.
 - **Ponowne uruchomienie:** `images_sha256` (pliki okładki i stron, ustawienia `aplus` bez limitów, baner, pokolorowana strona) i `texts_inputs_sha256` (metadane, fakty, sceny kolumn, rynek, limity, zakazane słowa). Plik `aplus/texts.yaml` różny od zapisanego przez program jest ręczną poprawką: zostaje, a podgląd i manifest biorą go jako teksty.
 - **Kody wyjścia:** 1 bez stron `ok` albo okładki `ok`, albo przy złym `texts.yaml`; 2, gdy teksty nie powstały przez błąd dostawcy (grafiki i podgląd są); 3 po przekroczeniu limitu; 4 przy błędzie krytycznym dostawcy.
+- **Pas nakładki a ramka z tekstem** (podgląd edytora 28.11.2026): na komputerze Amazon kładzie ramkę z tekstem nakładki na obrazie po prawej, na ok. 0,69–0,95 szerokości i prawie całej wysokości; na telefonie tekst jest pod obrazem. Program kładzie więc strony po stronie bez ramki, a pod ramką zostawia samo tło (`aplus.overlay_facts`: `text_side: right`, `text_width: 0.33`, marginesy i zachodzenie stron). Pierwsza wersja miała strony po prawej i ramka je zasłaniała.
 - **Sprawdzone na książkach z repozytorium:** wachlarz kotków wybiera pudrowy róż (ΔE 16,6) jak referencja, ciężarówek szałwię (20,5); wachlarz JPG ma ok. 0,4 MB.
 
 ## 7. Profile (konfiguracja YAML)
