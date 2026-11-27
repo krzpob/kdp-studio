@@ -37,6 +37,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
+| FR-24 | ⬜ | | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1331,6 +1332,123 @@ texts:
 - **Instrukcja:** ilustrację rysuje model wg `instructions.composition` z `{subject}` (najczęstszy `subject` stron), z blokiem stylu stron. Bez kontroli pustego pola (tekst stoi nad ilustracją, w osobnej części strony); QA sprawdza `text` (tylko teksty programu) i `scene_mismatch`. Grafika zapasowa: `assets/front_matter/instructions.svg` (otwarta kolorowanka, kartka wsuwana pod stronę, strzałki).
 - **`canva.md`:** strony wstępne w kolejności druku. Nazwy plików (`front_belongs_to`, `front_copyright`, `front_instructions`, `front_title`) nie układają się alfabetycznie w tej kolejności, więc instrukcja każe wstawiać je według tabeli.
 
+### ⬜ FR-24: A+ Content: grafiki i teksty modułów (poza MVP)
+
+Zgłoszenie: #71. Wymaganie powstało z pomysłu w sekcji 14a.
+
+Cel: grafiki i teksty modułów A+ Content (obrazki i teksty pod opisem na stronie Amazona) gotowe do wgrania i wklejenia w edytor A+ w KDP. Program ma wszystko, czego potrzeba: okładkę (FR-15), strony, temat, wiek i fakty o książce z manifestu. Zasady A+ (https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD, sprawdzone 24.11.2026) są ostrzejsze niż zasady opisu.
+
+**Moduły (edytor A+, sprawdzone 24.11.2026)**
+
+Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze.
+
+| Moduł | Układ | Obraz | Teksty |
+|---|---|---|---|
+| Standard Company Logo | sam obraz | 600 × 180 | – |
+| Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
+| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, tekst kolumny do 1000 |
+| Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
+| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | nagłówek do 60 znaków, tekst do 300 |
+| Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
+
+- Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
+- Teksty modułów mają formatowanie, ale tylko z paska narzędzi edytora: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną (w nakładce lista numerowana). Wklejony HTML nie działa: edytor nie zamienia znaczników na formatowanie (sprawdzone 24.11.2026). Tym różni się od opisu KDP (FR-03), który przyjmuje HTML.
+
+**Układ strony (domyślny)**
+1. **Baner:** Standard Company Logo 600 × 180. Buduje markę wydawcy na Amazonie, więc powstaje poza programem i jest wspólny dla wszystkich książek. Program bierze tylko gotowy plik z konfiguracji i wskazuje jego miejsce.
+2. **1–2 × Standard Image Header With Text:** mockupy gotowego produktu, z minimum tekstu albo bez niego. Pierwszy, tuż pod banerem, to wachlarz okładek opisany niżej w części „Grafiki”; kolejny może pokazywać np. kilka pokolorowanych stron i kredki.
+3. **Standard Image with Dark/Light Overlay z twardymi faktami:** zamiast jednego mockupu. Tekst nakładki to tekst strony, więc na telefonie skaluje się lepiej niż napis na grafice. Przykład:
+   - liczba kolorowanek;
+   - druk jednostronny: każdy obrazek na osobnej kartce, więc przebicie nie zniszczy następnego;
+   - pisaki po podłożeniu grubszej kartki, jak na stronie z instrukcją (FR-23).
+
+   Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Tekst nakładki przyjmuje listę numerowaną (sprawdzone 24.11.2026), więc fakty będą listą numerowaną.
+4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment.
+5. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji. Bez tabeli to miejsce dostaje drugi mockup.
+
+Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieści całą stronę, a pas 970 × 300 tylko jej wycinek albo rząd małych miniatur i na telefonie robi się cienki. Dlatego nakładka jest jedna, na fakty. Zestaw modułów i ich kolejność są w konfiguracji (`aplus.modules`), a nie w kodzie; najwyżej 5.
+
+**Grafiki**
+- **Wymagania A+ dla obrazów:** JPG albo PNG w RGB, plik poniżej 2 MB, co najmniej 72 dpi, bez animacji (GIF).
+- **Bez napisów od programu:** nagłówki i teksty idą do pól modułu, a obraz nie dostaje napisów. Tytuł widoczny na okładce w mockupie to zdjęcie produktu, nie napis.
+- **Mockupy:** dwie drogi.
+  - Składane przez program z gotowych plików okładki: perspektywa, obrót, cienie. Bez kosztu API i bez ryzyka zniekształceń. Pierwszy taki mockup opisuje punkt niżej.
+  - Scena z modelu obrazu z okładką jako `reference_image`: płatna, a model może zniekształcić tytuł. Do rozważenia tylko dla ujęć, których program nie złoży (np. książka z kredkami na stole).
+- **Nagłówek pod banerem: wachlarz okładek** (Standard Image Header With Text, 970 × 600; referencja: `docs/aplus/naglowek_wachlarz_referencja.jpg`, prototyp: `docs/aplus/mockup_prototype.py`, ustalone 26.11.2026):
+  - **Kompozycja:** dwie książeczki leżą płasko i zachodzą na siebie jak wachlarz. Przód (`cover/front.png`) leży na wierzchu, obrócony w płaszczyźnie o 7° w lewo, przy lewej krawędzi grafiki. Tył (wycięty z `cover/cover.png` wg `manifest.cover.geometry`) leży pod spodem, obrócony o 9° w prawo i przesunięty w prawo o ok. 60% boku okładki, więc zachodzą na siebie mniej więcej w jednej trzeciej. Razem wypełniają szerokość grafiki.
+  - **Wielkość:** bok okładki to ok. 83% wysokości grafiki (1000 px przy 1200). To największy rozmiar, przy którym obie obrócone książeczki mieszczą się w kadrze. Dwukrotne powiększenie względem pierwszej wersji nie mieści się bez ucięcia ilustracji.
+  - **Grubość:** każda książeczka ma wąski pasek bloku kartek przy dolnej krawędzi, ok. 1/120 boku. Przy prawej krawędzi przód pokazuje kartki, a tył, leżący tylną okładką do góry, ma tam grzbiet: pasek w kolorze tła grzbietu, lekko przyciemniony, bez napisu.
+  - **Cienie:** miękkie, przesunięte w prawo w dół, liczone z zapasem wokół książeczki, żeby rozmycie nie urywało się na brzegu.
+  - **Tło:** nie białe i wyraźnie różne od okładek, żeby się z nimi nie zlewały. Program wybiera je z listy kandydatów w konfiguracji (jasne, stonowane barwy, np. beż, szałwia, pudrowy róż, szaroniebieski, ciepły szary). Wygrywa kandydat o największej odległości ΔE (Lab) od kolorów pasa brzegowego obu okładek; liczy się 5. percentyl odległości, żeby pojedyncze piksele nie decydowały. Kandydat poniżej progu `min_delta_e` odpada. Gdy żaden nie przechodzi, program przyciemnia najlepszego, aż przejdzie. Tło ma lekki pionowy gradient. W referencji (kotki) wygrał pudrowy róż.
+  - **Plik:** 1940 × 1200 (dwukrotność 970 × 600), JPG jakości 90, RGB. Referencja waży 0,4 MB; ten sam obraz jako PNG miał 1,9 MB, tuż pod limitem 2 MB, dlatego JPG.
+  - **Konfiguracja:** kąty, przesunięcie, wielkość, kandydaci tła i próg ΔE w `settings.yaml`, nie w kodzie.
+  - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
+- **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
+
+**Teksty i zakazane sformułowania**
+
+Teksty powstają w jednym wywołaniu LLM z regułami A+ w prompcie i są sprawdzane w kodzie. Wzorce i listy słów są w konfiguracji, według języka rynku. Trafienie oznacza jedno ponowienie, potem ostrzeżenie. Zakazane są trzy grupy.
+- **Nacisk czasem:** „now”, „new”, „latest”, „yet”, „on sale now”, „the latest product”, „the best yet” i ich odpowiedniki w języku rynku.
+- **Święto albo sezon jako termin lub okazja do zakupu:** KDP zakazuje „references to holidays” na tej samej liście co nacisk czasem. Czytamy to tak: zakazane jest święto jako punkt w czasie albo okazja skłaniająca do zakupu, także z nazwą konkretnego święta. Przykłady: „on sale before Christmas”, „in time for Easter”, „order before Valentine's Day”, „holiday gift”, „perfect Christmas gift”, „stocking stuffer”, a także ogólne „holidays”, „holiday season”, „na święta”, „na wakacje”. Dozwolone jest święto jako temat zawartości, np. „Christmas coloring book with Santa, reindeer and gingerbread houses”. To nasza interpretacja: rozstrzygnie pierwsza recenzja A+, a przy odrzuceniu nazwy świąt trafią na listę zakazanych.
+- **Przechwałki (Claims and awards):** „perfect”, „best”, „ultimate”, „must-have”, „#1”, „top-rated”, „bestseller” i obietnice satysfakcji („100% satisfaction guaranteed”). Rekomendacje i certyfikaty („recommended by”, „approved”, „tested”) wymagają podania źródła i roku, więc program ich nie używa.
+
+Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, „buy now”, „add to cart”, „free shipping” i bez wzmianki o Kindle+.
+
+**Wynik**
+- `kdp-studio aplus <katalog>` zapisuje katalog `aplus/` z obrazami modułów, nazwanymi w kolejności modułów (np. `02_header_fan.jpg`, `04_features_1.jpg`).
+- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu. Przycisk kopiuje zwykły tekst, a punkty listy jako osobne wiersze; formatowanie (pogrubienie, lista) użytkownik nakłada paskiem narzędzi edytora, a podgląd pokazuje, gdzie. Do sprawdzenia przy pierwszym użyciu: czy edytor zachowuje formatowanie przy wklejeniu sformatowanego tekstu ze strony (schowek `text/html`), a nie znaczników. Jeśli tak, przycisk może kopiować i to.
+- Manifest dostaje sekcję `aplus`: moduły w kolejności, pliki z wymiarami i rozmiarem, teksty pól, wybrane tło (kandydat, ΔE), ostrzeżenia z kontroli tekstów, koszt i datę. Koszt wywołań liczy się do `--max-cost` (FR-10) jak pozostałe kroki.
+
+**Polecenie**
+- `kdp-studio aplus <katalog-książki>`, osobny krok po okładce. Wymaga stron `ok` (FR-17) i okładki ze statusem `ok` (FR-15), bo mockupy składa z `cover/front.png` i `cover/cover.png`. Bez nich kod 1 z informacją, czego brakuje. `generate` go nie uruchamia.
+- Opcje: `--color-page/--no-color-page` (pokolorowana strona z modelu, domyślnie `aplus.color_page: false`), `--max-cost`, `--log-level`, `--config-file` (FR-20, sekcja `aplus`).
+- Wywołania API: jedno wywołanie LLM na teksty (z jednym ponowieniem po kontroli) i opcjonalnie jedno płatne pokolorowanie strony. Grafiki składa program, bez API.
+- Ponowne uruchomienie robi tylko to, co się zmieniło: grafiki, gdy zmieniła się okładka, strony albo ustawienia (hash wejść jak w FR-17), teksty, gdy zmieniły się metadane albo fakty. Teksty poprawione ręcznie w `aplus/texts.yaml` program zostawia, jak ręcznie poprawione strony.
+
+**Konfiguracja (szkic)**
+
+```yaml
+# settings.yaml
+aplus:
+  modules: [logo, header_fan, overlay_facts, features, comparison]   # kolejność, najwyżej 5
+  logo: null                    # plik banera 600 × 180 przygotowany poza programem
+  image_format: jpg
+  jpeg_quality: 90
+  scale: 2                      # obrazy w dwukrotności proporcji z edytora
+  color_page: false             # --color-page: pokolorowana strona z modelu (płatna)
+  limits:                       # znaki, z edytora A+ (24.11.2026)
+    header: {headline: 200, body: 6000}
+    columns: {module_headline: 200, headline: 160, body: 1000}
+    overlay: {headline: 60, body: 300}
+  header_fan:
+    front_angle_deg: 7
+    back_angle_deg: -9
+    back_offset: 0.62           # przesunięcie tyłu w bokach okładki
+    size: 0.83                  # bok okładki względem wysokości grafiki
+    page_edge: 0.0083           # grubość bloku kartek względem boku
+    background:
+      candidates: {beż: [226, 212, 190], szałwia: [200, 212, 190], pudrowy róż: [232, 206, 200],
+                   szaroniebieski: [200, 210, 222], ciepły szary: [214, 208, 200]}
+      min_delta_e: 15           # do ustalenia po kilku okładkach
+  features: {columns: 3}        # 3 albo 4
+  comparison:                   # tabela porównawcza: 2–6 książek z własnego konta
+    books: []                   # [{asin: B0…, book: output/…}]
+```
+
+- Zakazane sformułowania według języka w `config/markets.yaml` (`texts.<język>.aplus_banned`: `time`, `occasion` z nazwami świąt i słowami terminu lub zakupu, `claims`, `sales`), jak teksty stron wstępnych (FR-23).
+- Walidacja (§7): najwyżej 5 modułów, znane nazwy modułów, `comparison` z 2–6 książkami (bez nich moduł wypada z ostrzeżeniem), kandydaci tła jako RGB, limity dodatnie.
+
+**Uwagi do implementacji**
+- Moduły: `pipeline/aplus_images.py` (wachlarz okładek, kwadraty kolumn ze stron, pas nakładki, kontrola rozmiaru i trybu pliku), `pipeline/aplus_text.py` (prompt z faktami z `book_facts()` z FR-03, schemat pól z limitami, kontrola zakazanych sformułowań, przycinanie do limitu z ostrzeżeniem), `pipeline/aplus_preview.py` (`aplus.html`). Prototyp wachlarza: `docs/aplus/mockup_prototype.py`.
+- Grafiki bez modelu są deterministyczne, więc testy porównują je z plikami wzorcowymi (jak FR-06).
+- Testy: wymiary, tryb i rozmiar plików poniżej 2 MB; wybór tła (najlepszy kandydat, próg i przyciemnianie); grzbiet tyłu i cienie bez urwania; zakazane sformułowania (święto jako temat przechodzi, jako termin albo okazja nie; przechwałki; nacisk czasem); limity znaków; tabela porównawcza z manifestów innych książek; brak wywołań API dla samych grafik; kod 1 bez okładki.
+
+**Do sprawdzenia przy pierwszej książce**
+- Czy edytor A+ przyjmuje obraz większy niż minimalny w tej samej proporcji (zakładamy dwukrotność).
+- Czy wklejony sformatowany tekst ze strony (schowek `text/html`) zachowuje formatowanie; jeśli tak, przyciski mogą kopiować też formatowanie.
+- Wynik pierwszej recenzji A+: czy sama nazwa święta jako temat przechodzi.
+- Próg ΔE tła po kilku różnych okładkach.
+
 ## 7. Profile (konfiguracja YAML)
 
 Profile są danymi, nie kodem: strojenie jakości nie może wymagać zmian w Pythonie.
@@ -1497,6 +1615,8 @@ kdp-studio ideas ./output/dinozaury_przedszkole_kawaii_square --redo idea_07,ide
 kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
+# A+ Content (FR-24, poza MVP): po okładce, grafiki bez API, teksty jednym wywołaniem LLM
+kdp-studio aplus ./output/dinozaury_przedszkole_kawaii_square [--color-page] [--max-cost 1.00]
 # Każdy krok przyjmuje też --log-level info|debug (NFR-09)
 # Plik parametrów książki (FR-20, poza MVP): flagi nadpisują wartości z pliku
 kdp-studio generate --config-file ksiazki/dinozaury.yaml --pages 40
@@ -1563,12 +1683,16 @@ output/dinozaury_przedszkole_kawaii_square/
 ├── rejected/page_07_try1.png …     # surowe grafiki odrzucone przez QA (powód w manifeście)
 ├── kdp-studio.log                  # logi strukturalne wszystkich kroków, wiersze JSON (NFR-09)
 ├── .kdp-studio.lock                # tylko w trakcie kroku (FR-17)
-└── cover/                          # tylko po `kdp-studio cover` albo `generate --cover` (FR-15, poza MVP)
-    ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
-    ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
-    ├── cover.png, front.png
-    ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
-    └── raw/                        # front_sketch, front_color_tryN, back_tryN, contact_sheet
+├── cover/                          # tylko po `kdp-studio cover` albo `generate --cover` (FR-15, poza MVP)
+│   ├── cover.pdf                   # gotowy plik okładki do KDP, CMYK
+│   ├── cover_proof.png, cover_gamut.png   # symulacja druku i mapa zmian kolorów
+│   ├── cover.png, front.png
+│   ├── cover_preview.png           # z liniami cięcia, strefami i polem kodu
+│   └── raw/                        # front_sketch, front_color_tryN, back_tryN, contact_sheet
+└── aplus/                          # tylko po `kdp-studio aplus` (FR-24, poza MVP)
+    ├── 02_header_fan.jpg …         # obrazy modułów w kolejności modułów, RGB, < 2 MB
+    ├── texts.yaml                  # teksty pól; ręczne poprawki zostają przy ponownym uruchomieniu
+    └── aplus.html                  # podgląd modułów z przyciskami kopiowania
 ```
 
 Przykład wpisu strony w `manifest.json`:
@@ -1698,70 +1822,7 @@ Kierunki do rozważenia po MVP, jeszcze bez wymagań.
 - Opis nie może odwoływać się do postaci chronionych prawem autorskim ani do prawdziwych osób.
 - W pliku parametrów książki (FR-20) bohater ma osobne pola `look` (wygląd) oraz `name` i `personality`, więc obie warstwy da się podać bez umownego formatu napisu.
 
-**A+ Content: moduły strony produktu**
-
-A+ Content to obrazki i teksty pod opisem na stronie Amazona. Program ma wszystko, czego potrzeba: okładkę, strony, temat, wiek i fakty o książce z manifestu. Może przygotować grafiki modułów i teksty do wklejenia w edytor A+ w KDP. Zasady A+ (https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD, sprawdzone 24.11.2026) są ostrzejsze niż zasady opisu.
-
-*Moduły (edytor A+, sprawdzone 24.11.2026)*
-
-Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytorze.
-
-| Moduł | Układ | Obraz | Teksty |
-|---|---|---|---|
-| Standard Company Logo | sam obraz | 600 × 180 | – |
-| Standard Image Header With Text | nagłówek, obraz, nagłówek, tekst | 970 × 600 | nagłówki do 200 znaków, tekst do 6000 |
-| Standard Three Images & Text | nagłówek modułu, potem 3 kolumny: obraz, nagłówek, tekst | 3 × 300 × 300 | nagłówek modułu do 200 znaków, nagłówki kolumn do 160, tekst kolumny do 1000 |
-| Standard Four Images & Text | jak wyżej, 4 kolumny | 4 × 220 × 220 | jak wyżej |
-| Standard Image with Dark/Light Overlay | obraz z tekstem nakładanym przez Amazon | co najmniej 970 × 300 | nagłówek do 60 znaków, tekst do 300 |
-| Standard Comparison Chart | tabela 2–6 produktów z własnego konta | obraz produktu w kolumnie | wiersze cech |
-
-- Pole edytora podaje proporcję obrazu (np. „300:300”), a nie rozmiar w pikselach. Program może więc renderować większe obrazy w tej proporcji. Większą rozdzielczość trzeba potwierdzić przy pierwszym wgraniu.
-- Teksty modułów mają formatowanie, ale tylko z paska narzędzi edytora: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną (w nakładce lista numerowana). Wklejony HTML nie działa: edytor nie zamienia znaczników na formatowanie (sprawdzone 24.11.2026). Tym różni się od opisu KDP (FR-03), który przyjmuje HTML.
-
-*Układ strony (z punktu widzenia marketingu)*
-1. **Baner:** Standard Company Logo 600 × 180. Buduje markę wydawcy na Amazonie, więc powstaje poza programem i jest wspólny dla wszystkich książek. Program bierze tylko gotowy plik z konfiguracji i wskazuje jego miejsce.
-2. **1–2 × Standard Image Header With Text:** mockupy gotowego produktu, z minimum tekstu albo bez niego. Pierwszy, tuż pod banerem, to wachlarz okładek opisany niżej w części „Grafiki”; kolejny może pokazywać np. kilka pokolorowanych stron i kredki.
-3. **Standard Image with Dark/Light Overlay z twardymi faktami:** zamiast jednego mockupu. Tekst nakładki to tekst strony, więc na telefonie skaluje się lepiej niż napis na grafice. Przykład:
-   - liczba kolorowanek;
-   - druk jednostronny: każdy obrazek na osobnej kartce, więc przebicie nie zniszczy następnego;
-   - pisaki po podłożeniu grubszej kartki, jak na stronie z instrukcją (FR-23).
-
-   Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Tekst nakładki przyjmuje listę numerowaną (sprawdzone 24.11.2026), więc fakty będą listą numerowaną.
-4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment.
-5. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji. Bez tabeli to miejsce dostaje drugi mockup.
-
-Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieści całą stronę, a pas 970 × 300 tylko jej wycinek albo rząd małych miniatur i na telefonie robi się cienki. Dlatego nakładka jest jedna, na fakty. Zestaw modułów i ich kolejność byłyby w konfiguracji, a nie w kodzie.
-
-*Grafiki*
-- **Wymagania A+ dla obrazów:** JPG albo PNG w RGB, plik poniżej 2 MB, co najmniej 72 dpi, bez animacji (GIF).
-- **Bez napisów od programu:** nagłówki i teksty idą do pól modułu, a obraz nie dostaje napisów. Tytuł widoczny na okładce w mockupie to zdjęcie produktu, nie napis.
-- **Mockupy:** dwie drogi.
-  - Składane przez program z gotowych plików okładki: perspektywa, obrót, cienie. Bez kosztu API i bez ryzyka zniekształceń. Pierwszy taki mockup opisuje punkt niżej.
-  - Scena z modelu obrazu z okładką jako `reference_image`: płatna, a model może zniekształcić tytuł. Do rozważenia tylko dla ujęć, których program nie złoży (np. książka z kredkami na stole).
-- **Nagłówek pod banerem: wachlarz okładek** (Standard Image Header With Text, 970 × 600; referencja: `docs/aplus/naglowek_wachlarz_referencja.jpg`, prototyp: `docs/aplus/mockup_prototype.py`, ustalone 26.11.2026):
-  - **Kompozycja:** dwie książeczki leżą płasko i zachodzą na siebie jak wachlarz. Przód (`cover/front.png`) leży na wierzchu, obrócony w płaszczyźnie o 7° w lewo, przy lewej krawędzi grafiki. Tył (wycięty z `cover/cover.png` wg `manifest.cover.geometry`) leży pod spodem, obrócony o 9° w prawo i przesunięty w prawo o ok. 60% boku okładki, więc zachodzą na siebie mniej więcej w jednej trzeciej. Razem wypełniają szerokość grafiki.
-  - **Wielkość:** bok okładki to ok. 83% wysokości grafiki (1000 px przy 1200). To największy rozmiar, przy którym obie obrócone książeczki mieszczą się w kadrze. Dwukrotne powiększenie względem pierwszej wersji nie mieści się bez ucięcia ilustracji.
-  - **Grubość:** każda książeczka ma wąski pasek bloku kartek przy dolnej krawędzi, ok. 1/120 boku. Przy prawej krawędzi przód pokazuje kartki, a tył, leżący tylną okładką do góry, ma tam grzbiet: pasek w kolorze tła grzbietu, lekko przyciemniony, bez napisu.
-  - **Cienie:** miękkie, przesunięte w prawo w dół, liczone z zapasem wokół książeczki, żeby rozmycie nie urywało się na brzegu.
-  - **Tło:** nie białe i wyraźnie różne od okładek, żeby się z nimi nie zlewały. Program wybiera je z listy kandydatów w konfiguracji (jasne, stonowane barwy, np. beż, szałwia, pudrowy róż, szaroniebieski, ciepły szary). Wygrywa kandydat o największej odległości ΔE (Lab) od kolorów pasa brzegowego obu okładek; liczy się 5. percentyl odległości, żeby pojedyncze piksele nie decydowały. Kandydat poniżej progu `min_delta_e` odpada. Gdy żaden nie przechodzi, program przyciemnia najlepszego, aż przejdzie. Tło ma lekki pionowy gradient. W referencji (kotki) wygrał pudrowy róż.
-  - **Plik:** 1940 × 1200 (dwukrotność 970 × 600), JPG jakości 90, RGB. Referencja waży 0,4 MB; ten sam obraz jako PNG miał 1,9 MB, tuż pod limitem 2 MB, dlatego JPG.
-  - **Konfiguracja:** kąty, przesunięcie, wielkość, kandydaci tła i próg ΔE w `settings.yaml`, nie w kodzie.
-  - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
-- **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
-
-*Teksty i zakazane sformułowania*
-
-Teksty powstają w jednym wywołaniu LLM z regułami A+ w prompcie i są sprawdzane w kodzie. Wzorce i listy słów są w konfiguracji, według języka rynku. Trafienie oznacza jedno ponowienie, potem ostrzeżenie. Zakazane są trzy grupy.
-- **Nacisk czasem:** „now”, „new”, „latest”, „yet”, „on sale now”, „the latest product”, „the best yet” i ich odpowiedniki w języku rynku.
-- **Święto albo sezon jako termin lub okazja do zakupu:** KDP zakazuje „references to holidays” na tej samej liście co nacisk czasem. Czytamy to tak: zakazane jest święto jako punkt w czasie albo okazja skłaniająca do zakupu, także z nazwą konkretnego święta. Przykłady: „on sale before Christmas”, „in time for Easter”, „order before Valentine's Day”, „holiday gift”, „perfect Christmas gift”, „stocking stuffer”, a także ogólne „holidays”, „holiday season”, „na święta”, „na wakacje”. Dozwolone jest święto jako temat zawartości, np. „Christmas coloring book with Santa, reindeer and gingerbread houses”. To nasza interpretacja: rozstrzygnie pierwsza recenzja A+, a przy odrzuceniu nazwy świąt trafią na listę zakazanych.
-- **Przechwałki (Claims and awards):** „perfect”, „best”, „ultimate”, „must-have”, „#1”, „top-rated”, „bestseller” i obietnice satysfakcji („100% satisfaction guaranteed”). Rekomendacje i certyfikaty („recommended by”, „approved”, „tested”) wymagają podania źródła i roku, więc program ich nie używa.
-
-Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, „buy now”, „add to cart”, „free shipping” i bez wzmianki o Kindle+.
-
-*Wynik*
-- Polecenie, np. `kdp-studio aplus <katalog>`, zapisuje katalog `aplus/` z obrazami modułów.
-- Obok powstaje podgląd `aplus.html` ułożony jak moduły, z przyciskiem kopiowania przy każdym polu. Przycisk kopiuje zwykły tekst, a punkty listy jako osobne wiersze; formatowanie (pogrubienie, lista) użytkownik nakłada paskiem narzędzi edytora, a podgląd pokazuje, gdzie. Do sprawdzenia przy pierwszym użyciu: czy edytor zachowuje formatowanie przy wklejeniu sformatowanego tekstu ze strony (schowek `text/html`), a nie znaczników. Jeśli tak, przycisk może kopiować i to.
-- Wpis trafia do manifestu, a koszt wywołań do `--max-cost`.
+**A+ Content:** przeniesione do wymagań jako FR-24 (#71).
 
 **Słowa kluczowe z danych o wyszukiwaniach**
 - Dziś słowa kluczowe wybiera model z samej wiedzy o rynku (FR-03). Narzędzia typu KDSpy czy Publisher Rocket pokazują, jak często kupujący wpisują daną frazę i ile książek z nią konkuruje.
