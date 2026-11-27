@@ -1357,6 +1357,7 @@ Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytor
   - obraz 970 × 600 wypełnia całą szerokość modułu w podglądzie, równo z tabelą porównawczą nad nim, bez pustych pasów i bez przycięcia;
   - obraz 1070 × 600 podgląd modułu przycina do środkowych 970 × 600 (boki znikają);
   - okno szczegółów w bibliotece grafik (Creative Assets) pokazuje cały plik, więc nie mówi, co zobaczy kupujący.
+  - obraz 1940 × 1200 (dwukrotność) wyświetla się jak 970 × 600: w podglądzie na komputerze wypełnia szerokość modułu, a w podglądzie na telefonie mieści się cały, przeskalowany do szerokości ekranu (ok. 390 px), w obu bez przycięcia;
   
   Wniosek: proporcja modułu to 970:600 i program renderuje dokładnie ją (1940 × 1200). Szerszy plik niczego nie daje, bo boki i tak zostaną ucięte.
 - Teksty modułów mają formatowanie, ale tylko z paska narzędzi edytora: pogrubienie, kursywę, podkreślenie oraz listy punktowaną i numerowaną (w nakładce lista numerowana). Wklejony HTML nie działa: edytor nie zamienia znaczników na formatowanie (sprawdzone 24.11.2026). Tym różni się od opisu KDP (FR-03), który przyjmuje HTML.
@@ -1451,7 +1452,6 @@ aplus:
 - Testy: wymiary, tryb i rozmiar plików poniżej 2 MB; wybór tła (najlepszy kandydat, próg i przyciemnianie); grzbiet tyłu i cienie bez urwania; zakazane sformułowania (święto jako temat przechodzi, jako termin albo okazja nie; przechwałki; nacisk czasem); limity znaków; tabela porównawcza z manifestów innych książek; brak wywołań API dla samych grafik; kod 1 bez okładki.
 
 **Do sprawdzenia przy pierwszej książce**
-- Czy podgląd modułu Image Header With Text przyjmuje 1940 × 1200 tak samo jak 970 × 600 (dwukrotność zalecana dla innych modułów), także w podglądzie na telefonie.
 - Czy wklejony sformatowany tekst ze strony (schowek `text/html`) zachowuje formatowanie; jeśli tak, przyciski mogą kopiować też formatowanie.
 - Wynik pierwszej recenzji A+: czy sama nazwa święta jako temat przechodzi.
 - Próg ΔE tła po kilku różnych okładkach.
