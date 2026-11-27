@@ -125,7 +125,7 @@ uv run kdp-studio ideas --config-file output/<książka>/manifest.json --theme "
 - 3 albo 4 kolumny ze stronami książki;
 - drugi mockup ze stronami wnętrza albo tabela porównawcza Twoich książek.
 
-Teksty pól pisze model jednym wywołaniem, a program sprawdza zakazane w A+ sformułowania (nacisk czasem, święto jako termin albo okazja do zakupu, przechwałki, ceny) i limity znaków edytora. Wynik to katalog `aplus/` z obrazami JPG, plik `aplus/texts.yaml` (ręczne poprawki zostają przy kolejnym uruchomieniu) i podgląd `aplus.html` z przyciskiem „Kopiuj” przy każdym polu. Baner wydawcy (600 × 180) przygotowujesz sam i wskazujesz w `aplus.logo`. Amazon wymaga tekstu alternatywnego przy każdej grafice: dla grafik programu pisze go model (opis tego, co widać, do 100 znaków, bez słów kluczowych), a dla banera wpisujesz go w `aplus.logo_alt`. Alt text jest w `texts.yaml` i w podglądzie pod każdą grafiką.
+Teksty pól pisze model jednym wywołaniem, a program sprawdza zakazane w A+ sformułowania (nacisk czasem, święto jako termin albo okazja do zakupu, przechwałki, ceny) i limity znaków edytora. Wynik to katalog `aplus/` z obrazami JPG, plik `aplus/texts.yaml` (ręczne poprawki zostają przy kolejnym uruchomieniu) i podgląd `aplus.html` z przyciskiem „Kopiuj” przy każdym polu. Baner wydawcy (600 × 180) przygotowujesz sam i wskazujesz w `aplus.logo`. Amazon wymaga tekstu alternatywnego przy każdej grafice: dla grafik programu pisze go model (opis tego, co widać, do 99 znaków, bo tyle przyjmuje pole edytora, bez słów kluczowych), a dla banera wpisujesz go w `aplus.logo_alt`. Alt text jest w `texts.yaml` i w podglądzie pod każdą grafiką.
 
 ```bash
 uv run kdp-studio aplus output/<książka> [--color-page] [--config-file ksiazki/kotki.yaml]

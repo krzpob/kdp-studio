@@ -294,7 +294,7 @@ aplus:
     header: {headline: 200, body: 6000}
     columns: {module_headline: 200, headline: 160, body: 1000}
     overlay: {headline: 60, body: 300}
-    alt_text: 100               # tekst alternatywny każdej grafiki (wymagany przez A+)
+    alt_text: 99                # tekst alternatywny każdej grafiki; pole edytora: najwyżej 99 znaków
   header_fan:                   # referencja: docs/aplus/naglowek_wachlarz_referencja.jpg
     front_angle_deg: 7          # przód na wierzchu, obrócony w lewo
     back_angle_deg: -9          # tył pod spodem, obrócony w prawo

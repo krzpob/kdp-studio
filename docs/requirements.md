@@ -1394,7 +1394,7 @@ Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieśc
 - **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
 
 **Tekst alternatywny (alt text)**
-- Amazon wymaga tekstu alternatywnego przy każdej grafice A+; bez niego edytor nie przyjmie treści do zatwierdzenia. Limit to 100 znaków (według poradników; do potwierdzenia w polu edytora).
+- Amazon wymaga tekstu alternatywnego przy każdej grafice A+; bez niego edytor nie przyjmie treści do zatwierdzenia. Pole edytora przyjmuje najwyżej 99 znaków, razem ze znakami interpunkcyjnymi (test w edytorze 28.11.2026: dłuższy tekst się nie mieści, przecinek przechodzi; poradniki podają 100).
 - Zasady A+ (<https://kdp.amazon.com/help/topic/G4WB7VPPEAREHAAD>): alt text, który nie opisuje obrazu i nie pomógłby osobie z czytnikiem ekranu (dawniej „image keywords”), może być powodem odrzucenia. Program opisuje więc, co widać, i nie upycha w nim słów kluczowych, choć radzą to poradniki SEO.
 - Alt text grafik programu pisze model w tym samym wywołaniu co teksty pól, w języku rynku. Program podaje mu dla każdej grafiki klucz i opis po angielsku: wachlarz okładek z tytułem, strony wnętrza i pas nakładki ze scenami, kolumny ze sceną strony (pokolorowana pierwsza kolumna jako pokolorowana), okładki książek z tabeli porównawczej z tytułem. Klucze: `header_fan`, `header_pages`, `overlay_facts`, `features_1…`, `chart_1…`.
 - Baner wydawcy ma alt text z ustawienia `aplus.logo_alt`, bo model nie wie, co na nim jest.
@@ -1437,7 +1437,7 @@ aplus:
     header: {headline: 200, body: 6000}
     columns: {module_headline: 200, headline: 160, body: 1000}
     overlay: {headline: 60, body: 300}
-    alt_text: 100               # tekst alternatywny każdej grafiki
+    alt_text: 99                # tekst alternatywny każdej grafiki (pole edytora: najwyżej 99)
   header_fan:
     front_angle_deg: 7
     back_angle_deg: -9
@@ -1463,7 +1463,6 @@ aplus:
 
 **Do sprawdzenia przy pierwszej książce**
 - Czy wklejony sformatowany tekst ze strony (schowek `text/html`) zachowuje formatowanie; jeśli tak, przyciski mogą kopiować też formatowanie.
-- Limit znaków alt text w polu edytora (zakładamy 100) i czy pole przyjmuje interpunkcję (jeden poradnik twierdzi, że nie).
 - Wynik pierwszej recenzji A+: czy sama nazwa święta jako temat przechodzi.
 - Próg ΔE tła po kilku różnych okładkach.
 
