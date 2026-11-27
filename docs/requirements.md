@@ -37,7 +37,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
-| FR-24 | ⬜ | | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. |
+| FR-24 | ✅ | | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1332,7 +1332,7 @@ texts:
 - **Instrukcja:** ilustrację rysuje model wg `instructions.composition` z `{subject}` (najczęstszy `subject` stron), z blokiem stylu stron. Bez kontroli pustego pola (tekst stoi nad ilustracją, w osobnej części strony); QA sprawdza `text` (tylko teksty programu) i `scene_mismatch`. Grafika zapasowa: `assets/front_matter/instructions.svg` (otwarta kolorowanka, kartka wsuwana pod stronę, strzałki).
 - **`canva.md`:** strony wstępne w kolejności druku. Nazwy plików (`front_belongs_to`, `front_copyright`, `front_instructions`, `front_title`) nie układają się alfabetycznie w tej kolejności, więc instrukcja każe wstawiać je według tabeli.
 
-### ⬜ FR-24: A+ Content: grafiki i teksty modułów (poza MVP)
+### ✅ FR-24: A+ Content: grafiki i teksty modułów (poza MVP)
 
 Zgłoszenie: #71. Wymaganie powstało z pomysłu w sekcji 14a.
 
@@ -1448,6 +1448,17 @@ aplus:
 - Czy wklejony sformatowany tekst ze strony (schowek `text/html`) zachowuje formatowanie; jeśli tak, przyciski mogą kopiować też formatowanie.
 - Wynik pierwszej recenzji A+: czy sama nazwa święta jako temat przechodzi.
 - Próg ΔE tła po kilku różnych okładkach.
+
+**Implementacja (27.11.2026)**
+- **Moduły kodu:** `pipeline/aplus_images.py` (wachlarz, kwadraty kolumn, drugi mockup, pas nakładki, baner, zapis z kontrolą), `pipeline/aplus_text.py` (prompt, schemat `_AplusTexts`, `banned_hits()`, `apply_limits()`), `pipeline/aplus_preview.py` (`aplus.html`), `pipeline/aplus_models.py` (teksty pól i wpis manifestu, osobno, żeby manifest nie importował generatora) i `pipeline/aplus.py` (plan bez API, hashe, wykonanie `AplusRun`). CLI `aplus` tylko tworzy dostawców i wypisuje wynik.
+- **Nazwy modułów w `aplus.modules`:** `logo`, `header_fan`, `header_pages` (drugi mockup: kilka stron wnętrza obok siebie, składany przez program), `overlay_facts`, `features`, `comparison`. Gdy tabela nie ma co najmniej 2 książek, w jej miejscu staje `header_pages` (albo moduł wypada, jeśli `header_pages` już jest), z ostrzeżeniem.
+- **Tabela porównawcza:** książki z `aplus.comparison.books` (`asin` + katalog książki), zwykle w `--config-file` (sekcja `aplus`, FR-20; ścieżki względne od pliku). Ta książka, jeśli jej nie ma na liście, dochodzi jako pierwsza kolumna bez ASIN. Wiersze (wiek, liczba kolorowanek, format) mają etykiety w języku rynku; najwyżej 6 kolumn.
+- **Konfiguracja tekstów:** zakazane sformułowania i etykiety tabeli są w `config/markets.yaml` w osobnym kluczu `aplus_texts.<język|odmiana>` (`banned.time`, `banned.occasion.phrases/holidays/context/window`, `banned.claims`, `banned.sales`, `chart`), a nie w `texts.<język>.aplus_banned`: `texts` przyjmuje tylko napisy, a tu są listy. Dopasowanie całych słów bez wielkości liter; myślnik łączy słowa, więc „screen-free” nie trafia na „free”. Nazwa święta trafia tylko w odległości `window` słów od słowa terminu albo zakupu.
+- **Teksty:** fakty nakładki to `fact_lines()` z opisu (FR-03), nie od modelu; ponowienie dotyczy tylko tekstów od modelu, a fakty z zakazanym słowem dają ostrzeżenie. Limity: przycięcie na granicy słowa z ostrzeżeniem; fakty, które się nie mieszczą, wypadają od końca.
+- **Pokolorowana strona** (`--color-page`): strona pierwszej kolumny, `images.edit` z referencją, zapis w `aplus/raw/<strona>_color.png`; ta sama strona nie jest kolorowana ponownie. Opcja `--image-quality` dla tego wywołania.
+- **Ponowne uruchomienie:** `images_sha256` (pliki okładki i stron, ustawienia `aplus` bez limitów, baner, pokolorowana strona) i `texts_inputs_sha256` (metadane, fakty, sceny kolumn, rynek, limity, zakazane słowa). Plik `aplus/texts.yaml` różny od zapisanego przez program jest ręczną poprawką: zostaje, a podgląd i manifest biorą go jako teksty.
+- **Kody wyjścia:** 1 bez stron `ok` albo okładki `ok`, albo przy złym `texts.yaml`; 2, gdy teksty nie powstały przez błąd dostawcy (grafiki i podgląd są); 3 po przekroczeniu limitu; 4 przy błędzie krytycznym dostawcy.
+- **Sprawdzone na książkach z repozytorium:** wachlarz kotków wybiera pudrowy róż (ΔE 16,6) jak referencja, ciężarówek szałwię (20,5); wachlarz JPG ma ok. 0,4 MB.
 
 ## 7. Profile (konfiguracja YAML)
 

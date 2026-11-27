@@ -275,3 +275,46 @@ cover:
     fold_blue: {rgb: [18, 6, 220], tolerance: 60}
     trim_black: {rgb: [0, 0, 0], tolerance: 80}
   template_tolerance_in: 0.01
+
+# A+ Content (FR-24, `kdp-studio aplus`): grafiki i teksty modułów pod opisem na stronie Amazona.
+# Moduły w kolejności na stronie, najwyżej 5: logo (baner wydawcy, plik z `logo`), header_fan
+# (wachlarz okładek), header_pages (kilka stron wnętrza; zastępuje tabelę, gdy ta nie ma książek),
+# overlay_facts (nakładka z faktami z manifestu), features (3 albo 4 kolumny ze stronami),
+# comparison (tabela porównawcza własnych książek). Grafiki składa program bez API.
+aplus:
+  modules: [logo, header_fan, overlay_facts, features, comparison]
+  logo: null                    # baner 600 × 180 przygotowany poza programem (JPG/PNG, RGB)
+  image_format: jpg             # JPG mieści wachlarz w 0,4 MB; PNG ma ok. 1,9 MB przy limicie 2 MB
+  jpeg_quality: 90
+  scale: 2                      # obrazy w dwukrotności proporcji z edytora (970 × 600 → 1940 × 1200)
+  max_file_mb: 2.0              # limit A+ na plik
+  color_page: false             # --color-page: pokolorowana strona z modelu obrazu (płatna)
+  limits:                       # znaki, z edytora A+ (24.11.2026)
+    header: {headline: 200, body: 6000}
+    columns: {module_headline: 200, headline: 160, body: 1000}
+    overlay: {headline: 60, body: 300}
+  header_fan:                   # referencja: docs/aplus/naglowek_wachlarz_referencja.jpg
+    front_angle_deg: 7          # przód na wierzchu, obrócony w lewo
+    back_angle_deg: -9          # tył pod spodem, obrócony w prawo
+    back_offset: 0.62           # przesunięcie tyłu w bokach okładki
+    size: 0.83                  # bok okładki względem wysokości grafiki (największy, który się mieści)
+    left: 0.04                  # lewy brzeg przodu względem szerokości grafiki
+    page_edge: 0.0083           # blok kartek względem boku okładki (ok. 1/120)
+    spine_shade: 0.85           # grzbiet tyłu lekko w cieniu
+    shadow: {blur: 0.022, offset: [0.016, 0.024], opacity: 0.4}
+    background:
+      candidates:
+        beż: [226, 212, 190]
+        szałwia: [200, 212, 190]
+        pudrowy róż: [232, 206, 200]
+        szaroniebieski: [200, 210, 222]
+        ciepły szary: [214, 208, 200]
+      min_delta_e: 15           # do ustalenia po kilku okładkach
+      percentile: 5             # percentyl odległości od pasa brzegowego okładek
+      border: 0.04              # pas brzegowy okładki (ułamek boku)
+      darken_step: 0.05         # przyciemnianie najlepszego, gdy żaden nie przechodzi progu
+      gradient: 0.04            # lekki pionowy gradient
+  header_pages: {count: 3, angles_deg: [8, 0, -8], size: 0.78}
+  features: {columns: 3, margin: 0.06}    # 3 albo 4 kolumny
+  comparison:                   # tabela porównawcza: 2–6 książek z własnego konta KDP
+    books: []                   # [{asin: B0XXXXXXXX, book: output/<katalog>}]; zwykle w --config-file

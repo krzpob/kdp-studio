@@ -369,3 +369,54 @@ texts:
       instructions: "Eine Seite mit Tipps, auf der du deine Stifte zuerst ausprobieren kannst"
       benefits_kids: "Warum Kinder und Eltern es lieben"
       benefits_adults: "Warum du es lieben wirst"
+
+# A+ Content (FR-24): zakazane sformułowania według języka (albo odmiany, np. en-GB) i etykiety
+# wierszy tabeli porównawczej. Zasady: https://kdp.amazon.com/en_US/help/topic/G4WB7VPPEAREHAAD
+# (sprawdzone 24.11.2026). Grupy: time (nacisk czasem), occasion (święto jako termin albo okazja
+# do zakupu: `phrases` zawsze, `holidays` tylko w pobliżu słowa z `context`; samo święto jako
+# temat przechodzi, to nasza interpretacja do potwierdzenia przy pierwszej recenzji), claims
+# (przechwałki) i sales (ceny, rabaty, wezwania do zakupu). Dopasowanie: całe słowa, bez
+# rozróżniania wielkości liter.
+aplus_texts:
+  en:
+    banned:
+      time: [now, new, latest, "yet", "on sale now", "the latest product", "the best yet", "just released", "limited time"]
+      occasion:
+        phrases: [holidays, "holiday season", "holiday gift", "holiday gifts", "stocking stuffer", "stocking stuffers", "gift idea", "perfect gift"]
+        holidays: [Christmas, Xmas, Easter, Halloween, Thanksgiving, "Valentine's Day", Valentine, "Mother's Day", "Father's Day", Hanukkah, "New Year"]
+        context: [gift, gifts, present, presents, before, "in time for", order, buy, sale, until, deliver, delivery, shop, shopping]
+        window: 3
+      claims: [perfect, best, ultimate, "must-have", "must have", "#1", "number one", "top-rated", "top rated", bestseller, "best-seller", "best seller", guaranteed, guarantee, "recommended by", approved, tested, "award-winning", "satisfaction"]
+      sales: [free, bonus, discount, sale, price, "buy now", "add to cart", "free shipping", cheap, "Kindle Unlimited", "Kindle+", deal, offer]
+    chart:
+      age: Age
+      pages: Coloring pages
+      size: Page size
+  pl:
+    banned:
+      time: [teraz, nowy, nowa, nowe, nowość, najnowszy, najnowsza, najnowsze, "już dziś", "tylko teraz"]
+      occasion:
+        phrases: ["na święta", "na wakacje", "na prezent", "pomysł na prezent", "prezent świąteczny", "sezon świąteczny", "pod choinkę"]
+        holidays: ["Boże Narodzenie", Wigilia, Wielkanoc, Halloween, Walentynki, "Dzień Matki", "Dzień Ojca", "Dzień Dziecka", Mikołajki, Sylwester]
+        context: [prezent, prezentu, przed, zamów, kup, kupić, wyprzedaż, dostawa, zdążyć, zakup]
+        window: 3
+      claims: [idealny, idealna, idealne, najlepszy, najlepsza, najlepsze, "numer jeden", "#1", bestseller, gwarancja, gwarantowane, "polecany przez", "polecana przez", testowany, testowana, nagradzany]
+      sales: [gratis, darmowy, darmowa, darmowe, bonus, rabat, promocja, wyprzedaż, cena, "kup teraz", "dodaj do koszyka", "darmowa dostawa", tani, tania, okazja]
+    chart:
+      age: Wiek
+      pages: Kolorowanki
+      size: Format
+  de:
+    banned:
+      time: [jetzt, neu, neue, neuer, neues, neueste, neuesten, "ab sofort", "nur heute"]
+      occasion:
+        phrases: [Feiertage, "zu Weihnachten", "zum Fest", Weihnachtsgeschenk, Geschenkidee, Strumpffüller, Ferien]
+        holidays: [Weihnachten, Ostern, Halloween, Valentinstag, Muttertag, Vatertag, Nikolaus, Silvester]
+        context: [Geschenk, Geschenke, vor, bis, bestellen, kaufen, Angebot, Lieferung, rechtzeitig]
+        window: 3
+      claims: [perfekt, perfekte, beste, bester, bestes, "Nummer eins", "#1", Bestseller, garantiert, Garantie, "empfohlen von", getestet, preisgekrönt]
+      sales: [gratis, kostenlos, Bonus, Rabatt, Angebot, Preis, "jetzt kaufen", "in den Warenkorb", "kostenloser Versand", billig, Schnäppchen]
+    chart:
+      age: Alter
+      pages: Malvorlagen
+      size: Format
