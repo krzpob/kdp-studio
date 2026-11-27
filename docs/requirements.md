@@ -1720,7 +1720,7 @@ Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytor
 
 *Układ strony (z punktu widzenia marketingu)*
 1. **Baner:** Standard Company Logo 600 × 180. Buduje markę wydawcy na Amazonie, więc powstaje poza programem i jest wspólny dla wszystkich książek. Program bierze tylko gotowy plik z konfiguracji i wskazuje jego miejsce.
-2. **1–2 × Standard Image Header With Text:** mockupy gotowego produktu (książka na stole, kilka pokolorowanych stron, kredki), z minimum tekstu albo bez niego.
+2. **1–2 × Standard Image Header With Text:** mockupy gotowego produktu, z minimum tekstu albo bez niego. Pierwszy, tuż pod banerem, to wachlarz okładek opisany niżej w części „Grafiki”; kolejny może pokazywać np. kilka pokolorowanych stron i kredki.
 3. **Standard Image with Dark/Light Overlay z twardymi faktami:** zamiast jednego mockupu. Tekst nakładki to tekst strony, więc na telefonie skaluje się lepiej niż napis na grafice. Przykład:
    - liczba kolorowanek;
    - druk jednostronny: każdy obrazek na osobnej kartce, więc przebicie nie zniszczy następnego;
@@ -1735,9 +1735,18 @@ Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieśc
 *Grafiki*
 - **Wymagania A+ dla obrazów:** JPG albo PNG w RGB, plik poniżej 2 MB, co najmniej 72 dpi, bez animacji (GIF).
 - **Bez napisów od programu:** nagłówki i teksty idą do pól modułu, a obraz nie dostaje napisów. Tytuł widoczny na okładce w mockupie to zdjęcie produktu, nie napis.
-- **Mockupy:** dwie drogi do rozstrzygnięcia przed wymaganiem.
-  - Szablony mockupów od użytkownika: zdjęcie z zaznaczonym czworokątem w konfiguracji, w który program wkleja okładkę albo stronę przekształceniem perspektywicznym. Ta droga jest bez kosztu API i bez ryzyka zniekształceń.
-  - Scena z modelu obrazu z okładką jako `reference_image`. Ta droga jest płatna, a model może zniekształcić tytuł.
+- **Mockupy:** dwie drogi.
+  - Składane przez program z gotowych plików okładki: perspektywa, obrót, cienie. Bez kosztu API i bez ryzyka zniekształceń. Pierwszy taki mockup opisuje punkt niżej.
+  - Scena z modelu obrazu z okładką jako `reference_image`: płatna, a model może zniekształcić tytuł. Do rozważenia tylko dla ujęć, których program nie złoży (np. książka z kredkami na stole).
+- **Nagłówek pod banerem: wachlarz okładek** (Standard Image Header With Text, 970 × 600; referencja: `docs/aplus/naglowek_wachlarz_referencja.jpg`, prototyp: `docs/aplus/mockup_prototype.py`, ustalone 26.11.2026):
+  - **Kompozycja:** dwie książeczki leżą płasko i zachodzą na siebie jak wachlarz. Przód (`cover/front.png`) leży na wierzchu, obrócony w płaszczyźnie o 7° w lewo, przy lewej krawędzi grafiki. Tył (wycięty z `cover/cover.png` wg `manifest.cover.geometry`) leży pod spodem, obrócony o 9° w prawo i przesunięty w prawo o ok. 60% boku okładki, więc zachodzą na siebie mniej więcej w jednej trzeciej. Razem wypełniają szerokość grafiki.
+  - **Wielkość:** bok okładki to ok. 83% wysokości grafiki (1000 px przy 1200). To największy rozmiar, przy którym obie obrócone książeczki mieszczą się w kadrze. Dwukrotne powiększenie względem pierwszej wersji nie mieści się bez ucięcia ilustracji.
+  - **Grubość:** każda książeczka ma wąski pasek bloku kartek przy dolnej krawędzi, ok. 1/120 boku. Przy prawej krawędzi przód pokazuje kartki, a tył, leżący tylną okładką do góry, ma tam grzbiet: pasek w kolorze tła grzbietu, lekko przyciemniony, bez napisu.
+  - **Cienie:** miękkie, przesunięte w prawo w dół, liczone z zapasem wokół książeczki, żeby rozmycie nie urywało się na brzegu.
+  - **Tło:** nie białe i wyraźnie różne od okładek, żeby się z nimi nie zlewały. Program wybiera je z listy kandydatów w konfiguracji (jasne, stonowane barwy, np. beż, szałwia, pudrowy róż, szaroniebieski, ciepły szary). Wygrywa kandydat o największej odległości ΔE (Lab) od kolorów pasa brzegowego obu okładek; liczy się 5. percentyl odległości, żeby pojedyncze piksele nie decydowały. Kandydat poniżej progu `min_delta_e` odpada. Gdy żaden nie przechodzi, program przyciemnia najlepszego, aż przejdzie. Tło ma lekki pionowy gradient. W referencji (kotki) wygrał pudrowy róż.
+  - **Plik:** 1940 × 1200 (dwukrotność 970 × 600), JPG jakości 90, RGB. Referencja waży 0,4 MB; ten sam obraz jako PNG miał 1,9 MB, tuż pod limitem 2 MB, dlatego JPG.
+  - **Konfiguracja:** kąty, przesunięcie, wielkość, kandydaci tła i próg ΔE w `settings.yaml`, nie w kodzie.
+  - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
 - **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
 
 *Teksty i zakazane sformułowania*
