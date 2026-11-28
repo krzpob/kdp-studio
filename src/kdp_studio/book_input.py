@@ -69,6 +69,7 @@ class AplusBookInput(_Input):
 
     color_page: bool | None = None
     feature_images: bool | None = None  # kolumny z grafikami z modelu (aplus.features.source)
+    qa: bool | None = None  # kontrola grafik kolumn z modelu (aplus.features.qa)
     image_quality: ImageQuality | None = None
     max_cost: Annotated[float, Field(gt=0)] | None = None
     comparison: list[AplusComparisonBook] | None = None  # 2–6 książek z własnego konta
@@ -260,6 +261,7 @@ def settings_defaults(config: AppConfig) -> BookInput:
         aplus=AplusBookInput(
             color_page=s.aplus.color_page,
             feature_images=s.aplus.features.source == "generated",
+            qa=s.aplus.features.qa,
             image_quality=s.image_quality,
             max_cost=s.max_cost_usd,
             comparison=list(s.aplus.comparison.books),
