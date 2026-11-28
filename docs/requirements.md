@@ -37,7 +37,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
-| FR-24 | ✅ | #76, #77 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. Alt text każdej grafiki. |
+| FR-24 | ✅ | #76, #77 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. Alt text każdej grafiki. Kolumny z grafikami z modelu (motywy w profilu wieku): ⬜ #80. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1371,7 +1371,7 @@ Na stronie mieści się najwyżej 5 modułów. Limity znaków odczytano w edytor
    - pisaki po podłożeniu grubszej kartki, jak na stronie z instrukcją (FR-23).
 
    Liczby i fakty pochodzą z manifestu, jak lista faktów w opisie (FR-03), więc A+ zgadza się z opisem i wnętrzem. Nie piszemy „nie przebija”, bo pisaki przebijają papier KDP. Liczbę podajemy jako kolorowanki („52 coloring pages”), a nie strony książki. Tekst nakładki przyjmuje listę numerowaną (sprawdzone 24.11.2026), więc fakty będą listą numerowaną.
-4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment.
+4. **Jeden moduł 3 albo 4 kolumn:** korzyści i zawartość, bez powtarzania faktów z nakładki. Np. sceny z książki, poziom trudności dla wieku, spokojna zabawa bez ekranu. Każda kolumna ma kwadratową grafikę: stronę książki albo jej fragment. Opcjonalnie grafika z modelu pokazująca korzyść (motywy z profilu wieku, część „Kolumny z grafikami z modelu” niżej).
 5. **Opcjonalnie Standard Comparison Chart:** kilka własnych kolorowanek, np. świątecznych. Tabela porównawcza to jedyne właściwe miejsce na „zobacz inne moje kolorowanki”. Tabela może zestawiać tylko książki z własnego konta KDP i układa się ją w KDP z numerów ASIN. Program może przygotować wiersze z manifestów tych książek (wiek, format, liczba grafik, temat), a ASIN-y wziąć z konfiguracji. Bez tabeli to miejsce dostaje drugi mockup.
 
 Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieści całą stronę, a pas 970 × 300 tylko jej wycinek albo rząd małych miniatur i na telefonie robi się cienki. Dlatego nakładka jest jedna, na fakty. Zestaw modułów i ich kolejność są w konfiguracji (`aplus.modules`), a nie w kodzie; najwyżej 5.
@@ -1393,10 +1393,43 @@ Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieśc
   - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
 - **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
 
+**Kolumny z grafikami z modelu (⬜, zgłoszenie #80, ustalone 28.11.2026)**
+
+Kolumna ze stroną książki pokazuje zawartość, ale nie mówi rodzicowi, dlaczego ta książka mu pasuje. Opcjonalnie kolumny dostają więc grafiki z modelu obrazu, które pokazują jedną korzyść: kontury dla wieku, druk jednostronny, spokojne zajęcie bez ekranu. Koszt to 3–4 obrazy z referencją, ok. 0,15–0,25 USD na książkę.
+
+- **Motywy są w profilu wieku** (`config/ages.yaml`, klucz `aplus_features`), bo to, na co patrzy rodzic przedszkolaka, różni się od tego, czego szuka dorosły. Każdy profil ma 3–4 motywy w kolejności kolumn; program bierze pierwsze `aplus.features.columns` pasujące do książki. Pola motywu:
+  - `key`: klucz (unikalny w profilu), w nazwie pliku i manifeście;
+  - `label`: krótki opis po polsku dla użytkownika (`aplus.html`, manifest);
+  - `scene`: scena po angielsku do promptu obrazu i opis grafiki dla alt textu;
+  - `benefit`: korzyść po angielsku, o której model pisze nagłówek i tekst kolumny w języku rynku;
+  - `requires` (opcjonalnie): warunek książki, dziś tylko `single_sided` (FR-22). W książce dwustronnej motyw o druku jednostronnym byłby nieprawdą, więc wypada;
+  - `fact` (opcjonalnie): fakt z listy faktów (FR-03), który kolumna przejmuje. Nakładka go wtedy pomija, żeby moduły się nie powtarzały (dziś `single_sided`).
+- **Uczciwość obrazu:** A+ nie może wprowadzać w błąd co do produktu.
+  - Model dostaje prawdziwą stronę książki jako `reference_image` (strony jak dziś, po kolei na kolumny), więc na obrazie widać zawartość książki, a nie wymyśloną.
+  - Stałe ograniczenia w kodzie, nie w profilu: same dłonie, bez twarzy dzieci; bez napisów, logo i znaków towarowych; klejony paperback ze zwykłym białym papierem, bez spirali, perforacji i grubego kartonu; kontury strony z referencji bez zmian.
+  - Podgląd `aplus.html` przypomina przy tych kolumnach o polu „AI-generated people” w bibliotece grafik edytora.
+  - Bez napisów na obrazie, jak wszędzie: nagłówek i tekst idą do pól kolumny.
+- **Wywołanie i koszt:** jedno wywołanie na kolumnę, `images.edit` z referencją, kwadrat, jakość z `aplus.features.image_quality`. Koszt (rodzaj `aplus`) liczy się do `--max-cost`. Obraz zapisuje się w `aplus/raw/features_N.png` z hashem (prompt, surowa strona, model, jakość), więc ponowne uruchomienie nie płaci drugi raz, jak pokolorowana strona.
+- **Gdy obrazu nie ma** (błąd niekrytyczny dostawcy, limit kosztu, za mało pasujących motywów), kolumna dostaje stronę książki jak dziś, z ostrzeżeniem. Błąd krytyczny kończy krok kodem 4.
+- **Teksty i alt text:** model tekstów dostaje `benefit` każdego motywu, a do alt textu opis z `scene`.
+- **Włączanie:** `aplus.features.source: pages | generated` (domyślnie `pages`), flaga `--feature-images/--no-feature-images`, sekcja `aplus` w `--config-file` (FR-20).
+
+Motywy w dostarczanych profilach (propozycja, do dopracowania przy pierwszej książce):
+
+| Profil | Motywy (`label` → `scene` w skrócie) |
+|---|---|
+| `przedszkole` | grube kontury dla małych rąk → dłoń dziecka z grubą kredką na stronie; wspólne kolorowanie z rodzicem → dłoń dorosłego i dziecka na jednej stronie; obrazek na lodówce (`requires: single_sided`) → pokolorowana strona wycięta nożyczkami, na magnesie; spokojna chwila bez ekranu → stół z otwartą książką i kredkami |
+| `wczesnoszkolne` | sceny z postaciami do opowiadania → dłoń z kredką przy scenie z kilkoma postaciami; pisaki nie zniszczą następnego obrazka (`requires: single_sided`, `fact: single_sided`) → strona pokolorowana pisakiem obok odwróconej kartki z czystym tyłem; spokojna chwila bez ekranu → stół z książką, kredkami i kubkiem kakao w klimacie tematu; gotowe dzieło do pokazania → pokolorowana strona przypięta do tablicy korkowej |
+| `szkolne` | szczegółowe sceny na dłużej → kredki ołówkowe przy w połowie pokolorowanej stronie; pisaki i cienkopisy (`requires: single_sided`, `fact: single_sided`) → strona pokolorowana cienkopisami obok czystego tyłu; własne kolory → ta sama strona w dwóch zestawach barw obok siebie; spokojne popołudnie bez ekranu → biurko z książką i kredkami |
+| `nastolatki` | wzory i detale → dłoń z cienkopisem przy drobnym wzorze; własny styl → żelopisy i markery przy pokolorowanej stronie; pisaki nie zniszczą następnej strony (`requires: single_sided`, `fact: single_sided`) → jak wyżej; odpoczynek od telefonu → telefon odłożony ekranem w dół obok książki |
+| `dorosli` | relaks po dniu → stół z herbatą, kredkami i otwartą książką w ciepłym świetle; drobne pola dla precyzji → zbliżenie dłoni z cienkopisem w gęstym wzorze; pisaki po podłożeniu kartki (`requires: single_sided`, `fact: single_sided`) → strona pokolorowana pisakami z podłożoną kartką; obrazek do oprawienia → pokolorowana strona w ramce na ścianie |
+
+Motyw „bez ekranu” mówi o zajęciu, nie obiecuje efektów (np. „uspokaja”, „rozwija koncentrację”), bo to byłoby twierdzenie bez źródła (Claims and awards).
+
 **Tekst alternatywny (alt text)**
 - Amazon wymaga tekstu alternatywnego przy każdej grafice A+; bez niego edytor nie przyjmie treści do zatwierdzenia. Pole edytora przyjmuje najwyżej 99 znaków, razem ze znakami interpunkcyjnymi (test w edytorze 28.11.2026: dłuższy tekst się nie mieści, przecinek przechodzi; poradniki podają 100).
 - Zasady A+ (<https://kdp.amazon.com/help/topic/G4WB7VPPEAREHAAD>): alt text, który nie opisuje obrazu i nie pomógłby osobie z czytnikiem ekranu (dawniej „image keywords”), może być powodem odrzucenia. Program opisuje więc, co widać, i nie upycha w nim słów kluczowych, choć radzą to poradniki SEO.
-- Alt text grafik programu pisze model w tym samym wywołaniu co teksty pól, w języku rynku. Program podaje mu dla każdej grafiki klucz i opis po angielsku: wachlarz okładek z tytułem, strony wnętrza i pas nakładki ze scenami, kolumny ze sceną strony (pokolorowana pierwsza kolumna jako pokolorowana), okładki książek z tabeli porównawczej z tytułem. Klucze: `header_fan`, `header_pages`, `overlay_facts`, `features_1…`, `chart_1…`.
+- Alt text grafik programu pisze model w tym samym wywołaniu co teksty pól, w języku rynku. Program podaje mu dla każdej grafiki klucz i opis po angielsku: wachlarz okładek z tytułem, strony wnętrza i pas nakładki ze scenami, kolumny ze sceną strony (pokolorowana pierwsza kolumna jako pokolorowana; kolumna z modelu ze `scene` motywu), okładki książek z tabeli porównawczej z tytułem. Klucze: `header_fan`, `header_pages`, `overlay_facts`, `features_1…`, `chart_1…`.
 - Baner wydawcy ma alt text z ustawienia `aplus.logo_alt`, bo model nie wie, co na nim jest.
 - Kod przycina alt text do limitu (`aplus.limits.alt_text`) z ostrzeżeniem, odrzuca klucze spoza listy i ostrzega, gdy grafika nie ma tekstu (przy banerze z podpowiedzią `aplus.logo_alt`) albo dwie mają ten sam. Zakazane sformułowania sprawdza tak samo jak w polach tekstowych.
 - Alt text jest w `aplus/texts.yaml` (sekcja `alt`; ręczne poprawki zostają), w manifeście (`aplus.texts.alt`) i w podglądzie `aplus.html` pod każdą grafiką z przyciskiem kopiowania (także w nagłówkach kolumn tabeli porównawczej). Zmiana opisów grafik (np. inne strony w kolumnach) zmienia hash wejść tekstów, więc teksty powstają od nowa.
@@ -1448,7 +1481,10 @@ aplus:
       candidates: {beż: [226, 212, 190], szałwia: [200, 212, 190], pudrowy róż: [232, 206, 200],
                    szaroniebieski: [200, 210, 222], ciepły szary: [214, 208, 200]}
       min_delta_e: 15           # do ustalenia po kilku okładkach
-  features: {columns: 3}        # 3 albo 4
+  features:
+    columns: 3                  # 3 albo 4
+    source: pages               # pages | generated (--feature-images): motywy z ages.yaml aplus_features
+    image_quality: medium       # grafiki kolumn z modelu (płatne)
   comparison:                   # tabela porównawcza: 2–6 książek z własnego konta
     books: []                   # [{asin: B0…, book: output/…}]
 ```
