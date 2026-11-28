@@ -110,6 +110,19 @@ class AplusColorPage(_Copy):
     quality: str
 
 
+class AplusFeatureImage(_Copy):
+    """Grafika kolumny z modelu obrazu (motyw z profilu wieku, `aplus.features.source`)."""
+
+    column: int  # od 1
+    theme: str  # klucz motywu z aplus_features
+    page: str  # strona książki w referencji
+    prompt: str
+    raw: str  # aplus/raw/features_<kolumna>.png
+    inputs_sha256: str  # prompt, strona, model, jakość: inny = nowa grafika
+    model: str
+    quality: str
+
+
 class AplusInfo(_Copy):
     """Wpis `aplus` w manifeście (FR-24)."""
 
@@ -125,6 +138,7 @@ class AplusInfo(_Copy):
     images_sha256: str | None = None  # okładki, stron i ustawień: inny = nowe grafiki
     chart: list[ChartColumn] = []
     color_page: AplusColorPage | None = None
+    feature_images: list[AplusFeatureImage] = []
     preview: str = "aplus.html"
     warnings: list[str] = []
     cost_usd: float = 0.0

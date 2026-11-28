@@ -122,14 +122,16 @@ uv run kdp-studio ideas --config-file output/<książka>/manifest.json --theme "
 `kdp-studio aplus <katalog>` przygotowuje grafiki i teksty modułów A+ Content (obrazki i teksty pod opisem na stronie Amazona). Wymaga gotowych stron i okładki (`kdp-studio cover`). Grafiki składa program z okładki i stron, bez API:
 - wachlarz okładek na tle wybranym tak, żeby okładki się z nim nie zlewały;
 - nakładka z faktami z manifestu (liczba kolorowanek, druk, format);
-- 3 albo 4 kolumny ze stronami książki;
+- 3 albo 4 kolumny ze stronami książki albo, z `--feature-images`, z grafikami z modelu obrazu (patrz niżej);
 - drugi mockup ze stronami wnętrza albo tabela porównawcza Twoich książek.
 
 Teksty pól pisze model jednym wywołaniem, a program sprawdza zakazane w A+ sformułowania (nacisk czasem, święto jako termin albo okazja do zakupu, przechwałki, ceny) i limity znaków edytora. Wynik to katalog `aplus/` z obrazami JPG, plik `aplus/texts.yaml` (ręczne poprawki zostają przy kolejnym uruchomieniu) i podgląd `aplus.html` z przyciskiem „Kopiuj” przy każdym polu. Baner wydawcy (600 × 180) przygotowujesz sam i wskazujesz w `aplus.logo`. Amazon wymaga tekstu alternatywnego przy każdej grafice: dla grafik programu pisze go model (opis tego, co widać, do 99 znaków, bo tyle przyjmuje pole edytora, bez słów kluczowych), a dla banera wpisujesz go w `aplus.logo_alt`. Alt text jest w `texts.yaml` i w podglądzie pod każdą grafiką.
 
 ```bash
-uv run kdp-studio aplus output/<książka> [--color-page] [--config-file ksiazki/kotki.yaml]
+uv run kdp-studio aplus output/<książka> [--color-page] [--feature-images] [--config-file ksiazki/kotki.yaml]
 ```
+
+Z `--feature-images` (albo `aplus.features.source: generated`) każda kolumna dostaje grafikę z modelu obrazu z jedną korzyścią: grube kontury dla małych rąk, druk jednostronny, spokojna chwila bez ekranu. Motywy są w profilu wieku (`aplus_features` w `config/ages.yaml`, 3–4 na wiek, każdy wiek ma własne), a model dostaje prawdziwą stronę książki jako wzór. Program dopisuje do promptu stałe zasady: same dłonie bez twarzy, bez napisów, klejony paperback bez spirali i perforacji. Motyw o druku jednostronnym wypada w książce dwustronnej, a gdy kolumna mówi o druku, nakładka pomija ten fakt. Grafiki kosztują jak zwykłe obrazy (liczą się do `--max-cost`) i są zapamiętywane, więc ponowne uruchomienie nie płaci drugi raz. Gdy obraz się nie uda, kolumna dostaje stronę książki z ostrzeżeniem. Przy wgrywaniu tych grafik zaznacz w bibliotece grafik pole „AI-generated people”.
 
 Tabela porównawcza bierze książki z sekcji `aplus.comparison` pliku parametrów, np. `comparison: [{asin: B0XXXXXXXX, book: ../output/swiateczne_kotki_…}]`.
 

@@ -3860,6 +3860,15 @@ ColorPageOpt = Annotated[
         "--max-cost). Domyślnie aplus.color_page z settings.yaml.",
     ),
 ]
+FeatureImagesOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--feature-images/--no-feature-images",
+        help="Kolumny z grafikami z modelu obrazu: motywy z profilu wieku (aplus_features "
+        "w ages.yaml), strona książki jako referencja (płatne, liczy się do --max-cost). "
+        "Domyślnie aplus.features.source z settings.yaml.",
+    ),
+]
 
 
 @app.command()
@@ -3867,6 +3876,7 @@ def aplus(
     book: BookArg,
     config_file: ConfigFileOpt = None,
     color_page: ColorPageOpt = None,
+    feature_images: FeatureImagesOpt = None,
     image_quality: QualityOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
@@ -3879,7 +3889,12 @@ def aplus(
         config_file,
         _cli_input(
             log_level=log_level,
-            aplus=_cli_aplus(color_page=color_page, image_quality=image_quality, max_cost=max_cost),
+            aplus=_cli_aplus(
+                color_page=color_page,
+                feature_images=feature_images,
+                image_quality=image_quality,
+                max_cost=max_cost,
+            ),
         ),
     )
     inp = resolved.input
@@ -3922,18 +3937,24 @@ def aplus(
         plan=plan,
         color_page=bool(section.color_page),
         quality=quality,
+        feature_images=(
+            section.feature_images
+            if section.feature_images is not None
+            else config.settings.aplus.features.source == "generated"
+        ),
         log=typer.echo,
     )
     try:
         texts_state = run.texts_state()
     except AplusError as e:
         raise _fail(e.errors) from e
-    if texts_state != "new" and not run.color_needed():
+    need_images = run.color_needed() or run.features_needed()
+    if texts_state != "new" and not need_images:
         models: list[str] = []
     else:
         if texts_state == "new":
             run.text_provider = _text_provider(config)
-        if run.color_needed():
+        if need_images:
             run.image_provider, _ = _image_providers(
                 config, manifest.input.format, inp.image_provider, False
             )

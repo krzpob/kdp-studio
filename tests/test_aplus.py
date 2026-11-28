@@ -19,6 +19,7 @@ from kdp_studio.pipeline import aplus_images as ai
 from kdp_studio.pipeline.aplus_models import AplusCopy, ColumnCopy, FeaturesCopy, OverlayCopy
 from kdp_studio.pipeline.aplus_text import alt_issues, apply_limits, banned_hits, clip, copy_issues
 from kdp_studio.pipeline.cmyk import NaiveConverter
+from kdp_studio.providers.base import ProviderError
 from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
 from tests.conftest import ConfigDirFactory, fake_settings
 from tests.test_cli import (
@@ -499,3 +500,119 @@ def test_aplus_config_validation(
     directory = config_dir(settings=fake_settings(aplus=aplus))
     with pytest.raises(ConfigError, match=message):
         load_config(directory)
+
+
+# --- Kolumny z grafikami z modelu ----------------------------------------------------------
+
+
+def _fake_images(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> FakeImageProvider:
+    fake = FakeImageProvider(size=(96, 64), **kwargs)
+    monkeypatch.setattr(cli, "create_image_provider", lambda name, model: fake)
+    return fake
+
+
+def _set_themes(themes: list[dict[str, Any]]) -> None:
+    path = Path(os.environ["KDP_STUDIO_CONFIG_DIR"]) / "ages.yaml"
+    ages = yaml.safe_load(path.read_text(encoding="utf-8"))
+    ages["przedszkole"]["aplus_features"] = themes
+    path.write_text(yaml.safe_dump(ages, allow_unicode=True), encoding="utf-8")
+
+
+MARKERS = {
+    "key": "markers",
+    "label": "Pisaki",
+    "scene": "the coloring page from the book coloured with markers next to a clean back",
+    "benefit": "single-sided pages, so markers never spoil the next picture",
+    "requires": "single_sided",
+    "fact": "single_sided",
+}
+
+
+def test_feature_images_from_age_themes(
+    book: Path, text: FakeTextProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_images(monkeypatch)
+    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    themes = load_config().ages["przedszkole"].aplus_features[:3]
+    assert len(fake.requests) == 3
+    for request, theme in zip(fake.requests, themes, strict=True):
+        assert request.aspect == "1:1" and request.reference_image is not None
+        assert theme.scene in request.prompt
+        assert "no faces" in request.prompt and "no spiral binding" in request.prompt
+        assert "No text" in request.prompt
+    aplus = _manifest()["aplus"]
+    assert [f["theme"] for f in aplus["feature_images"]] == [t.key for t in themes]
+    for k in (1, 2, 3):
+        assert (book / f"aplus/raw/features_{k}.png").is_file()
+        with Image.open(book / f"aplus/04_features_{k}.jpg") as image:
+            assert image.size == (600, 600)
+    call = next(c for c in text.calls if c.schema.__name__ == "_AplusTexts")
+    assert f"Write about this benefit: {themes[0].benefit}" in call.user
+    assert f"Image features_1: A photo of {themes[0].scene}" in call.user
+    assert "AI-generated people" in (book / "aplus.html").read_text(encoding="utf-8")
+    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert len(fake.requests) == 3  # zapamiętane: bez nowych wywołań
+
+
+def test_feature_column_takes_over_the_single_sided_fact(
+    book: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_themes([MARKERS])
+    fake = _fake_images(monkeypatch)
+    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert len(fake.requests) == 1
+    aplus = _manifest()["aplus"]
+    assert aplus["texts"]["overlay_facts"]["items"][0] == "10 coloring pages"
+    assert any("za mało motywów" in w for w in aplus["warnings"])
+    assert aplus["modules"][3]["pages"]  # kolumny 2–3: strony książki
+
+
+def test_double_sided_book_skips_single_sided_themes(
+    book: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = {k: v for k, v in MARKERS.items() if k not in ("requires", "fact")}
+    _set_themes([MARKERS, {**other, "key": "calm", "label": "Spokój"}])
+    data = _manifest()
+    data["input"]["single_sided"] = False
+    (book / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    fake = _fake_images(monkeypatch)
+    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert [f["theme"] for f in _manifest()["aplus"]["feature_images"]] == ["calm"]
+    assert len(fake.requests) == 1
+
+
+def test_failed_feature_image_falls_back_to_the_page(
+    book: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_images(
+        monkeypatch,
+        fail=lambda req: (
+            ProviderError("moderation_blocked", fatal=False)
+            if "chunky wax crayon" in req.prompt
+            else None
+        ),
+    )
+    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    aplus = _manifest()["aplus"]
+    assert [f["column"] for f in aplus["feature_images"]] == [2, 3]
+    assert any("kolumna 1" in w and "strona książki" in w for w in aplus["warnings"])
+    assert len(fake.requests) == 3
+
+
+def test_color_page_skipped_when_every_column_is_generated(
+    book: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_images(monkeypatch)
+    assert main(["aplus", ARG, "--feature-images", "--color-page"]) == ExitCode.OK
+    aplus = _manifest()["aplus"]
+    assert aplus["color_page"] is None and len(fake.requests) == 3
+    assert any("pokolorowana strona" in w for w in aplus["warnings"])
+
+
+def test_feature_themes_need_unique_keys(repo_config: AppConfig) -> None:
+    from kdp_studio.config import AgeProfile
+
+    data = repo_config.ages["przedszkole"].model_dump()
+    data["aplus_features"] = [MARKERS, MARKERS]
+    with pytest.raises(ValueError, match="klucz motywu powtórzony"):
+        AgeProfile.model_validate(data)

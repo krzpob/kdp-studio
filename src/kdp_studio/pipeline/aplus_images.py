@@ -234,6 +234,15 @@ def column_square(page: Image.Image, side: int, margin: float) -> Image.Image:
     return square
 
 
+def photo_square(image: Image.Image, side: int) -> Image.Image:
+    """Kwadrat kolumny z grafiki z modelu: środek obrazu przycięty do kwadratu, bez marginesu."""
+    rgb = image.convert("RGB")
+    edge = min(rgb.size)
+    left, top = (rgb.width - edge) // 2, (rgb.height - edge) // 2
+    square = rgb.crop((left, top, left + edge, top + edge))
+    return square.resize((side, side), Image.Resampling.LANCZOS)
+
+
 def _sheet(page: Image.Image, height: int, angle: float) -> Image.Image:
     """Kartka strony (RGBA) z cienką szarą krawędzią, obrócona."""
     sheet = _fit(page.convert("RGB"), (height * 4, height))

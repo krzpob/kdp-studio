@@ -10,6 +10,11 @@
 #   belongs_to         – strona „This book belongs to…” (FR-14): wielkość napisu (font_pt, program
 #                        zmniejsza go, gdy nie mieści się w polu), wysokość miejsca na imię
 #                        (name_line_height_in) i litery konturowe do pokolorowania (outline_text)
+#   aplus_features     – motywy kolumn A+ z grafiką z modelu (FR-24, aplus.features.source: generated),
+#                        w kolejności kolumn: key, label (po polsku), scene (prompt i opis do alt
+#                        textu, po angielsku), benefit (o czym pisze kolumna, po angielsku),
+#                        requires: single_sided (tylko książki jednostronne), fact: single_sided
+#                        (kolumna przejmuje fakt o druku, nakładka go pomija)
 #   postprocess        – parametry obróbki (FR-06); cienkie linie wymagają łagodniejszego
 #                        usuwania szumu niż grube linie dla najmłodszych
 #     threshold        – "otsu" albo liczba 0–255
@@ -35,6 +40,24 @@ przedszkole:
     font_pt: 48
     name_line_height_in: 1.0
     outline_text: true
+  aplus_features:   # FR-24: motywy kolumn A+ z grafiką z modelu (aplus.features.source: generated)
+    - key: thick_lines
+      label: Grube kontury dla małych rąk
+      scene: "a small child's hand holding a chunky wax crayon, colouring the coloring page from the book on a wooden table, a few crayons nearby"
+      benefit: "thick, simple outlines and big shapes that small hands can colour"
+    - key: together
+      label: Wspólne kolorowanie z rodzicem
+      scene: "an adult's hand and a small child's hand colouring the same coloring page from the book together, crayons spread around"
+      benefit: "a calm activity a parent and a child can share"
+    - key: fridge
+      label: Obrazek na lodówce
+      scene: "the coloring page from the book, neatly cut out and coloured in, held on a white fridge door with a round magnet"
+      benefit: "every picture is printed on its own sheet, so a finished one can be cut out and shown off"
+      requires: single_sided
+    - key: screen_free
+      label: Spokojna chwila bez ekranu
+      scene: "the open coloring book lying on a cosy table with a box of crayons and a cup of warm milk, soft daylight"
+      benefit: "a quiet, screen-free activity for a calm afternoon"
   postprocess:
     threshold: otsu
     min_speck_area: 64
@@ -60,6 +83,26 @@ wczesnoszkolne:
     font_pt: 42
     name_line_height_in: 0.85
     outline_text: true
+  aplus_features:   # FR-24: motywy kolumn A+ z grafiką z modelu (aplus.features.source: generated)
+    - key: story_scenes
+      label: Sceny z postaciami do opowiadania
+      scene: "a child's hand with a coloured pencil colouring the coloring page from the book, partly coloured in, on a table"
+      benefit: "scenes with characters that invite the child to tell their own story"
+    - key: markers
+      label: Pisaki nie zniszczą następnego obrazka
+      scene: "the coloring page from the book coloured with bright felt-tip markers, lying next to a loose sheet turned over to show a clean white back, markers beside it"
+      benefit: "single-sided pages: markers can bleed through, but never onto the next picture"
+      requires: single_sided
+      fact: single_sided
+    - key: screen_free
+      label: Spokojna chwila bez ekranu
+      scene: "the open coloring book on a kitchen table with crayons and a mug of cocoa, decorated in the mood of the book's theme"
+      benefit: "a calm, screen-free activity for an afternoon at home"
+    - key: show_off
+      label: Gotowe dzieło do pokazania
+      scene: "the coloring page from the book, coloured in, pinned to a cork board with colourful pins"
+      benefit: "finished pictures the child is proud to show"
+      requires: single_sided
   postprocess:
     threshold: otsu
     min_speck_area: 40
@@ -84,6 +127,25 @@ szkolne:
     font_pt: 36
     name_line_height_in: 0.7
     outline_text: false
+  aplus_features:   # FR-24: motywy kolumn A+ z grafiką z modelu (aplus.features.source: generated)
+    - key: detail
+      label: Szczegółowe sceny na dłużej
+      scene: "a hand with a coloured pencil colouring the coloring page from the book, about half coloured in, pencils fanned out on a desk"
+      benefit: "detailed scenes that keep a child busy for longer"
+    - key: fineliners
+      label: Pisaki i cienkopisy
+      scene: "the coloring page from the book coloured with fine-liners and markers, next to a loose sheet turned over to show a clean white back"
+      benefit: "single-sided pages: markers and fine-liners never spoil the next picture"
+      requires: single_sided
+      fact: single_sided
+    - key: own_colors
+      label: Własne kolory
+      scene: "two copies of the coloring page from the book side by side on a desk, coloured in two different colour palettes"
+      benefit: "room for the child's own colour ideas"
+    - key: screen_free
+      label: Spokojne popołudnie bez ekranu
+      scene: "the open coloring book on a desk by a window with a pencil case and coloured pencils"
+      benefit: "a quiet, screen-free afternoon activity"
   postprocess:
     threshold: otsu
     min_speck_area: 24
@@ -108,6 +170,25 @@ nastolatki:
     font_pt: 32
     name_line_height_in: 0.6
     outline_text: false
+  aplus_features:   # FR-24: motywy kolumn A+ z grafiką z modelu (aplus.features.source: generated)
+    - key: patterns
+      label: Wzory i detale
+      scene: "a hand with a fine-liner colouring small details of the coloring page from the book, close-up on a desk"
+      benefit: "detailed patterns for patient, precise colouring"
+    - key: own_style
+      label: Własny styl
+      scene: "the coloring page from the book coloured with gel pens and markers, the pens lying around it on a desk"
+      benefit: "space for the teen's own style and colour choices"
+    - key: markers
+      label: Pisaki nie zniszczą następnej strony
+      scene: "the coloring page from the book coloured with markers, next to a loose sheet turned over to show a clean white back"
+      benefit: "single-sided pages: markers never spoil the next picture"
+      requires: single_sided
+      fact: single_sided
+    - key: phone_down
+      label: Odpoczynek od telefonu
+      scene: "the open coloring book on a bed with coloured pencils, a smartphone lying face down next to it"
+      benefit: "a break from screens"
   postprocess:
     threshold: otsu
     min_speck_area: 12
@@ -131,6 +212,26 @@ dorosli:
     font_pt: 30
     name_line_height_in: 0.55
     outline_text: false
+  aplus_features:   # FR-24: motywy kolumn A+ z grafiką z modelu (aplus.features.source: generated)
+    - key: unwind
+      label: Relaks po dniu
+      scene: "the open coloring book on a table in warm evening light with a cup of tea and coloured pencils"
+      benefit: "a relaxing, screen-free hobby for the evening"
+    - key: precision
+      label: Drobne pola dla precyzji
+      scene: "close-up of an adult's hand with a fine-liner colouring tiny areas of the coloring page from the book"
+      benefit: "intricate areas for precise, mindful colouring"
+    - key: markers
+      label: Pisaki z podłożoną kartką
+      scene: "the coloring page from the book coloured with markers, a spare sheet of paper slipped under the page"
+      benefit: "single-sided pages: with a spare sheet underneath, markers never spoil the next design"
+      requires: single_sided
+      fact: single_sided
+    - key: framed
+      label: Obrazek do oprawienia
+      scene: "the coloring page from the book, fully coloured, in a simple wooden frame on a wall"
+      benefit: "finished designs worth framing"
+      requires: single_sided
   postprocess:
     threshold: otsu
     min_speck_area: 6

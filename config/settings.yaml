@@ -323,6 +323,12 @@ aplus:
     margin: 0.03
     margin_y: 0.12
     overlap: 0.15
-  features: {columns: 3, margin: 0.06}    # 3 albo 4 kolumny
+  features:
+    columns: 3                  # 3 albo 4 kolumny
+    margin: 0.06                # biały margines wokół strony w kwadracie
+    # pages: strony książki; generated (--feature-images): grafiki z modelu obrazu z motywów
+    # profilu wieku (aplus_features w ages.yaml), ze stroną książki jako referencją; płatne
+    source: pages
+    image_quality: null         # null: --image-quality albo image_quality
   comparison:                   # tabela porównawcza: 2–6 książek z własnego konta KDP
     books: []                   # [{asin: B0XXXXXXXX, book: output/<katalog>}]; zwykle w --config-file
