@@ -269,8 +269,9 @@ Fields to write:
 - overlay_headline: a short headline for an overlay that lists the facts above.
 - features_headline: the headline of a module with {columns} columns.
 - columns: exactly {columns} columns, one per picture below, in this order. Each column
-  shows the named page; describe what the child or adult gets from it (benefit, level of
-  difficulty for the age, calm screen-free fun), not a fact from the list above.
+  shows the named picture; describe what the child or adult gets from it (benefit, level of
+  difficulty for the age, calm screen-free fun), not a fact from the list above. When a
+  column names a benefit, write that column about the benefit.
 {scenes}
 - alt_texts: one entry per image below, with its image id and the alt text.
 {images}"""

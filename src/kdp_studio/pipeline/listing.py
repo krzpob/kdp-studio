@@ -153,14 +153,20 @@ def _number(value: float, comma: bool) -> str:
     return text.replace(".", ",") if comma else text
 
 
-def fact_lines(facts: BookFacts, listing: dict[str, str]) -> list[str]:
+def fact_lines(
+    facts: BookFacts, listing: dict[str, str], single_sided_fact: bool = True
+) -> list[str]:
+    """Fakty o książce w języku rynku. `single_sided_fact=False`: sama liczba kolorowanek, bez
+    zdania o druku jednostronnym (A+: przejmuje je kolumna z grafiką, FR-24)."""
     width, height = facts.trim_in
     trim_in = f"{_number(width, False)} × {_number(height, False)} in"
     trim_cm = (
         f"{_number(round(width * 2.54, 1), True)} × {_number(round(height * 2.54, 1), True)} cm"
     )
     lines = [
-        listing["pages_single" if facts.single_sided else "pages_double"].format(pages=facts.pages),
+        listing[
+            "pages_single" if facts.single_sided and single_sided_fact else "pages_double"
+        ].format(pages=facts.pages),
         listing["size"].format(trim_in=trim_in, trim_cm=trim_cm),
     ]
     if facts.first_page == "title":

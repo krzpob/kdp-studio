@@ -46,6 +46,19 @@ class BelongsToAge(_Strict):
     outline_text: bool = False
 
 
+class AplusFeatureTheme(_Strict):
+    """Motyw kolumny A+ z grafiką z modelu (FR-24): jedna korzyść dla rodzica albo dorosłego."""
+
+    key: Annotated[str, Field(pattern=r"^[a-z0-9_]+$")]
+    label: Annotated[str, Field(min_length=1)]  # po polsku, dla użytkownika
+    scene: Annotated[str, Field(min_length=1)]  # po angielsku: prompt obrazu i opis do alt textu
+    benefit: Annotated[str, Field(min_length=1)]  # po angielsku: o czym model pisze kolumnę
+    # Warunek książki: motyw o druku jednostronnym byłby nieprawdą w książce dwustronnej (FR-22).
+    requires: Literal["single_sided"] | None = None
+    # Fakt z listy faktów (FR-03), który kolumna przejmuje; nakładka go wtedy pomija.
+    fact: Literal["single_sided"] | None = None
+
+
 class AgeProfile(_Strict):
     name: str
     description: str
@@ -59,12 +72,17 @@ class AgeProfile(_Strict):
     # FR-19: wiek dzieci [od, do] do wzoru wieku rynku (terms.ages); brak = dorośli (terms.adults)
     age_range: tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]] | None = None
     belongs_to: BelongsToAge = BelongsToAge()
+    # FR-24: motywy kolumn A+ z grafikami z modelu, w kolejności kolumn (aplus.features.source)
+    aplus_features: Annotated[list[AplusFeatureTheme], Field(max_length=6)] = []
     postprocess: PostprocessParams
 
     @model_validator(mode="after")
     def _age_range_order(self) -> Self:
         if self.age_range is not None and self.age_range[0] > self.age_range[1]:
             raise ValueError(f"age_range: od > do ({self.age_range[0]} > {self.age_range[1]})")
+        keys = [t.key for t in self.aplus_features]
+        if len(set(keys)) != len(keys):
+            raise ValueError("aplus_features: klucz motywu powtórzony")
         return self
 
 
@@ -617,6 +635,9 @@ class AplusOverlay(_Strict):
 class AplusFeatures(_Strict):
     columns: Literal[3, 4] = 3  # Standard Three albo Four Images & Text
     margin: Annotated[float, Field(ge=0, lt=0.5)] = 0.06  # biały margines wokół strony w kwadracie
+    # pages: strony książki; generated: grafiki z modelu z motywów profilu wieku (aplus_features)
+    source: Literal["pages", "generated"] = "pages"
+    image_quality: ImageQuality | None = None  # None: --image-quality albo image_quality
 
 
 class AplusComparisonBook(_Strict):

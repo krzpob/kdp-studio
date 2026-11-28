@@ -1,10 +1,12 @@
 """FR-24: krok A+ Content (`kdp-studio aplus`): plan modułów, grafiki, teksty, podgląd, manifest.
 
 Bez wywołań API powstaje plan (moduły, strony, tabela porównawcza) i wszystkie grafiki. API
-wołają tylko teksty (jedno wywołanie LLM, przy zakazanych sformułowaniach jedno ponowienie)
-i opcjonalnie pokolorowana strona. Ponowne uruchomienie robi tylko to, co się zmieniło:
-grafiki według hasha okładki, stron i ustawień, teksty według hasha metadanych i faktów;
-teksty poprawione ręcznie w `aplus/texts.yaml` zostają.
+wołają tylko teksty (jedno wywołanie LLM, przy zakazanych sformułowaniach jedno ponowienie),
+opcjonalnie pokolorowana strona i opcjonalnie grafiki kolumn z modelu (motywy z profilu wieku,
+`aplus.features.source: generated`, jedno wywołanie na kolumnę, zapamiętywane po hashu).
+Ponowne uruchomienie robi tylko to, co się zmieniło: grafiki według hasha okładki, stron
+i ustawień, teksty według hasha metadanych i faktów; teksty poprawione ręcznie
+w `aplus/texts.yaml` zostają.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from pydantic import ValidationError
 from kdp_studio.config import (
     AplusBanned,
     AplusComparisonBook,
+    AplusFeatureTheme,
     AppConfig,
     MarketProfile,
 )
@@ -34,6 +37,7 @@ from kdp_studio.pipeline.aplus_models import (
     AplusBackgroundInfo,
     AplusColorPage,
     AplusCopy,
+    AplusFeatureImage,
     AplusFileInfo,
     AplusInfo,
     AplusModuleInfo,
@@ -70,6 +74,17 @@ COLOR_PROMPT = (
     "child colored it with bright crayons and markers. Keep every line, shape and the "
     "composition exactly as they are; only fill the areas with color. White paper around the "
     "drawing. No text, no letters, no frame."
+)
+FEATURE_ASPECT = "1:1"
+# Grafika kolumny z modelu: scena motywu z profilu wieku, strona książki jako referencja.
+# Ograniczenia są w kodzie, nie w profilu: A+ nie może wprowadzać w błąd co do produktu.
+FEATURE_PROMPT = (
+    "A realistic, softly lit photo for the product page of a printed coloring book: {scene}. "
+    "The coloring page in the photo is the reference image: keep its drawing, every line and "
+    "shape, unchanged. The page shows {page_scene}.{theme} Only hands may appear: no faces, "
+    "no heads, no whole people. The book is a glued paperback with plain white paper: no "
+    "spiral binding, no perforated edges, no thick card pages. No text, no letters, no "
+    "numbers, no logos, no brand marks, no watermarks. Square composition."
 )
 
 
@@ -267,9 +282,15 @@ def _sha(parts: Sequence[str]) -> str:
 
 
 def images_inputs_sha256(
-    book_dir: Path, manifest: Manifest, plan: AplusPlan, config: AppConfig, color: Path | None
+    book_dir: Path,
+    manifest: Manifest,
+    plan: AplusPlan,
+    config: AppConfig,
+    color: Path | None,
+    generated: Sequence[Path] = (),
 ) -> str:
-    """Hash wejść grafik: pliki okładki i stron, ustawienia, baner, pokolorowana strona."""
+    """Hash wejść grafik: pliki okładki i stron, ustawienia, baner, pokolorowana strona
+    i grafiki kolumn z modelu."""
     cover = manifest.cover
     assert cover is not None and cover.files is not None
     settings = config.settings.aplus
@@ -288,6 +309,7 @@ def images_inputs_sha256(
         parts.append(sha256_file(logo))
     if color is not None:
         parts.append(sha256_file(color))
+    parts += [f"generated:{sha256_file(path)}" for path in generated]
     return _sha(parts)
 
 
@@ -361,6 +383,7 @@ class AplusRun:
     plan: AplusPlan
     color_page: bool
     quality: str
+    feature_images: bool = False  # kolumny z grafikami z modelu (aplus.features.source)
     text_provider: TextProvider | None = None
     image_provider: ImageProvider | None = None
     costs: CostTracker | None = None
@@ -374,13 +397,174 @@ class AplusRun:
         texts = self.config.markets.texts_for(self.market.locale)
         if texts is None or not texts.listing:
             return []
-        return fact_lines(book_facts(self.manifest, self.config), texts.listing)
+        # Kolumna z motywem o druku jednostronnym przejmuje ten fakt: nakładka go nie powtarza.
+        taken = {t.fact for t in self.themes() if t is not None}
+        return fact_lines(
+            book_facts(self.manifest, self.config),
+            texts.listing,
+            single_sided_fact="single_sided" not in taken,
+        )
 
     def scenes(self) -> list[str]:
+        """Co pokazuje każda kolumna, dla modelu tekstów: scena strony albo motyw z korzyścią."""
         ideas = {i.id: i for i in self.ideas.pages}
-        return [
-            ideas[p.idea_id].scene if p.idea_id in ideas else p.name for p in self.plan.features
+        result = []
+        for page, theme in zip(self.plan.features, self.themes(), strict=True):
+            if theme is None:
+                result.append(ideas[page.idea_id].scene if page.idea_id in ideas else page.name)
+            else:
+                result.append(
+                    f"a photo of {theme.scene}; the page shows {self._page_scene(page)}. "
+                    f"Write about this benefit: {theme.benefit}"
+                )
+        return result
+
+    # --- Kolumny z grafikami z modelu ---
+
+    def themes(self) -> list[AplusFeatureTheme | None]:
+        """Motyw każdej kolumny (None: strona książki). Motywy z profilu wieku, w kolejności,
+        bez tych, których warunek książka nie spełnia (np. druk jednostronny)."""
+        count = len(self.plan.features)
+        if not self.feature_images or "features" not in self.plan.modules:
+            return [None] * count
+        age = self.config.ages.get(self.manifest.input.age)
+        single_sided = self.manifest.input.single_sided
+        fitting = [
+            t
+            for t in (age.aplus_features if age is not None else [])
+            if t.requires != "single_sided" or single_sided
         ]
+        themes: list[AplusFeatureTheme | None] = list(fitting[:count])
+        return themes + [None] * (count - len(themes))
+
+    def theme_warnings(self) -> list[str]:
+        if not self.feature_images or "features" not in self.plan.modules:
+            return []
+        missing = sum(1 for t in self.themes() if t is None)
+        if not missing:
+            return []
+        return [
+            f"kolumny A+: za mało motywów dla wieku {self.manifest.input.age} (aplus_features w "
+            f"ages.yaml): {missing} z {len(self.plan.features)} kolumn ze stronami książki"
+        ]
+
+    def color_column(self) -> int | None:
+        """Kolumna (od 0) z pokolorowaną stroną: pierwsza ze stroną książki, nie z modelu."""
+        if not self.color_page:
+            return None
+        return next((k for k, t in enumerate(self.themes()) if t is None), None)
+
+    def _feature_prompt(self, theme: AplusFeatureTheme, page: ManifestPage) -> str:
+        anchors = self.ideas.theme_anchors
+        return FEATURE_PROMPT.format(
+            scene=theme.scene.strip().rstrip("."),
+            page_scene=self._page_scene(page),
+            theme=f" The book's theme: {', '.join(anchors)}." if anchors else "",
+        )
+
+    def _feature_quality(self) -> str:
+        return self.config.settings.aplus.features.image_quality or self.quality
+
+    def _feature_sha(self, prompt: str, page: ManifestPage) -> str:
+        return _sha(
+            [
+                prompt,
+                sha256_file(self.book_dir / f"{page.name}.png"),
+                self.config.settings.models.image,
+                self._feature_quality(),
+            ]
+        )
+
+    def _feature_raw(self, column: int) -> Path:
+        return self.out / RAW_DIR / f"features_{column}.png"
+
+    def _cached_feature(
+        self, column: int, theme: AplusFeatureTheme, page: ManifestPage
+    ) -> AplusFeatureImage | None:
+        previous = self.manifest.aplus.feature_images if self.manifest.aplus else []
+        sha = self._feature_sha(self._feature_prompt(theme, page), page)
+        for entry in previous:
+            if (
+                entry.column == column
+                and entry.inputs_sha256 == sha
+                and (self.book_dir / entry.raw).is_file()
+            ):
+                return entry
+        return None
+
+    def features_needed(self) -> bool:
+        """Czy któraś kolumna potrzebuje nowej grafiki z modelu (wywołanie API)."""
+        return any(
+            theme is not None and self._cached_feature(k, theme, page) is None
+            for k, (page, theme) in enumerate(
+                zip(self.plan.features, self.themes(), strict=True), start=1
+            )
+        )
+
+    def _feature_images(self, outcome: AplusOutcome) -> dict[int, Path]:
+        """Grafiki kolumn z modelu (kolumna od 1 → plik). Kolumna bez grafiki dostaje stronę
+        książki z ostrzeżeniem; błąd krytyczny dostawcy przerywa krok."""
+        result: dict[int, Path] = {}
+        outcome.info.warnings += self.theme_warnings()
+        for k, (page, theme) in enumerate(
+            zip(self.plan.features, self.themes(), strict=True), start=1
+        ):
+            if theme is None:
+                continue
+            cached = self._cached_feature(k, theme, page)
+            if cached is not None:
+                outcome.info.feature_images.append(cached)
+                result[k] = self.book_dir / cached.raw
+                continue
+            fallback = f"kolumna {k} ({theme.label}): strona książki zamiast grafiki z modelu"
+            provider = self.image_provider
+            assert provider is not None
+            if FEATURE_ASPECT not in provider.supported_aspects():
+                outcome.info.warnings.append(
+                    f"{fallback} ({provider.name} nie rysuje kwadratów {FEATURE_ASPECT})"
+                )
+                continue
+            if self.costs is not None and self.costs.over_budget():
+                outcome.budget_exceeded = True
+                outcome.info.warnings.append(f"{fallback} (przekroczony limit kosztu)")
+                continue
+            prompt = self._feature_prompt(theme, page)
+            source = self.book_dir / f"{page.name}.png"
+            quality = self._feature_quality()
+            self.log(f"Grafika kolumny {k} ({theme.label}, {provider.name}, {provider.model})…")
+            try:
+                image = provider.generate(
+                    ImageRequest(
+                        prompt=prompt,
+                        aspect=FEATURE_ASPECT,
+                        quality=quality,
+                        reference_image=source.read_bytes(),
+                    )
+                )
+            except ProviderError as e:
+                if e.fatal:
+                    raise
+                outcome.info.warnings.append(f"{fallback} ({e})")
+                continue
+            if self.costs is not None:
+                self.costs.add("images", provider.model, image.usage)
+            raw = self._feature_raw(k)
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            write_bytes_atomic(raw, image.png_bytes)
+            outcome.info.feature_images.append(
+                AplusFeatureImage(
+                    column=k,
+                    theme=theme.key,
+                    page=page.name,
+                    prompt=prompt,
+                    raw=raw.relative_to(self.book_dir).as_posix(),
+                    inputs_sha256=self._feature_sha(prompt, page),
+                    model=provider.model,
+                    quality=quality,
+                )
+            )
+            result[k] = raw
+        return result
 
     def _page_scene(self, page: ManifestPage) -> str:
         ideas = {i.id: i for i in self.ideas.pages}
@@ -422,11 +606,17 @@ class AplusRun:
                     )
                 )
             elif name == "features":
-                for k, page in enumerate(self.plan.features, start=1):
-                    colored = self.color_page and k == 1
+                color_column = self.color_column()
+                for k, (page, theme) in enumerate(
+                    zip(self.plan.features, self.themes(), strict=True), start=1
+                ):
+                    if theme is not None:
+                        what = f"A photo of {theme.scene}; the page shows {self._page_scene(page)}"
+                        result.append((alt_key(name, k), what))
+                        continue
                     kind = (
                         "A coloring page from the book, colored in with crayons"
-                        if colored
+                        if color_column == k - 1
                         else "A black-and-white coloring page from the book"
                     )
                     result.append((alt_key(name, k), f"{kind}: {self._page_scene(page)}"))
@@ -469,10 +659,11 @@ class AplusRun:
         return "current" if previous.texts_inputs_sha256 == inputs else "new"
 
     def color_needed(self) -> bool:
-        if not self.color_page or not self.plan.features:
+        column = self.color_column()
+        if column is None or not self.plan.features:
             return False
         previous = self.manifest.aplus.color_page if self.manifest.aplus else None
-        page = self.plan.features[0]
+        page = self.plan.features[column]
         raw = self.out / RAW_DIR / f"{page.name}_color.png"
         page_sha = sha256_file(self.book_dir / f"{page.name}.png")
         return not (
@@ -485,9 +676,14 @@ class AplusRun:
     # --- Pokolorowana strona ---
 
     def _color_page(self, outcome: AplusOutcome) -> Path | None:
-        if not self.color_page or not self.plan.features:
+        column = self.color_column()
+        if self.color_page and column is None and self.plan.features:
+            outcome.info.warnings.append(
+                "pokolorowana strona: wszystkie kolumny mają grafiki z modelu, pominięta"
+            )
+        if column is None or not self.plan.features:
             return None
-        page = self.plan.features[0]
+        page = self.plan.features[column]
         raw = self.out / RAW_DIR / f"{page.name}_color.png"
         previous = self.manifest.aplus.color_page if self.manifest.aplus else None
         if not self.color_needed():
@@ -545,7 +741,9 @@ class AplusRun:
             bytes=saved.bytes,
         )
 
-    def _render(self, color: Path | None, outcome: AplusOutcome) -> None:
+    def _render(
+        self, color: Path | None, generated: dict[int, Path], outcome: AplusOutcome
+    ) -> None:
         """Wszystkie grafiki modułów (bez API), stare pliki z katalogu aplus/ znikają."""
         settings = self.config.settings.aplus
         cover = self.manifest.cover
@@ -573,10 +771,9 @@ class AplusRun:
                 f"{settings.header_fan.background.min_delta_e:g} mimo przyciemnienia"
             )
 
+        color_column = self.color_column()
+
         def page_image(page: ManifestPage) -> Image.Image:
-            if color is not None and page == self.plan.features[0]:
-                with Image.open(color) as colored:
-                    return colored.convert("RGB")
             with Image.open(self.book_dir / f"{page.name}.png") as file:
                 return file.convert("RGB")
 
@@ -633,7 +830,16 @@ class AplusRun:
                     info.editor = FOUR_COLUMNS
                 side = images.COLUMN_SIDE[columns] * scale
                 for k, page in enumerate(self.plan.features, start=1):
-                    square = images.column_square(page_image(page), side, settings.features.margin)
+                    if k in generated:
+                        with Image.open(generated[k]) as model_image:
+                            square = images.photo_square(model_image, side)
+                    elif color is not None and color_column == k - 1:
+                        with Image.open(color) as colored:
+                            square = images.column_square(colored, side, settings.features.margin)
+                    else:
+                        square = images.column_square(
+                            page_image(page), side, settings.features.margin
+                        )
                     path = self.out / f"{index:02d}_features_{k}.{ext}"
                     info.files.append(self._file_info(images.save_image(square, path, settings)))
                 info.pages = [p.name for p in self.plan.features]
@@ -741,7 +947,15 @@ class AplusRun:
         spent_before = self.costs.spent if self.costs is not None else 0.0
         try:
             color = self._color_page(outcome)
-            sha = images_inputs_sha256(self.book_dir, self.manifest, self.plan, self.config, color)
+            generated = self._feature_images(outcome)
+            sha = images_inputs_sha256(
+                self.book_dir,
+                self.manifest,
+                self.plan,
+                self.config,
+                color,
+                [generated[k] for k in sorted(generated)],
+            )
             files_ok = previous is not None and all(
                 (self.book_dir / f.path).is_file() for m in previous.modules for f in m.files
             )
@@ -749,7 +963,7 @@ class AplusRun:
                 info.modules = previous.modules
                 info.background = previous.background
             else:
-                self._render(color, outcome)
+                self._render(color, generated, outcome)
                 outcome.written_images = True
             info.images_sha256 = sha
             self._texts(outcome)
@@ -815,6 +1029,13 @@ def preview_modules(info: AplusInfo, config: AppConfig) -> list[PreviewModule]:
         elif module.name == "features":
             features = texts.features
             note = "Obraz każdej kolumny to strona książki; teksty mówią o korzyściach."
+            if info.feature_images:
+                columns = ", ".join(str(f.column) for f in info.feature_images)
+                note = (
+                    f"Kolumny {columns} mają grafiki z modelu obrazu (motywy z profilu wieku), "
+                    "pozostałe to strony książki. Przy wgrywaniu tych grafik zaznacz w bibliotece "
+                    "grafik pole „AI-generated people”, bo pokazują dłonie z modelu."
+                )
             if features is not None:
                 fields = [
                     PreviewField(

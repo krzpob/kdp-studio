@@ -37,7 +37,7 @@ Stan na 17.11.2026. ✅ zrobione, 🟡 częściowo, ⬜ do zrobienia, ↪ zastą
 | FR-21 | ⬜ | | Specyfikacja: #51. Chronione nazwy w temacie jako inspiracja, kontrola tekstów w kodzie (`config/protected_names.yaml`) i kryterium QA. Uzupełnia FR-03, FR-03a, FR-07 i NFR-12. |
 | FR-22 | ✅ | #59 | Poza MVP (etap 2 roadmapy). Specyfikacja: #53. `interior.pdf` składany przez program w `finalize`, druk jednostronny jako opcja (domyślnie włączony). |
 | FR-23 | ✅ | #58 | Poza MVP. Specyfikacja: #53. Strony wstępne: tytułowa do kolorowania albo FR-14, prawa autorskie w języku rynku, instrukcja z postacią z książki; polecenie `front-matter`. Zrobione przed FR-22: strony jako PNG, `interior.pdf` dochodzi z FR-22. |
-| FR-24 | ✅ | #76, #77 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. Alt text każdej grafiki. Kolumny z grafikami z modelu (motywy w profilu wieku): ⬜ #80. |
+| FR-24 | ✅ | #76, #77 | Poza MVP. Zgłoszenie: #71. A+ Content: polecenie `aplus`, grafiki modułów składane przez program (wachlarz okładek, kolumny, nakładka z faktami), teksty z kontrolą zakazanych sformułowań, podgląd `aplus.html`. Alt text każdej grafiki. Kolumny z grafikami z modelu (motywy w profilu wieku, #80): ✅ #82. |
 | Profile (§7) | ✅ | #3, #15, #22 | |
 
 **Wymagania pozafunkcjonalne**
@@ -1393,7 +1393,7 @@ Kolumny lepiej niż kolejne nakładki pokazują strony książki: kwadrat mieśc
   - **Pole kodu kreskowego:** na wydrukowanej książce KDP drukuje kod na dole tylnej okładki przy grzbiecie. Nasza okładka ma tam tło ilustracji, więc mockup pokazuje tył bez kodu, jak większość mockupów; w referencji to prawy dolny róg tyłu.
 - **Pokolorowana strona:** model obrazu koloruje wybraną stronę jak przód okładki (FR-15), za opłatą w ramach `--max-cost`. Opcja, domyślnie wyłączona.
 
-**Kolumny z grafikami z modelu (⬜, zgłoszenie #80, ustalone 28.11.2026)**
+**Kolumny z grafikami z modelu (✅ #82, zgłoszenie #80, ustalone 28.11.2026)**
 
 Kolumna ze stroną książki pokazuje zawartość, ale nie mówi rodzicowi, dlaczego ta książka mu pasuje. Opcjonalnie kolumny dostają więc grafiki z modelu obrazu, które pokazują jedną korzyść: kontury dla wieku, druk jednostronny, spokojne zajęcie bez ekranu. Koszt to 3–4 obrazy z referencją, ok. 0,15–0,25 USD na książkę.
 
@@ -1409,7 +1409,7 @@ Kolumna ze stroną książki pokazuje zawartość, ale nie mówi rodzicowi, dlac
   - Stałe ograniczenia w kodzie, nie w profilu: same dłonie, bez twarzy dzieci; bez napisów, logo i znaków towarowych; klejony paperback ze zwykłym białym papierem, bez spirali, perforacji i grubego kartonu; kontury strony z referencji bez zmian.
   - Podgląd `aplus.html` przypomina przy tych kolumnach o polu „AI-generated people” w bibliotece grafik edytora.
   - Bez napisów na obrazie, jak wszędzie: nagłówek i tekst idą do pól kolumny.
-- **Wywołanie i koszt:** jedno wywołanie na kolumnę, `images.edit` z referencją, kwadrat, jakość z `aplus.features.image_quality`. Koszt (rodzaj `aplus`) liczy się do `--max-cost`. Obraz zapisuje się w `aplus/raw/features_N.png` z hashem (prompt, surowa strona, model, jakość), więc ponowne uruchomienie nie płaci drugi raz, jak pokolorowana strona.
+- **Wywołanie i koszt:** jedno wywołanie na kolumnę, `images.edit` z referencją, kwadrat, jakość z `aplus.features.image_quality` (null: `--image-quality` albo `image_quality`). Koszt (jak grafiki: rodzaj `images`) liczy się do `--max-cost`. Obraz zapisuje się w `aplus/raw/features_N.png` z hashem (prompt, surowa strona, model, jakość), więc ponowne uruchomienie nie płaci drugi raz, jak pokolorowana strona.
 - **Gdy obrazu nie ma** (błąd niekrytyczny dostawcy, limit kosztu, za mało pasujących motywów), kolumna dostaje stronę książki jak dziś, z ostrzeżeniem. Błąd krytyczny kończy krok kodem 4.
 - **Teksty i alt text:** model tekstów dostaje `benefit` każdego motywu, a do alt textu opis z `scene`.
 - **Włączanie:** `aplus.features.source: pages | generated` (domyślnie `pages`), flaga `--feature-images/--no-feature-images`, sekcja `aplus` w `--config-file` (FR-20).
@@ -1450,7 +1450,7 @@ Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, �
 
 **Polecenie**
 - `kdp-studio aplus <katalog-książki>`, osobny krok po okładce. Wymaga stron `ok` (FR-17) i okładki ze statusem `ok` (FR-15), bo mockupy składa z `cover/front.png` i `cover/cover.png`. Bez nich kod 1 z informacją, czego brakuje. `generate` go nie uruchamia.
-- Opcje: `--color-page/--no-color-page` (pokolorowana strona z modelu, domyślnie `aplus.color_page: false`), `--max-cost`, `--log-level`, `--config-file` (FR-20, sekcja `aplus`).
+- Opcje: `--color-page/--no-color-page` (pokolorowana strona z modelu, domyślnie `aplus.color_page: false`), `--feature-images/--no-feature-images` (kolumny z grafikami z modelu, domyślnie `aplus.features.source: pages`), `--max-cost`, `--log-level`, `--config-file` (FR-20, sekcja `aplus`).
 - Wywołania API: jedno wywołanie LLM na teksty (z jednym ponowieniem po kontroli) i opcjonalnie jedno płatne pokolorowanie strony. Grafiki składa program, bez API.
 - Ponowne uruchomienie robi tylko to, co się zmieniło: grafiki, gdy zmieniła się okładka, strony albo ustawienia (hash wejść jak w FR-17), teksty, gdy zmieniły się metadane albo fakty. Teksty poprawione ręcznie w `aplus/texts.yaml` program zostawia, jak ręcznie poprawione strony.
 
@@ -1484,7 +1484,7 @@ aplus:
   features:
     columns: 3                  # 3 albo 4
     source: pages               # pages | generated (--feature-images): motywy z ages.yaml aplus_features
-    image_quality: medium       # grafiki kolumn z modelu (płatne)
+    image_quality: null         # grafiki kolumn z modelu (płatne); null: --image-quality
   comparison:                   # tabela porównawcza: 2–6 książek z własnego konta
     books: []                   # [{asin: B0…, book: output/…}]
 ```
@@ -1508,7 +1508,8 @@ aplus:
 - **Tabela porównawcza:** książki z `aplus.comparison.books` (`asin` + katalog książki), zwykle w `--config-file` (sekcja `aplus`, FR-20; ścieżki względne od pliku). Ta książka, jeśli jej nie ma na liście, dochodzi jako pierwsza kolumna bez ASIN. Wiersze (wiek, liczba kolorowanek, format) mają etykiety w języku rynku; najwyżej 6 kolumn.
 - **Konfiguracja tekstów:** zakazane sformułowania i etykiety tabeli są w `config/markets.yaml` w osobnym kluczu `aplus_texts.<język|odmiana>` (`banned.time`, `banned.occasion.phrases/holidays/context/window`, `banned.claims`, `banned.sales`, `chart`), a nie w `texts.<język>.aplus_banned`: `texts` przyjmuje tylko napisy, a tu są listy. Dopasowanie całych słów bez wielkości liter; myślnik łączy słowa, więc „screen-free” nie trafia na „free”. Nazwa święta trafia tylko w odległości `window` słów od słowa terminu albo zakupu.
 - **Teksty:** fakty nakładki to `fact_lines()` z opisu (FR-03), nie od modelu; ponowienie dotyczy tylko tekstów od modelu, a fakty z zakazanym słowem dają ostrzeżenie. Limity: przycięcie na granicy słowa z ostrzeżeniem; fakty, które się nie mieszczą, wypadają od końca.
-- **Pokolorowana strona** (`--color-page`): strona pierwszej kolumny, `images.edit` z referencją, zapis w `aplus/raw/<strona>_color.png`; ta sama strona nie jest kolorowana ponownie. Opcja `--image-quality` dla tego wywołania.
+- **Kolumny z grafikami z modelu** (`--feature-images`, #80): motywy w `config/ages.yaml` → `aplus_features` (każdy profil ma 4). `AplusRun.themes()` wybiera motyw dla każdej kolumny, `_feature_images()` woła model raz na kolumnę i zapisuje `aplus/raw/features_N.png`, a manifest `aplus.feature_images` (kolumna, motyw, strona, prompt, hash wejść, model, jakość). Model obrazu dostaje kwadrat 1:1; program przycina wynik do kwadratu kolumny (`photo_square()`). Gdy motywów jest mniej niż kolumn, reszta kolumn to strony książki z ostrzeżeniem.
+- **Pokolorowana strona** (`--color-page`): strona pierwszej kolumny ze stroną książki (nie z modelu; gdy wszystkie kolumny są z modelu, strona nie jest kolorowana, z ostrzeżeniem), `images.edit` z referencją, zapis w `aplus/raw/<strona>_color.png`; ta sama strona nie jest kolorowana ponownie. Opcja `--image-quality` dla tego wywołania.
 - **Ponowne uruchomienie:** `images_sha256` (pliki okładki i stron, ustawienia `aplus` bez limitów, baner, pokolorowana strona) i `texts_inputs_sha256` (metadane, fakty, sceny kolumn, rynek, limity, zakazane słowa). Plik `aplus/texts.yaml` różny od zapisanego przez program jest ręczną poprawką: zostaje, a podgląd i manifest biorą go jako teksty.
 - **Kody wyjścia:** 1 bez stron `ok` albo okładki `ok`, albo przy złym `texts.yaml`; 2, gdy teksty nie powstały przez błąd dostawcy (grafiki i podgląd są); 3 po przekroczeniu limitu; 4 przy błędzie krytycznym dostawcy.
 - **Pas nakładki a ramka z tekstem** (podgląd edytora 28.11.2026): na komputerze Amazon kładzie ramkę z tekstem nakładki na obrazie po prawej, na ok. 0,69–0,95 szerokości i prawie całej wysokości; na telefonie tekst jest pod obrazem. Program kładzie więc strony po stronie bez ramki, a pod ramką zostawia samo tło (`aplus.overlay_facts`: `text_side: right`, `text_width: 0.33`, marginesy i zachodzenie stron). Pierwsza wersja miała strony po prawej i ramka je zasłaniała.
@@ -1681,7 +1682,7 @@ kdp-studio images ./output/dinozaury_przedszkole_kawaii_square \
   [--qa] [--image-quality low|medium|high] [--concurrency 4] [--max-cost 5.00]
 kdp-studio finalize ./output/dinozaury_przedszkole_kawaii_square
 # A+ Content (FR-24, poza MVP): po okładce, grafiki bez API, teksty jednym wywołaniem LLM
-kdp-studio aplus ./output/dinozaury_przedszkole_kawaii_square [--color-page] [--max-cost 1.00]
+kdp-studio aplus ./output/dinozaury_przedszkole_kawaii_square [--color-page] [--feature-images] [--max-cost 1.00]
 # Każdy krok przyjmuje też --log-level info|debug (NFR-09)
 # Plik parametrów książki (FR-20, poza MVP): flagi nadpisują wartości z pliku
 kdp-studio generate --config-file ksiazki/dinozaury.yaml --pages 40
