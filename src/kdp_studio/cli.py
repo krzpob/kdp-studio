@@ -3869,6 +3869,15 @@ FeatureImagesOpt = Annotated[
         "Domyślnie aplus.features.source z settings.yaml.",
     ),
 ]
+AplusQaOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--qa/--no-qa",
+        help="Kontrola grafik kolumn z modelu modelem z wizją (kryteria motywu z aplus_features "
+        "w ages.yaml); odrzucona grafika powstaje ponownie, a po aplus.features.qa_max_retries "
+        "kolumna dostaje stronę książki. Domyślnie aplus.features.qa z settings.yaml.",
+    ),
+]
 
 
 @app.command()
@@ -3877,6 +3886,7 @@ def aplus(
     config_file: ConfigFileOpt = None,
     color_page: ColorPageOpt = None,
     feature_images: FeatureImagesOpt = None,
+    qa: AplusQaOpt = None,
     image_quality: QualityOpt = None,
     max_cost: MaxCostOpt = None,
     log_level: LogLevelOpt = None,
@@ -3892,6 +3902,7 @@ def aplus(
             aplus=_cli_aplus(
                 color_page=color_page,
                 feature_images=feature_images,
+                qa=qa,
                 image_quality=image_quality,
                 max_cost=max_cost,
             ),
@@ -3942,6 +3953,7 @@ def aplus(
             if section.feature_images is not None
             else config.settings.aplus.features.source == "generated"
         ),
+        qa=section.qa if section.qa is not None else config.settings.aplus.features.qa,
         log=typer.echo,
     )
     try:
@@ -3955,10 +3967,12 @@ def aplus(
         if texts_state == "new":
             run.text_provider = _text_provider(config)
         if need_images:
-            run.image_provider, _ = _image_providers(
-                config, manifest.input.format, inp.image_provider, False
+            run.image_provider, run.vision = _image_providers(
+                config, manifest.input.format, inp.image_provider, run.features_need_vision()
             )
-        models = [p.model for p in (run.text_provider, run.image_provider) if p is not None]
+        models = [
+            p.model for p in (run.text_provider, run.image_provider, run.vision) if p is not None
+        ]
     costs = _cost_tracker(config, section.max_cost, models, manifest.cost_usd) if models else None
     run.costs = costs
     with _locked(book, level), _timed(StepTimer(), "aplus", costs):

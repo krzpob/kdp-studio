@@ -1410,6 +1410,12 @@ Kolumna ze stroną książki pokazuje zawartość, ale nie mówi rodzicowi, dlac
   - Podgląd `aplus.html` przypomina przy tych kolumnach o polu „AI-generated people” w bibliotece grafik edytora.
   - Bez napisów na obrazie, jak wszędzie: nagłówek i tekst idą do pól kolumny.
 - **Wywołanie i koszt:** jedno wywołanie na kolumnę, `images.edit` z referencją, kwadrat, jakość z `aplus.features.image_quality` (null: `--image-quality` albo `image_quality`). Koszt (jak grafiki: rodzaj `images`) liczy się do `--max-cost`. Obraz zapisuje się w `aplus/raw/features_N.png` z hashem (prompt, surowa strona, model, jakość), więc ponowne uruchomienie nie płaci drugi raz, jak pokolorowana strona.
+- **Kontrola grafik** (`--qa/--no-qa`, `aplus.features.qa: true`, dodane 28.11.2026 po pierwszej książce, w której model dorysował choinkę i gwiazdki na „czystym” tyle kartki, a kolumnę o pisakach pokolorował kredkami, które nie przebijają):
+  - Model z wizją dostaje jeden obraz z prawdziwą stroną książki po lewej i grafiką z modelu po prawej. Odrzuca za: napisy (`text`), twarz albo całą osobę (`people`), inny rysunek niż na stronie (`page_mismatch`), spiralę, perforację albo karton (`binding`), znaną postać albo markę (`protected_character`), niezgodność ze sceną i kryteriami motywu (`theme_mismatch`) i inne widoczne wady (`other`). Szczegóły wraca po polsku.
+  - Kryteria motywu są w profilu wieku (`aplus_features[].checks`, po angielsku). Motywy z pisakami sprawdzają, że strona jest pokolorowana pisakami, a nie kredkami, i że tył kartki jest pusty.
+  - Odrzucona grafika trafia do `aplus/rejected/features_N_tryK.png` i powstaje ponownie, najwyżej `aplus.features.qa_max_retries` razy (domyślnie 2), potem kolumna dostaje stronę książki z ostrzeżeniem. Koszt kontroli liczy się jak QA stron.
+  - Wynik w manifeście (`aplus.feature_images[].qa`, `attempts`). Grafika zapisana wcześniej bez kontroli jest sprawdzana przy pierwszym uruchomieniu z `--qa`; jeśli przejdzie, nie powstaje od nowa.
+  - Prompt mówi wprost, że pusta kartka i tył kartki zostają czystym białym papierem, a temat książki może się pojawić tylko w rekwizytach wokół książki.
 - **Gdy obrazu nie ma** (błąd niekrytyczny dostawcy, limit kosztu, za mało pasujących motywów), kolumna dostaje stronę książki jak dziś, z ostrzeżeniem. Błąd krytyczny kończy krok kodem 4.
 - **Teksty i alt text:** model tekstów dostaje `benefit` każdego motywu, a do alt textu opis z `scene`.
 - **Włączanie:** `aplus.features.source: pages | generated` (domyślnie `pages`), flaga `--feature-images/--no-feature-images`, sekcja `aplus` w `--config-file` (FR-20).
@@ -1450,7 +1456,7 @@ Do tego zasady wspólne z opisem: bez cen, rabatów, „free”, „bonus”, �
 
 **Polecenie**
 - `kdp-studio aplus <katalog-książki>`, osobny krok po okładce. Wymaga stron `ok` (FR-17) i okładki ze statusem `ok` (FR-15), bo mockupy składa z `cover/front.png` i `cover/cover.png`. Bez nich kod 1 z informacją, czego brakuje. `generate` go nie uruchamia.
-- Opcje: `--color-page/--no-color-page` (pokolorowana strona z modelu, domyślnie `aplus.color_page: false`), `--feature-images/--no-feature-images` (kolumny z grafikami z modelu, domyślnie `aplus.features.source: pages`), `--max-cost`, `--log-level`, `--config-file` (FR-20, sekcja `aplus`).
+- Opcje: `--color-page/--no-color-page` (pokolorowana strona z modelu, domyślnie `aplus.color_page: false`), `--feature-images/--no-feature-images` (kolumny z grafikami z modelu, domyślnie `aplus.features.source: pages`), `--qa/--no-qa` (kontrola tych grafik, domyślnie `aplus.features.qa: true`), `--max-cost`, `--log-level`, `--config-file` (FR-20, sekcja `aplus`).
 - Wywołania API: jedno wywołanie LLM na teksty (z jednym ponowieniem po kontroli) i opcjonalnie jedno płatne pokolorowanie strony. Grafiki składa program, bez API.
 - Ponowne uruchomienie robi tylko to, co się zmieniło: grafiki, gdy zmieniła się okładka, strony albo ustawienia (hash wejść jak w FR-17), teksty, gdy zmieniły się metadane albo fakty. Teksty poprawione ręcznie w `aplus/texts.yaml` program zostawia, jak ręcznie poprawione strony.
 

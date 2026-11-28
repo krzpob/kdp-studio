@@ -57,6 +57,8 @@ class AplusFeatureTheme(_Strict):
     requires: Literal["single_sided"] | None = None
     # Fakt z listy faktów (FR-03), który kolumna przejmuje; nakładka go wtedy pomija.
     fact: Literal["single_sided"] | None = None
+    # Kryteria kontroli grafiki (aplus --qa), po angielsku, np. „the back of the sheet is blank”.
+    checks: list[Annotated[str, Field(min_length=1)]] = []
 
 
 class AgeProfile(_Strict):
@@ -638,6 +640,8 @@ class AplusFeatures(_Strict):
     # pages: strony książki; generated: grafiki z modelu z motywów profilu wieku (aplus_features)
     source: Literal["pages", "generated"] = "pages"
     image_quality: ImageQuality | None = None  # None: --image-quality albo image_quality
+    qa: bool = True  # --qa: kontrola grafik z modelu modelem z wizją (aplus_features[].checks)
+    qa_max_retries: Annotated[int, Field(ge=0, le=MAX_QA_RETRIES)] = 2  # nowe próby po odrzuceniu
 
 
 class AplusComparisonBook(_Strict):

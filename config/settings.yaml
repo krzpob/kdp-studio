@@ -330,5 +330,7 @@ aplus:
     # profilu wieku (aplus_features w ages.yaml), ze stroną książki jako referencją; płatne
     source: pages
     image_quality: null         # null: --image-quality albo image_quality
+    qa: true                    # --qa: kontrola grafik z modelu modelem z wizją (checks motywu)
+    qa_max_retries: 2           # nowe próby po odrzuceniu; potem kolumna ze stroną książki
   comparison:                   # tabela porównawcza: 2–6 książek z własnego konta KDP
     books: []                   # [{asin: B0XXXXXXXX, book: output/<katalog>}]; zwykle w --config-file

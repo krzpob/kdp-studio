@@ -52,6 +52,7 @@ from kdp_studio.pipeline.aplus_preview import (
     PreviewModule,
     render_preview,
 )
+from kdp_studio.pipeline.aplus_qa import FeatureQAResult, check_feature
 from kdp_studio.pipeline.aplus_text import (
     AplusWriter,
     alt_issues,
@@ -63,11 +64,18 @@ from kdp_studio.pipeline.cost import CostTracker
 from kdp_studio.pipeline.listing import book_facts, fact_lines
 from kdp_studio.pipeline.manifest import Manifest, ManifestPage, sha256_bytes, sha256_file
 from kdp_studio.pipeline.output import write_bytes_atomic
-from kdp_studio.providers.base import ImageProvider, ImageRequest, ProviderError, TextProvider
+from kdp_studio.providers.base import (
+    ImageProvider,
+    ImageRequest,
+    ProviderError,
+    TextProvider,
+    VisionProvider,
+)
 
 APLUS_DIR = "aplus"
 TEXTS_FILE = "texts.yaml"
 RAW_DIR = "raw"
+REJECTED_DIR = "rejected"
 OVERLAY_PAGES = 3
 COLOR_PROMPT = (
     "Color this black-and-white coloring page as a finished, neatly colored page, as if a "
@@ -81,7 +89,8 @@ FEATURE_ASPECT = "1:1"
 FEATURE_PROMPT = (
     "A realistic, softly lit photo for the product page of a printed coloring book: {scene}. "
     "The coloring page in the photo is the reference image: keep its drawing, every line and "
-    "shape, unchanged. The page shows {page_scene}.{theme} Only hands may appear: no faces, "
+    "shape, unchanged. The page shows {page_scene}.{theme} Any blank sheet or back of a sheet "
+    "stays plain white paper with nothing on it. Only hands may appear: no faces, "
     "no heads, no whole people. The book is a glued paperback with plain white paper: no "
     "spiral binding, no perforated edges, no thick card pages. No text, no letters, no "
     "numbers, no logos, no brand marks, no watermarks. Square composition."
@@ -384,8 +393,10 @@ class AplusRun:
     color_page: bool
     quality: str
     feature_images: bool = False  # kolumny z grafikami z modelu (aplus.features.source)
+    qa: bool = False  # kontrola grafik kolumn z modelu modelem z wizją (aplus.features.qa)
     text_provider: TextProvider | None = None
     image_provider: ImageProvider | None = None
+    vision: VisionProvider | None = None
     costs: CostTracker | None = None
     log: Callable[[str], None] = print
 
@@ -459,7 +470,11 @@ class AplusRun:
         return FEATURE_PROMPT.format(
             scene=theme.scene.strip().rstrip("."),
             page_scene=self._page_scene(page),
-            theme=f" The book's theme: {', '.join(anchors)}." if anchors else "",
+            theme=(
+                f" Props around the book may match its theme ({', '.join(anchors)})."
+                if anchors
+                else ""
+            ),
         )
 
     def _feature_quality(self) -> str:
@@ -492,46 +507,112 @@ class AplusRun:
                 return entry
         return None
 
-    def features_needed(self) -> bool:
-        """Czy któraś kolumna potrzebuje nowej grafiki z modelu (wywołanie API)."""
-        return any(
-            theme is not None and self._cached_feature(k, theme, page) is None
+    def _column_states(self) -> list[tuple[int, ManifestPage, AplusFeatureTheme]]:
+        return [
+            (k, page, theme)
             for k, (page, theme) in enumerate(
                 zip(self.plan.features, self.themes(), strict=True), start=1
             )
-        )
+            if theme is not None
+        ]
+
+    def _needs_work(self, column: int, theme: AplusFeatureTheme, page: ManifestPage) -> bool:
+        cached = self._cached_feature(column, theme, page)
+        return cached is None or (self.qa and cached.qa is None)
+
+    def features_needed(self) -> bool:
+        """Czy któraś kolumna potrzebuje grafiki z modelu albo kontroli (wywołanie API)."""
+        return any(self._needs_work(k, theme, page) for k, page, theme in self._column_states())
+
+    def features_need_vision(self) -> bool:
+        return self.qa and self.features_needed()
+
+    def _check(self, theme: AplusFeatureTheme, page: ManifestPage, raw: Path) -> FeatureQAResult:
+        """Kontrola grafiki kolumny modelem z wizją; koszt jak QA stron."""
+        vision = self.vision
+        assert vision is not None
+        with (
+            Image.open(self.book_dir / f"{page.name}.png") as book_page,
+            Image.open(raw) as photo,
+        ):
+            result, usage = check_feature(vision, book_page, photo, theme, self._page_scene(page))
+        if self.costs is not None:
+            self.costs.add("qa", vision.model, usage)
+        return result
+
+    def _reject(self, column: int, raw: Path) -> int:
+        """Odrzucona grafika do `aplus/rejected/features_N_tryK.png`; zwraca numer próby."""
+        folder = self.out / REJECTED_DIR
+        folder.mkdir(parents=True, exist_ok=True)
+        tries = 1 + sum(1 for _ in folder.glob(f"features_{column}_try*.png"))
+        raw.replace(folder / f"features_{column}_try{tries}.png")
+        return tries
 
     def _feature_images(self, outcome: AplusOutcome) -> dict[int, Path]:
-        """Grafiki kolumn z modelu (kolumna od 1 → plik). Kolumna bez grafiki dostaje stronę
-        książki z ostrzeżeniem; błąd krytyczny dostawcy przerywa krok."""
+        """Grafiki kolumn z modelu (kolumna od 1 → plik). Z kontrolą (`qa`) odrzucona grafika
+        powstaje ponownie, najwyżej `qa_max_retries` razy; kolumna bez dobrej grafiki dostaje
+        stronę książki z ostrzeżeniem. Błąd krytyczny dostawcy przerywa krok."""
         result: dict[int, Path] = {}
         outcome.info.warnings += self.theme_warnings()
-        for k, (page, theme) in enumerate(
-            zip(self.plan.features, self.themes(), strict=True), start=1
-        ):
-            if theme is None:
-                continue
+        for k, page, theme in self._column_states():
+            fallback = f"kolumna {k} ({theme.label}): strona książki zamiast grafiki z modelu"
             cached = self._cached_feature(k, theme, page)
+            if cached is not None and self.qa and cached.qa is None:
+                try:
+                    verdict = self._check(theme, page, self.book_dir / cached.raw)
+                except ProviderError as e:
+                    if e.fatal:
+                        raise
+                    outcome.info.warnings.append(f"{fallback} (kontrola: {e})")
+                    continue
+                if verdict.passed:
+                    cached = cached.model_copy(update={"qa": verdict})
+                else:
+                    self.log(
+                        f"Kolumna {k}: kontrola odrzuciła zapisaną grafikę ({verdict.summary()})"
+                    )
+                    self._reject(k, self.book_dir / cached.raw)
+                    cached = None
             if cached is not None:
                 outcome.info.feature_images.append(cached)
                 result[k] = self.book_dir / cached.raw
                 continue
-            fallback = f"kolumna {k} ({theme.label}): strona książki zamiast grafiki z modelu"
-            provider = self.image_provider
-            assert provider is not None
-            if FEATURE_ASPECT not in provider.supported_aspects():
-                outcome.info.warnings.append(
-                    f"{fallback} ({provider.name} nie rysuje kwadratów {FEATURE_ASPECT})"
-                )
-                continue
+            entry = self._generate_feature(k, page, theme, fallback, outcome)
+            if entry is not None:
+                outcome.info.feature_images.append(entry)
+                result[k] = self.book_dir / entry.raw
+        return result
+
+    def _generate_feature(
+        self,
+        column: int,
+        page: ManifestPage,
+        theme: AplusFeatureTheme,
+        fallback: str,
+        outcome: AplusOutcome,
+    ) -> AplusFeatureImage | None:
+        provider = self.image_provider
+        assert provider is not None
+        if FEATURE_ASPECT not in provider.supported_aspects():
+            outcome.info.warnings.append(
+                f"{fallback} ({provider.name} nie rysuje kwadratów {FEATURE_ASPECT})"
+            )
+            return None
+        prompt = self._feature_prompt(theme, page)
+        source = self.book_dir / f"{page.name}.png"
+        quality = self._feature_quality()
+        tries = 1 + (self.config.settings.aplus.features.qa_max_retries if self.qa else 0)
+        reasons: list[str] = []
+        for attempt in range(1, tries + 1):
             if self.costs is not None and self.costs.over_budget():
                 outcome.budget_exceeded = True
                 outcome.info.warnings.append(f"{fallback} (przekroczony limit kosztu)")
-                continue
-            prompt = self._feature_prompt(theme, page)
-            source = self.book_dir / f"{page.name}.png"
-            quality = self._feature_quality()
-            self.log(f"Grafika kolumny {k} ({theme.label}, {provider.name}, {provider.model})…")
+                return None
+            self.log(
+                f"Grafika kolumny {column} ({theme.label}, {provider.name}, {provider.model})"
+                + (f", próba {attempt}" if attempt > 1 else "")
+                + "…"
+            )
             try:
                 image = provider.generate(
                     ImageRequest(
@@ -545,26 +626,43 @@ class AplusRun:
                 if e.fatal:
                     raise
                 outcome.info.warnings.append(f"{fallback} ({e})")
-                continue
+                return None
             if self.costs is not None:
                 self.costs.add("images", provider.model, image.usage)
-            raw = self._feature_raw(k)
+            raw = self._feature_raw(column)
             raw.parent.mkdir(parents=True, exist_ok=True)
             write_bytes_atomic(raw, image.png_bytes)
-            outcome.info.feature_images.append(
-                AplusFeatureImage(
-                    column=k,
-                    theme=theme.key,
-                    page=page.name,
-                    prompt=prompt,
-                    raw=raw.relative_to(self.book_dir).as_posix(),
-                    inputs_sha256=self._feature_sha(prompt, page),
-                    model=provider.model,
-                    quality=quality,
-                )
+            verdict: FeatureQAResult | None = None
+            if self.qa:
+                try:
+                    verdict = self._check(theme, page, raw)
+                except ProviderError as e:
+                    if e.fatal:
+                        raise
+                    outcome.info.warnings.append(f"{fallback} (kontrola: {e})")
+                    return None
+                if not verdict.passed:
+                    reasons.append(verdict.summary())
+                    self.log(f"Kolumna {column}: kontrola odrzuciła grafikę ({verdict.summary()})")
+                    self._reject(column, raw)
+                    continue
+            return AplusFeatureImage(
+                column=column,
+                theme=theme.key,
+                page=page.name,
+                prompt=prompt,
+                raw=raw.relative_to(self.book_dir).as_posix(),
+                inputs_sha256=self._feature_sha(prompt, page),
+                model=provider.model,
+                quality=quality,
+                attempts=attempt,
+                qa=verdict,
             )
-            result[k] = raw
-        return result
+        outcome.info.warnings.append(
+            f"{fallback} (kontrola odrzuciła wszystkie próby: {tries}; ostatnio: {reasons[-1]}; "
+            f"odrzucone w {APLUS_DIR}/{REJECTED_DIR}/)"
+        )
+        return None
 
     def _page_scene(self, page: ManifestPage) -> str:
         ideas = {i.id: i for i in self.ideas.pages}

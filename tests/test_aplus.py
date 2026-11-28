@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from kdp_studio.pipeline.aplus_models import AplusCopy, ColumnCopy, FeaturesCopy
 from kdp_studio.pipeline.aplus_text import alt_issues, apply_limits, banned_hits, clip, copy_issues
 from kdp_studio.pipeline.cmyk import NaiveConverter
 from kdp_studio.providers.base import ProviderError
-from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider
+from kdp_studio.providers.fake import FakeImageProvider, FakeTextProvider, FakeVisionProvider
 from tests.conftest import ConfigDirFactory, fake_settings
 from tests.test_cli import (
     BOOK_DIR,
@@ -532,7 +533,7 @@ def test_feature_images_from_age_themes(
     book: Path, text: FakeTextProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _fake_images(monkeypatch)
-    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
     themes = load_config().ages["przedszkole"].aplus_features[:3]
     assert len(fake.requests) == 3
     for request, theme in zip(fake.requests, themes, strict=True):
@@ -550,7 +551,7 @@ def test_feature_images_from_age_themes(
     assert f"Write about this benefit: {themes[0].benefit}" in call.user
     assert f"Image features_1: A photo of {themes[0].scene}" in call.user
     assert "AI-generated people" in (book / "aplus.html").read_text(encoding="utf-8")
-    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
     assert len(fake.requests) == 3  # zapamiętane: bez nowych wywołań
 
 
@@ -559,7 +560,7 @@ def test_feature_column_takes_over_the_single_sided_fact(
 ) -> None:
     _set_themes([MARKERS])
     fake = _fake_images(monkeypatch)
-    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
     assert len(fake.requests) == 1
     aplus = _manifest()["aplus"]
     assert aplus["texts"]["overlay_facts"]["items"][0] == "10 coloring pages"
@@ -576,7 +577,7 @@ def test_double_sided_book_skips_single_sided_themes(
     data["input"]["single_sided"] = False
     (book / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
     fake = _fake_images(monkeypatch)
-    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
     assert [f["theme"] for f in _manifest()["aplus"]["feature_images"]] == ["calm"]
     assert len(fake.requests) == 1
 
@@ -592,7 +593,7 @@ def test_failed_feature_image_falls_back_to_the_page(
             else None
         ),
     )
-    assert main(["aplus", ARG, "--feature-images"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
     aplus = _manifest()["aplus"]
     assert [f["column"] for f in aplus["feature_images"]] == [2, 3]
     assert any("kolumna 1" in w and "strona książki" in w for w in aplus["warnings"])
@@ -603,7 +604,7 @@ def test_color_page_skipped_when_every_column_is_generated(
     book: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _fake_images(monkeypatch)
-    assert main(["aplus", ARG, "--feature-images", "--color-page"]) == ExitCode.OK
+    assert main(["aplus", ARG, "--feature-images", "--no-qa", "--color-page"]) == ExitCode.OK
     aplus = _manifest()["aplus"]
     assert aplus["color_page"] is None and len(fake.requests) == 3
     assert any("pokolorowana strona" in w for w in aplus["warnings"])
@@ -616,3 +617,70 @@ def test_feature_themes_need_unique_keys(repo_config: AppConfig) -> None:
     data["aplus_features"] = [MARKERS, MARKERS]
     with pytest.raises(ValueError, match="klucz motywu powtórzony"):
         AgeProfile.model_validate(data)
+
+
+# --- Kontrola grafik kolumn (aplus --qa) ---------------------------------------------------
+
+
+def _feature_vision(
+    monkeypatch: pytest.MonkeyPatch, reject: Callable[[str, int], bool]
+) -> FakeVisionProvider:
+    """Model z wizją dla grafik kolumn; `reject(instrukcje, numer wywołania)` odrzuca."""
+    count = {"n": 0}
+
+    def respond(image_png: bytes, instructions: str) -> dict[str, Any]:
+        count["n"] += 1
+        if reject(instructions, count["n"]):
+            issue = {"criterion": "theme_mismatch", "detail": "na odwrocie choinka i gwiazdki"}
+            return {"passed": False, "issues": [issue]}
+        return {"passed": True, "issues": []}
+
+    vision = FakeVisionProvider(respond)
+    monkeypatch.setattr(cli, "create_vision_provider", lambda name, model: vision)
+    return vision
+
+
+CHECKED = {**MARKERS, "checks": ["the turned-over sheet shows a completely blank back"]}
+
+
+def test_feature_qa_retries_a_rejected_image(book: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_themes([CHECKED])
+    fake = _fake_images(monkeypatch)
+    vision = _feature_vision(monkeypatch, lambda text, n: n == 1)
+    assert main(["aplus", ARG, "--feature-images", "--qa"]) == ExitCode.OK
+    assert len(fake.requests) == 2 and len(vision.calls) == 2
+    assert "LEFT: the real black-and-white page" in vision.calls[0]
+    assert "- the turned-over sheet shows a completely blank back" in vision.calls[0]
+    entry = _manifest()["aplus"]["feature_images"][0]
+    assert entry["attempts"] == 2 and entry["qa"] == {"pass": True, "issues": []}
+    assert (book / "aplus/rejected/features_1_try1.png").is_file()
+    assert main(["aplus", ARG, "--feature-images", "--qa"]) == ExitCode.OK
+    assert len(fake.requests) == 2 and len(vision.calls) == 2  # zapamiętane i sprawdzone
+
+
+def test_feature_qa_falls_back_to_the_page(book: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_themes([CHECKED])
+    fake = _fake_images(monkeypatch)
+    _feature_vision(monkeypatch, lambda text, n: True)
+    assert main(["aplus", ARG, "--feature-images", "--qa"]) == ExitCode.OK
+    assert len(fake.requests) == 3  # pierwsza próba i 2 ponowienia (qa_max_retries)
+    aplus = _manifest()["aplus"]
+    assert aplus["feature_images"] == []
+    assert any(
+        "kontrola odrzuciła wszystkie próby: 3" in w and "choinka" in w for w in aplus["warnings"]
+    )
+    assert len(list((book / "aplus/rejected").glob("features_1_try*.png"))) == 3
+
+
+def test_feature_qa_checks_images_made_without_it(
+    book: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_themes([CHECKED])
+    fake = _fake_images(monkeypatch)
+    assert main(["aplus", ARG, "--feature-images", "--no-qa"]) == ExitCode.OK
+    assert _manifest()["aplus"]["feature_images"][0]["qa"] is None
+    vision = _feature_vision(monkeypatch, lambda text, n: n == 1)
+    assert main(["aplus", ARG, "--feature-images", "--qa"]) == ExitCode.OK
+    assert len(vision.calls) == 2  # zapisana grafika odrzucona, nowa przyjęta
+    assert len(fake.requests) == 2
+    assert _manifest()["aplus"]["feature_images"][0]["qa"]["pass"] is True

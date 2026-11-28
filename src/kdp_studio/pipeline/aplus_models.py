@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from kdp_studio.pipeline.aplus_qa import FeatureQAResult
+
 # Moduły edytora A+ (nazwy jak w edytorze, sprawdzone 24.11.2026) dla nazw z `aplus.modules`.
 EDITOR_MODULES: dict[str, str] = {
     "logo": "Standard Company Logo",
@@ -121,6 +123,8 @@ class AplusFeatureImage(_Copy):
     inputs_sha256: str  # prompt, strona, model, jakość: inny = nowa grafika
     model: str
     quality: str
+    attempts: int = 1  # próby z odrzuconymi przez kontrolę
+    qa: FeatureQAResult | None = None  # None: bez kontroli (aplus --no-qa)
 
 
 class AplusInfo(_Copy):
