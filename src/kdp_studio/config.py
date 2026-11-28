@@ -599,6 +599,21 @@ class AplusPages(_Strict):
     size: Annotated[float, Field(gt=0, le=1)] = 0.78  # wysokość strony względem grafiki
 
 
+class AplusOverlay(_Strict):
+    """Pas pod nakładkę z faktami (Standard Image with Dark/Light Overlay, 970 × 300).
+
+    Na komputerze Amazon kładzie ramkę z tekstem na obrazie, po prawej, na ok. 0,69–0,95
+    szerokości i prawie całej wysokości (podgląd edytora 28.11.2026); na telefonie tekst jest pod
+    obrazem. Strony idą więc na drugą stronę, a pod ramką zostaje samo tło.
+    """
+
+    text_side: Literal["left", "right"] = "right"  # gdzie Amazon kładzie ramkę z tekstem
+    text_width: Annotated[float, Field(gt=0, lt=0.8)] = 0.33  # szerokość ramki z marginesem
+    margin: Annotated[float, Field(ge=0, lt=0.3)] = 0.03  # od brzegu obrazu i od ramki
+    margin_y: Annotated[float, Field(ge=0, lt=0.4)] = 0.12  # nad stronami i pod nimi
+    overlap: Annotated[float, Field(ge=0, lt=0.8)] = 0.15  # o ile strony zachodzą na siebie
+
+
 class AplusFeatures(_Strict):
     columns: Literal[3, 4] = 3  # Standard Three albo Four Images & Text
     margin: Annotated[float, Field(ge=0, lt=0.5)] = 0.06  # biały margines wokół strony w kwadracie
@@ -633,6 +648,7 @@ class AplusSettings(_Strict):
     limits: AplusLimits = AplusLimits()
     header_fan: AplusFan = AplusFan()
     header_pages: AplusPages = AplusPages()
+    overlay_facts: AplusOverlay = AplusOverlay()
     features: AplusFeatures = AplusFeatures()
     comparison: AplusComparison = AplusComparison()
 

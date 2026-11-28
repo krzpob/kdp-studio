@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 import yaml
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from kdp_studio import cli
 from kdp_studio.cli import ExitCode, main
@@ -407,6 +407,26 @@ def test_shadow_is_not_cut_at_the_edge() -> None:
     alpha = np.asarray(shadow.getchannel("A"))
     assert pad == 30 and alpha.shape == (160, 160)
     assert alpha[0].max() == 0 and alpha[-1].max() == 0 and alpha[:, 0].max() == 0
+
+
+@pytest.mark.parametrize("side", ["right", "left"])
+def test_overlay_strip_leaves_the_text_box_empty(repo_config: AppConfig, side: str) -> None:
+    """Na komputerze Amazon kładzie ramkę z tekstem nakładki na obrazie (domyślnie po prawej),
+    więc strony trafiają na drugą stronę, a pod ramką jest samo tło."""
+    overlay = repo_config.settings.aplus.overlay_facts.model_copy(update={"text_side": side})
+    page = Image.new("RGB", (300, 300), "white")
+    ImageDraw.Draw(page).rectangle((40, 40, 260, 260), outline="black", width=12)
+    strip = ai.overlay_strip(
+        [page] * 3, (200, 212, 190), repo_config.settings.aplus.header_fan, (1940, 600), overlay
+    )
+    gray = np.asarray(strip.convert("L"), dtype=np.int16)
+    box = int(1940 * overlay.text_width)
+    under_box = gray[:, -box:] if side == "right" else gray[:, :box]
+    pages = gray[:, :-box] if side == "right" else gray[:, box:]
+    assert under_box.min() > 150  # tylko jasne tło, bez konturów stron
+    assert pages.min() < 60  # kontury stron po drugiej stronie
+    left, _, right, _ = ai.overlay_region((1940, 600), overlay)
+    assert right - left > 1940 * 0.6
 
 
 def test_fan_header_fills_the_frame(repo_config: AppConfig) -> None:

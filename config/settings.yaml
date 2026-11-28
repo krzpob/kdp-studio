@@ -317,6 +317,12 @@ aplus:
       darken_step: 0.05         # przyciemnianie najlepszego, gdy żaden nie przechodzi progu
       gradient: 0.04            # lekki pionowy gradient
   header_pages: {count: 3, angles_deg: [8, 0, -8], size: 0.78}
+  overlay_facts:                # pas pod nakładkę z faktami (970 × 300)
+    text_side: right            # ramka z tekstem Amazona na komputerze: po prawej (podgląd 28.11.2026)
+    text_width: 0.33            # szerokość ramki z marginesem; strony idą na drugą stronę
+    margin: 0.03
+    margin_y: 0.12
+    overlap: 0.15
   features: {columns: 3, margin: 0.06}    # 3 albo 4 kolumny
   comparison:                   # tabela porównawcza: 2–6 książek z własnego konta KDP
     books: []                   # [{asin: B0XXXXXXXX, book: output/<katalog>}]; zwykle w --config-file

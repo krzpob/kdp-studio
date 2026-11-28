@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from kdp_studio.config import AplusBackground, AplusFan, AplusPages, AplusSettings
+from kdp_studio.config import AplusBackground, AplusFan, AplusOverlay, AplusPages, AplusSettings
 from kdp_studio.pipeline.output import write_bytes_atomic
 
 # Rozmiary pól obrazów w edytorze A+ (sprawdzone 24.11.2026); program renderuje je `scale` razy.
@@ -288,22 +288,36 @@ def pages_header(
     return canvas.convert("RGB")
 
 
+def overlay_region(size: tuple[int, int], overlay: AplusOverlay) -> tuple[int, int, int, int]:
+    """Obszar stron w pasie nakładki: strona obrazu bez ramki z tekstem (lewo, góra, prawo,
+    dół)."""
+    width, height = size
+    margin_y = round(height * overlay.margin_y)
+    free = 1 - overlay.text_width - 2 * overlay.margin
+    start = overlay.margin if overlay.text_side == "right" else overlay.text_width + overlay.margin
+    return (
+        round(width * start),
+        margin_y,
+        round(width * (start + free)),
+        height - margin_y,
+    )
+
+
 def overlay_strip(
     pages: Sequence[Image.Image],
     rgb: tuple[int, int, int],
     fan: AplusFan,
     size: tuple[int, int],
+    overlay: AplusOverlay | None = None,
 ) -> Image.Image:
-    """Tło nakładki z faktami: jasna wersja tła, rząd stron po prawej; lewa część zostaje
-    spokojna, bo tam Amazon kładzie tekst nakładki."""
-    width, height = size
+    """Tło nakładki z faktami: jasna wersja tła i rząd stron po stronie bez ramki z tekstem;
+    pod ramką (domyślnie po prawej) zostaje samo tło."""
+    overlay = overlay or AplusOverlay()
     light = tuple(round(v + (255 - v) * 0.45) for v in rgb)
     canvas = background(size, (light[0], light[1], light[2]), fan.background.gradient)
     canvas = canvas.convert("RGBA")
-    margin_y = round(height * 0.12)
-    region = (round(width * 0.47), margin_y, round(width * 0.97), height - margin_y)
     angles = [-3 if i % 2 == 0 else 3 for i in range(len(pages))]
-    _sheet_row(canvas, pages, angles, region, 0.15, fan)
+    _sheet_row(canvas, pages, angles, overlay_region(size, overlay), overlay.overlap, fan)
     return canvas.convert("RGB")
 
 
